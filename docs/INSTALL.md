@@ -223,19 +223,20 @@ The daemon will:
 
 Keep this running in a terminal, or run it as a background service (see below).
 
-### Alternative: Gateway-Only Mode
+### zim-hub (Gateway / Relay)
 
-For lightweight deployments that only need to serve published bucket content (no UI, no API):
+For serving published content and relaying browser-signed writes, deploy `zim-hub`:
 
 ```bash
-zim daemon --gateway-only
+make hub
 ```
 
-The gateway mode provides:
-- P2P peer syncing (mirror role)
-- `/gw/:bucket_id/*path` endpoint for serving content with HTML file explorer
+The hub provides:
+- P2P peer syncing as a mirror (pins ciphertext, no decryption)
+- `/gw/:bucket_id/published/*path` endpoint for serving per-file/folder published content
+- `POST /api/v0/buckets/:id/append` — Relay endpoint for browser-signed manifest updates
+- Google OAuth identity vault for multi-tenant web access
 - `/_status/*` health endpoints
-- Content negotiation (`Accept: application/json` for JSON responses)
 - `?download=true` query param for raw file downloads
 
 Use this when you need a minimal content server without the full daemon features.

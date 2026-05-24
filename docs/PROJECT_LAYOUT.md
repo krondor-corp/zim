@@ -1,12 +1,12 @@
 # Project Layout
 
-Quick guide to finding your way around the jax-bucket workspace.
+Quick guide to finding your way around the Zim workspace.
 
 ## Crates
 
 ### `crates/daemon` - CLI & Daemon (lib + bin)
 
-The main binary (`jax-daemon`) and library (`jax_daemon`). The library exports daemon functionality for embedding (used by Tauri). The binary handles CLI commands and runs the headless HTTP daemon (REST API + gateway).
+The main binary (`zim-peer`) and library (`zim_peer`). The library exports daemon functionality for embedding. The binary handles CLI commands and runs the headless HTTP daemon (REST API + gateway).
 
 **Key areas:**
 
@@ -31,7 +31,7 @@ The main binary (`jax-daemon`) and library (`jax_daemon`). The library exports d
 - `src/blobs/` - Blob store setup and configuration
 - `src/fuse/` - FUSE filesystem integration (behind `fuse` feature flag)
   - `mod.rs` - Module exports
-  - `jax_fs.rs` - FUSE filesystem implementation using fuser
+  - `fuse_fs.rs` - FUSE filesystem implementation using fuser
   - `mount_manager.rs` - Mount lifecycle management (start, stop, auto-mount)
   - `inode_table.rs` - Bidirectional inode ↔ path mapping
   - `cache.rs` - LRU content cache with TTL
@@ -39,7 +39,7 @@ The main binary (`jax-daemon`) and library (`jax_daemon`). The library exports d
 - `src/process/` - Service lifecycle (start, spawn, shutdown, auto-mount)
 - `src/service_config.rs` - Service configuration (ports, paths, blob store)
 - `src/service_state.rs` - Runtime state (database, peer, mount_manager)
-- `src/state.rs` - App state (jax directory paths, config file)
+- `src/state.rs` - App state (zim directory paths, config file)
 - `src/cli/` - CLI-specific code (not exported by library). See [CLI.md](./CLI.md) for the Op pattern and formatting boundary.
   - `args.rs` - CLI argument parsing (includes `--plain` flag)
   - `op.rs` - Op trait, OpContext, and command_enum macro
@@ -53,7 +53,7 @@ The main binary (`jax-daemon`) and library (`jax_daemon`). The library exports d
 
 ### `crates/common` - Core Library
 
-Shared library (`jax-common`) with crypto, storage, and peer protocol.
+Shared library (`zim-fs`) with crypto, storage, and peer protocol.
 
 **Key areas:**
 
@@ -82,7 +82,7 @@ Shared library (`jax-common`) with crypto, storage, and peer protocol.
 
 ### `crates/object-store` - Blob Storage
 
-SQLite + object storage backend for blob data (`jax-object-store`).
+SQLite + object storage backend for blob data (`zim-store`).
 
 **Key areas:**
 
@@ -97,32 +97,6 @@ SQLite + object storage backend for blob data (`jax-object-store`).
 
 - `tests/` - Integration tests for mount operations
 - `tests/common/mod.rs` - Shared test utilities (`setup_test_env()`)
-
-### `crates/desktop` - Desktop App
-
-Tauri 2.0 desktop application (`jax-desktop`) with SolidJS frontend. Connects to the daemon via HTTP API using `ApiClient`, either detecting an already-running sidecar daemon or spawning an embedded one. Released via GitHub Actions (not cargo publish).
-
-**Key areas:**
-
-- `src-tauri/src/lib.rs` - Tauri entry point, daemon lifecycle management
-- `src-tauri/src/commands/bucket.rs` - Bucket IPC commands (list, ls, cat, add, mkdir, delete, history, shares)
-- `src-tauri/src/commands/daemon.rs` - Daemon status and config IPC commands
-- `src-tauri/src/commands/mount.rs` - FUSE mount IPC commands (list, create, start, stop, delete, simplified mount/unmount)
-- `src-tauri/src/tray.rs` - System tray setup (Open, Status, Quit)
-- `src-tauri/capabilities/default.json` - Tauri permission capabilities
-- `src-tauri/tauri.conf.json` - Tauri configuration
-- `src/` - SolidJS frontend source
-  - `App.tsx` - Root component with router and sidebar layout
-  - `lib/api.ts` - IPC wrapper functions (TypeScript bindings for all commands including mounts)
-  - `pages/Home.tsx` - Node status dashboard
-  - `pages/Buckets.tsx` - Bucket list, creation, and one-click mount/unmount buttons
-  - `pages/Mounts.tsx` - Advanced mount management (manual mount point selection)
-  - `pages/Explorer.tsx` - File explorer with breadcrumbs, upload, mkdir, delete, share
-  - `pages/Viewer.tsx` - File viewer (text, markdown, images, video, audio)
-  - `pages/Editor.tsx` - Text file editor with save
-  - `pages/History.tsx` - Bucket version history with navigation to past versions
-  - `pages/Settings.tsx` - Auto-launch toggle, theme switcher, update checker, local config paths
-  - `components/SharePanel.tsx` - Slide-in panel for peer sharing
 
 ## Other Directories
 
@@ -141,4 +115,3 @@ Tauri 2.0 desktop application (`jax-desktop`) with SolidJS frontend. Connects to
 - `install.sh` - One-line CLI install/update script
 - `.github/workflows/` - CI and release automation
   - `release-cli.yml` - CLI binary builds for GitHub releases
-  - `release-desktop.yml` - Desktop app builds with update manifest

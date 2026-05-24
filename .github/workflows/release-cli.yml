@@ -3,7 +3,7 @@ name: Release CLI
 on:
   push:
     tags:
-      - "jax-daemon-v*"
+      - "zim-peer-v*"
     branches:
       - main
     paths:
@@ -32,28 +32,28 @@ jobs:
             target: aarch64-apple-darwin
             fuse: false
             features: "--no-default-features"
-            artifact: jax-daemon-darwin-arm64
+            artifact: zim-darwin-arm64
 
           - name: macOS Apple Silicon (FUSE)
             runner: macos-latest
             target: aarch64-apple-darwin
             fuse: true
             features: ""
-            artifact: jax-daemon-darwin-arm64-fuse
+            artifact: zim-darwin-arm64-fuse
 
           - name: Linux x86_64
             runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             fuse: false
             features: "--no-default-features"
-            artifact: jax-daemon-linux-x64
+            artifact: zim-linux-x64
 
           - name: Linux x86_64 (FUSE)
             runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             fuse: true
             features: ""
-            artifact: jax-daemon-linux-x64-fuse
+            artifact: zim-linux-x64-fuse
 
     steps:
       - uses: actions/checkout@v4
@@ -90,7 +90,7 @@ jobs:
             ${{ runner.os }}-${{ matrix.target }}-${{ matrix.fuse }}-cli-release-build-
 
       - name: Build release binary
-        run: cargo build --release --package jax-daemon --target ${{ matrix.target }} ${{ matrix.features }}
+        run: cargo build --release --package zim-peer --target ${{ matrix.target }} ${{ matrix.features }}
 
       - name: Get version
         id: version
@@ -99,14 +99,14 @@ jobs:
             echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
           else
             TAG="${GITHUB_REF#refs/tags/}"
-            VERSION="${TAG#jax-daemon-v}"
+            VERSION="${TAG#zim-peer-v}"
             echo "version=$VERSION" >> $GITHUB_OUTPUT
           fi
 
       - name: Rename binary
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          cp "target/${{ matrix.target }}/release/jax" "${{ matrix.artifact }}-${VERSION}"
+          cp "target/${{ matrix.target }}/release/zim" "${{ matrix.artifact }}-${VERSION}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -134,16 +134,16 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-            echo "tag=jax-daemon-v${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+            echo "tag=zim-peer-v${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
           else
             TAG="${GITHUB_REF#refs/tags/}"
-            VERSION="${TAG#jax-daemon-v}"
+            VERSION="${TAG#zim-peer-v}"
             echo "version=$VERSION" >> $GITHUB_OUTPUT
             echo "tag=$TAG" >> $GITHUB_OUTPUT
           fi
 
       - name: Make binaries executable
-        run: chmod +x artifacts/jax-daemon-*/jax-daemon-*
+        run: chmod +x artifacts/zim-*/zim-*
 
       - name: List artifacts
         run: find artifacts -type f | sort
@@ -151,52 +151,39 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          find . -type f -name 'jax-daemon-*' -exec sha256sum {} \; | sort > ../checksums.txt
+          find . -type f -name 'zim-*' -exec sha256sum {} \; | sort > ../checksums.txt
           cat ../checksums.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          name: jax-daemon v${{ steps.version.outputs.version }}
+          name: zim v${{ steps.version.outputs.version }}
           draft: false
           prerelease: false
           files: |
-            artifacts/jax-daemon-*/jax-daemon-*
+            artifacts/zim-*/zim-*
             checksums.txt
           body: |
-            ## jax-daemon v${{ steps.version.outputs.version }}
+            ## zim v${{ steps.version.outputs.version }}
 
             ### Downloads
 
             | Platform | Binary | FUSE Mount Support |
             |----------|--------|--------------------|
-            | macOS (Apple Silicon) | `jax-daemon-darwin-arm64-${{ steps.version.outputs.version }}` | No |
-            | macOS (Apple Silicon + FUSE) | `jax-daemon-darwin-arm64-fuse-${{ steps.version.outputs.version }}` | Yes (requires [macFUSE](https://osxfuse.github.io/)) |
-            | Linux (x86_64) | `jax-daemon-linux-x64-${{ steps.version.outputs.version }}` | No |
-            | Linux (x86_64 + FUSE) | `jax-daemon-linux-x64-fuse-${{ steps.version.outputs.version }}` | Yes (requires libfuse3) |
+            | macOS (Apple Silicon) | `zim-darwin-arm64-${{ steps.version.outputs.version }}` | No |
+            | macOS (Apple Silicon + FUSE) | `zim-darwin-arm64-fuse-${{ steps.version.outputs.version }}` | Yes (requires [macFUSE](https://osxfuse.github.io/)) |
+            | Linux (x86_64) | `zim-linux-x64-${{ steps.version.outputs.version }}` | No |
+            | Linux (x86_64 + FUSE) | `zim-linux-x64-fuse-${{ steps.version.outputs.version }}` | Yes (requires libfuse3) |
 
             ### Install
 
-            One-line install (recommended):
-            ```bash
-            curl -fsSL https://raw.githubusercontent.com/jax-protocol/jax-fs/main/install.sh | sh
-            ```
-
-            Install with FUSE support (macOS Apple Silicon only):
-            ```bash
-            curl -fsSL https://raw.githubusercontent.com/jax-protocol/jax-fs/main/install.sh | sh -s -- --fuse
-            ```
-
-            Install a specific version:
-            ```bash
-            curl -fsSL https://raw.githubusercontent.com/jax-protocol/jax-fs/main/install.sh | sh -s -- --version ${{ steps.version.outputs.version }}
-            ```
+            See [install.sh](../../install.sh) at the repository root for the one-line installer (the URL stabilises once the GitHub repo is published under its zim name).
 
             ### Verify
 
             ```bash
-            jax --help
+            zim --help
             ```
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

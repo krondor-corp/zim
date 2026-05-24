@@ -1,6 +1,6 @@
 # Concepts
 
-This directory contains detailed documentation about JaxBucket's architecture and design.
+This directory contains detailed documentation about Zim's architecture and design.
 
 ## Documents
 
@@ -15,7 +15,7 @@ This directory contains detailed documentation about JaxBucket's architecture an
 
 ## Quick Overview
 
-JaxBucket is a peer-to-peer, encrypted storage system that combines:
+Zim is a peer-to-peer, encrypted storage system that combines:
 
 1. **Content Addressing**: Files and directories stored as BLAKE3-hashed blobs
 2. **Encryption**: Each file/directory has its own encryption key
@@ -24,7 +24,7 @@ JaxBucket is a peer-to-peer, encrypted storage system that combines:
 
 ```text
 ┌─────────────────────────────────────────────────┐
-│                   JaxBucket                      │
+│                   Zim                      │
 ├─────────────────────────────────────────────────┤
 │  ┌──────────┐  ┌──────────┐  ┌──────────────┐  │
 │  │ Buckets  │  │  Crypto  │  │ Sync Manager │  │
@@ -40,7 +40,7 @@ JaxBucket is a peer-to-peer, encrypted storage system that combines:
 
 ## Daemon as Library
 
-The daemon crate (`jax_daemon`) is both a library and a binary. The `start_service()` function returns `(ServiceState, ShutdownHandle)`, enabling host applications like the Tauri desktop app to embed the daemon in-process rather than spawning a child process or proxying via HTTP. `ShutdownHandle::shutdown()` triggers graceful teardown of all spawned services (peer, API server, gateway). The CLI binary uses `spawn_service()` which calls `start_service()` internally and blocks until a signal is received.
+The daemon crate (`zim_peer`) is both a library and a binary. The `start_service()` function returns `(ServiceState, ShutdownHandle)`, enabling embedding into host applications (e.g. the future zim-hub web mirror) in-process rather than spawning a child process or proxying via HTTP. `ShutdownHandle::shutdown()` triggers graceful teardown of all spawned services (peer, API server, gateway). The CLI binary uses `spawn_service()` which calls `start_service()` internally and blocks until a signal is received.
 
 ## Reading Order
 

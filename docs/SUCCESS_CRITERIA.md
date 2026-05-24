@@ -49,8 +49,8 @@ Unit tests live alongside the code in `#[cfg(test)]` modules:
 cargo test
 
 # Run tests for specific crate
-cargo test -p jax-common
-cargo test -p jax-daemon
+cargo test -p zim-fs
+cargo test -p zim-peer
 
 # Run specific test
 cargo test test_mirror_cannot_mount
@@ -62,7 +62,7 @@ Integration tests live in `crates/*/tests/`:
 
 ```bash
 # Run integration tests for common crate
-cargo test -p jax-common --test mount_tests
+cargo test -p zim-fs --test mount_tests
 ```
 
 ---

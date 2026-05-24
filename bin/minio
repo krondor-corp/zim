@@ -9,7 +9,7 @@ PROJECT_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 source "$PROJECT_ROOT/bin/utils"
 
 # Configuration
-PROJECT_NAME="jax"
+PROJECT_NAME="zim"
 MINIO_CONTAINER_NAME="${PROJECT_NAME}-minio"
 MINIO_VOLUME_NAME="${PROJECT_NAME}-minio-data"
 MINIO_API_PORT=9000
@@ -103,8 +103,8 @@ function show_connection_info {
     echo -e "${YELLOW}S3 API Endpoint:${NC}"
     echo "  http://localhost:${MINIO_API_PORT}"
     echo ""
-    echo -e "${YELLOW}S3 URL for jax init:${NC}"
-    echo "  s3://minioadmin:minioadmin@localhost:${MINIO_API_PORT}/jax-blobs"
+    echo -e "${YELLOW}S3 URL for zim init:${NC}"
+    echo "  s3://minioadmin:minioadmin@localhost:${MINIO_API_PORT}/zim-blobs"
 }
 
 # Verify connection to MinIO
@@ -126,7 +126,7 @@ function verify_connection {
     fi
 }
 
-# Ensure the jax-blobs bucket exists
+# Ensure the zim-blobs bucket exists
 function ensure_bucket {
     echo "Ensuring bucket '${MINIO_BUCKET_NAME}' exists..."
     # Set up mc alias and create bucket if it doesn't exist
@@ -272,9 +272,9 @@ function help {
     echo "MinIO provides S3-compatible object storage for local development."
     echo "Default credentials: minioadmin / minioadmin"
     echo ""
-    echo "Example usage with jax:"
+    echo "Example usage with zim:"
     echo "  $0 up"
-    echo "  jax init --blob-store s3 --s3-url 's3://minioadmin:minioadmin@localhost:9000/jax-blobs'"
+    echo "  zim init --blob-store s3 --s3-url 's3://minioadmin:minioadmin@localhost:9000/zim-blobs'"
 }
 
 # Process command

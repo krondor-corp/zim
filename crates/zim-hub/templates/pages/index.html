@@ -3,21 +3,40 @@
 {% block title %}zim-hub{% endblock %}
 
 {% block content %}
-<section class="hero" data-signals="{ pulse: 0 }">
+<section class="hero">
   <h1>zim-hub</h1>
-  <p class="lead">
-    Read-only web mirror over a single-user Zim workspace.
-  </p>
+  <p class="lead">Read-only web mirror over a single-user Zim workspace.</p>
+</section>
 
-  <div class="status-card">
-    <p>Scaffold milestone — no bucket data yet.</p>
-    <p class="muted">Routes <code>/b/{id}/tree/*</code>, <code>/b/{id}/blob/*</code>, <code>/b/{id}/history</code>, <code>/b/{id}/published</code> are reserved and will light up once the peer client and published-set surfaces land.</p>
-  </div>
+<section class="buckets">
+  <h2>Buckets</h2>
 
-  <button class="link-button"
-          data-on-click="$pulse++"
-          aria-label="datastar smoke test">
-    datastar signals smoke-test (pulse: <span data-text="$pulse"></span>)
-  </button>
+  {% match buckets %}
+    {% when Some with (list) %}
+      {% if list.is_empty() %}
+        <p class="muted">No buckets on this peer yet.</p>
+      {% else %}
+        <ul class="bucket-list">
+          {% for b in list %}
+            <li class="bucket-row">
+              <a class="bucket-name" href="/b/{{ b.bucket_id }}/tree">{{ b.name }}</a>
+              <span class="bucket-meta">
+                <span class="bucket-id"><code>{{ b.bucket_id }}</code></span>
+                <span class="bucket-status">{{ b.status }}</span>
+              </span>
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    {% when None %}
+      <div class="status-card">
+        <p>Peer at <code>{{ peer_endpoint }}</code> is not reachable.</p>
+        {% match peer_error %}
+          {% when Some with (msg) %}<p class="muted">{{ msg }}</p>
+          {% when None %}
+        {% endmatch %}
+        <p class="muted">Start <code>zim</code> on this host or set <code>ZIM_HUB_PEER</code> to a reachable peer URL.</p>
+      </div>
+  {% endmatch %}
 </section>
 {% endblock %}

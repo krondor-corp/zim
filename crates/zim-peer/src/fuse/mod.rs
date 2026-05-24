@@ -6,7 +6,7 @@
 //! # Architecture
 //!
 //! - `MountManager`: Manages live mounts and their lifecycle
-//! - `JaxFs`: FUSE filesystem implementation using fuser
+//! - `FuseFs`: FUSE filesystem implementation using fuser
 //! - `InodeTable`: Bidirectional inode ↔ path mapping
 //! - `FileCache`: LRU cache with TTL for file contents
 //!
@@ -17,13 +17,13 @@
 //! FUSE operations see the updated content.
 
 mod cache;
+mod fuse_fs;
 mod inode_table;
-mod jax_fs;
 mod mount_manager;
 mod sync_events;
 
 pub use cache::{CacheStats, FileCache, FileCacheConfig};
+pub use fuse_fs::FuseFs;
 pub use inode_table::InodeTable;
-pub use jax_fs::JaxFs;
 pub use mount_manager::{FsError, LiveMount, MountManager, MountManagerConfig};
 pub use sync_events::SyncEvent;

@@ -1,6 +1,6 @@
 # Development Guide
 
-This guide covers setting up a development environment and working on JaxBucket.
+This guide covers setting up a development environment and working on Zim.
 
 ## Prerequisites
 
@@ -41,8 +41,8 @@ See [INSTALL.md](./INSTALL.md) for required system libraries (OpenSSL, SQLite, e
 ### Clone the Repository
 
 ```bash
-git clone https://github.com/jax-ethdenver-2025/jax-bucket.git
-cd jax-bucket
+git clone https://github.com/zim/zim.git
+cd Zim
 ```
 
 ### Build the Project
@@ -65,17 +65,17 @@ cargo test
 cargo check
 
 # Run the CLI
-cargo run --bin jax -- --help
+cargo run --bin zim -- --help
 ```
 
 ## Running the Development Environment
 
-JaxBucket includes a convenient development script that sets up a **two-node P2P network** in tmux with auto-reload.
+Zim includes a convenient development script that sets up a **two-node P2P network** in tmux with auto-reload.
 
 ### Using `bin/dev`
 
 The `dev` script creates a tmux session with:
-- **Two JaxBucket nodes** running in parallel (Node1 and Node2)
+- **Two Zim nodes** running in parallel (Node1 and Node2)
 - **Auto-reload** on code changes (via cargo-watch)
 - **Separate windows** for database inspection and API testing
 
@@ -87,15 +87,15 @@ The `dev` script creates a tmux session with:
 
 This will:
 1. Initialize two nodes in `./data/node1` and `./data/node2` (if not already done)
-2. Create a tmux session named `jax-dev`
+2. Create a tmux session named `zim-dev`
 3. Start both nodes with auto-reload
 4. Attach to the tmux session
 
 ### Tmux Session Layout
 
-The `jax-dev` session has three windows:
+The `zim-dev` session has three windows:
 
-#### Window 0: `jax-nodes`
+#### Window 0: `zim-nodes`
 - **Left pane**: Node1 running with auto-reload
   - API: `http://localhost:3000`
   - Web UI: `http://localhost:8080`
@@ -156,10 +156,10 @@ Ctrl+b [  # Enter scroll mode
 Ctrl+b d
 
 # Reattach later
-tmux attach -t jax-dev
+tmux attach -t zim-dev
 
 # Kill the entire session
-tmux kill-session -t jax-dev
+tmux kill-session -t zim-dev
 ```
 
 ### Testing P2P Sync
@@ -195,7 +195,7 @@ With both nodes running:
 ## Project Structure
 
 ```text
-jax-bucket/
+Zim/
 ├── Cargo.toml                 # Workspace configuration
 ├── bin/
 │   ├── dev                 # Development environment script
@@ -266,8 +266,8 @@ cargo test
 ### Run Tests for a Specific Crate
 
 ```bash
-cargo test -p jax-common
-cargo test -p jax-daemon
+cargo test -p zim-fs
+cargo test -p zim-peer
 ```
 
 ### Run a Specific Test
@@ -356,7 +356,7 @@ pub fn create_bucket(name: String, secret: Secret) -> anyhow::Result<Manifest> {
 ### Enable Debug Logging
 
 ```bash
-RUST_LOG=debug cargo run --bin jax -- daemon
+RUST_LOG=debug cargo run --bin zim -- daemon
 ```
 
 ### Logging Levels
@@ -371,17 +371,17 @@ RUST_LOG=debug cargo run --bin jax -- daemon
 
 ```bash
 # Only show logs from sync_provider
-RUST_LOG=jax_bucket::daemon::sync_provider=debug cargo run --bin jax -- daemon
+RUST_LOG=zim_peer::daemon::sync_provider=debug cargo run --bin zim -- daemon
 
 # Multiple modules
-RUST_LOG=jax_bucket::daemon::sync_provider=debug,jax_common::peer=trace cargo run --bin jax -- daemon
+RUST_LOG=zim_peer::daemon::sync_provider=debug,zim_fs::peer=trace cargo run --bin zim -- daemon
 ```
 
 ### Inspect Database
 
 ```bash
 # Open database with sqlite3
-sqlite3 ~/.config/jax/jax.db
+sqlite3 ~/.config/zim/zim.db
 
 # Or use the dev script
 ./bin/db node1
@@ -389,14 +389,14 @@ sqlite3 ~/.config/jax/jax.db
 
 ### Inspect Blobs
 
-Blobs are stored in `~/.config/jax/blobs/`. You can inspect them with Iroh tools or directly:
+Blobs are stored in `~/.config/zim/blobs/`. You can inspect them with Iroh tools or directly:
 
 ```bash
 # List blobs
-ls -lh ~/.config/jax/blobs/
+ls -lh ~/.config/zim/blobs/
 
 # View blob metadata (they're encrypted, so you'll see ciphertext)
-hexdump -C ~/.config/jax/blobs/HASH
+hexdump -C ~/.config/zim/blobs/HASH
 ```
 
 ## Common Development Tasks
@@ -438,9 +438,9 @@ hexdump -C ~/.config/jax/blobs/HASH
 
 ## Getting Help
 
-- **Issues**: https://github.com/jax-ethdenver-2025/jax-bucket/issues
-- **Discussions**: https://github.com/jax-ethdenver-2025/jax-bucket/discussions
+- **Issues**: https://github.com/zim/zim/issues
+- **Discussions**: https://github.com/zim/zim/discussions
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines on contributing to JaxBucket.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines on contributing to Zim.

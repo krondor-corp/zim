@@ -1,6 +1,6 @@
 # Contributing Guide
 
-This guide covers how to contribute to jax-bucket, whether you're an AI agent or a human developer.
+This guide covers how to contribute to Zim, whether you're an AI agent or a human developer.
 
 ## For AI Agents
 
@@ -145,8 +145,8 @@ pub struct MirrorError;
 
 1. **Clone the repository**
    ```bash
-   git clone git@github.com:jax-protocol/jax-buckets.git
-   cd jax-buckets
+   git clone git@github.com:zim/zim.git
+   cd zim
    ```
 
 2. **Install Rust** (if not already installed)

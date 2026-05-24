@@ -1,10 +1,10 @@
 # Synchronization
 
-This document describes JaxBucket's peer structure and synchronization protocol.
+This document describes Zim's peer structure and synchronization protocol.
 
 ## Peer Structure
 
-A JaxBucket peer consists of:
+A Zim peer consists of:
 
 ### 1. Identity
 
@@ -20,7 +20,7 @@ A JaxBucket peer consists of:
 - Supports Raw blobs and HashSeq collections
 - Local cache on disk
 
-**Location**: `~/.config/jax/blobs/`
+**Location**: `~/.config/zim/blobs/`
 
 ### 3. Endpoint
 
@@ -29,7 +29,7 @@ A JaxBucket peer consists of:
 - DHT-based peer discovery (Mainline DHT)
 - Multiple ALPN protocols:
   - `iroh-blobs`: For blob transfer
-  - `jax-protocol`: For sync messages
+  - `zim-protocol`: For sync messages
 
 ### 4. Database
 
@@ -39,11 +39,11 @@ A JaxBucket peer consists of:
 - Sync status
 - Peer relationships
 
-**Location**: `~/.config/jax/jax.db`
+**Location**: `~/.config/zim/zim.db`
 
 ## Synchronization Protocol
 
-JaxBucket implements a pull-based P2P sync protocol using height-based version comparison. Peers discover divergence through periodic pings and pull missing manifest chains to converge.
+Zim implements a pull-based P2P sync protocol using height-based version comparison. Peers discover divergence through periodic pings and pull missing manifest chains to converge.
 
 **Architecture**: Queue-based sync provider with background job processing
 **Protocol**: Custom QUIC/bincode messages over Iroh
@@ -53,7 +53,7 @@ JaxBucket implements a pull-based P2P sync protocol using height-based version c
 
 **Location**: `crates/daemon/src/daemon/sync_provider.rs`
 
-JaxBucket uses a **QueuedSyncProvider** that decouples protocol handlers from sync execution:
+Zim uses a **QueuedSyncProvider** that decouples protocol handlers from sync execution:
 
 ```rust
 pub struct QueuedSyncProvider {
@@ -84,7 +84,7 @@ pub enum SyncJob {
 
 **Location**: `crates/common/src/peer/protocol/messages/ping.rs`
 
-JaxBucket uses a **bidirectional request/response pattern** where both the initiator and responder can trigger sync jobs as side effects.
+Zim uses a **bidirectional request/response pattern** where both the initiator and responder can trigger sync jobs as side effects.
 
 #### Ping/Pong
 

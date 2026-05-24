@@ -1,6 +1,6 @@
 # FUSE Architecture
 
-This document describes how the FUSE filesystem integration works in jax-bucket.
+This document describes how the FUSE filesystem integration works in Zim.
 
 ## Overview
 
@@ -56,7 +56,7 @@ FUSE (Filesystem in Userspace) allows mounting buckets as local directories. Use
 | File | Purpose |
 |------|---------|
 | `crates/daemon/src/fuse/mod.rs` | Module exports |
-| `crates/daemon/src/fuse/jax_fs.rs` | FUSE filesystem implementation |
+| `crates/zim-peer/src/fuse/fuse_fs.rs` | FUSE filesystem implementation |
 | `crates/daemon/src/fuse/mount_manager.rs` | Mount lifecycle management |
 | `crates/daemon/src/fuse/inode_table.rs` | Path ↔ inode mapping |
 | `crates/daemon/src/fuse/cache.rs` | LRU content/attr cache |
@@ -146,7 +146,7 @@ User: echo "hello" > /mnt/bucket/new.txt
 
 All FUSE mutations route through the daemon's HTTP API for persistence.
 JaxFs holds an `ApiClient` pointing at `http://localhost:{api_port}` and
-calls the same endpoints that the CLI and desktop app use:
+calls the same endpoints the CLI uses:
 
 ```
 JaxFs mutation (flush, unlink, mkdir, rename)

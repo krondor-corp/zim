@@ -1,0 +1,8 @@
+- title: Getting Started
+  items:
+    - quickstart
+    - install
+
+- title: Development
+  items:
+    - local-development

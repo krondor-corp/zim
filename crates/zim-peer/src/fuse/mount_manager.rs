@@ -14,7 +14,7 @@ use crate::database::models::FuseMount;
 use crate::database::types::MountStatus;
 use crate::database::Database;
 use crate::fuse::cache::FileCacheConfig;
-use crate::fuse::jax_fs::JaxFs;
+use crate::fuse::fuse_fs::FuseFs;
 use crate::fuse::sync_events::SyncEvent;
 use crate::fuse::FileCache;
 use crate::http_server::api::client::ApiClient;
@@ -397,7 +397,7 @@ impl MountManager {
         let api_client = ApiClient::new(&api_base_url)
             .map_err(|e| FsError::SpawnFailed(format!("Failed to create API client: {}", e)))?;
 
-        let fs = JaxFs::new(
+        let fs = FuseFs::new(
             tokio::runtime::Handle::current(),
             mount_arc.clone(),
             *mount_id,

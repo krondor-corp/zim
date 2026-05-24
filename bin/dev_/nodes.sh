@@ -1,7 +1,7 @@
 #!/bin/bash
 # Node management commands
 
-TMUX_SESSION="jax-dev"
+TMUX_SESSION="zim-dev"
 
 cmd_clean() {
     echo -e "${YELLOW}Cleaning dev data...${NC}"
@@ -22,7 +22,7 @@ cmd_kill() {
         echo -e "${GREEN}Done${NC}" || \
         echo -e "${YELLOW}No session found${NC}"
 
-    # Kill any orphaned jax processes on our ports
+    # Kill any orphaned zim processes on our ports
     if $force; then
         echo -e "${YELLOW}Force killing processes on dev ports...${NC}"
         kill_dev_ports
@@ -118,7 +118,7 @@ init_node() {
         init_args="$init_args --s3-url $s3_url"
     fi
 
-    cargo run --bin jax --features fuse -- $init_args
+    cargo run --bin zim --features fuse -- $init_args
 }
 
 # Build the daemon command for a node (for use with cargo watch -x)
@@ -128,7 +128,7 @@ get_daemon_cmd() {
     local data_path="$DATA_DIR/$node"
     local log_dir="$data_path/logs"
 
-    local cmd="run --bin jax --features fuse -- --config-path $data_path daemon --log-dir $log_dir"
+    local cmd="run --bin zim --features fuse -- --config-path $data_path daemon --log-dir $log_dir"
 
     echo "$cmd"
 }
@@ -163,7 +163,7 @@ cmd_run() {
         fi
     fi
 
-    echo -e "${BLUE}Setting up JAX dev environment...${NC}"
+    echo -e "${BLUE}Setting up Zim dev environment...${NC}"
 
     # Check cargo-watch
     if ! command -v cargo-watch &>/dev/null; then
@@ -242,7 +242,7 @@ cmd_run() {
         echo ""
     fi
 
-    echo "Logs: ./data/<node>/logs/jax.log.*"
+    echo "Logs: ./data/<node>/logs/zim.log.*"
     echo ""
 
     # Wait for nodes to be healthy and apply fixtures

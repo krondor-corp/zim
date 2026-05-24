@@ -1,9 +1,17 @@
+#[cfg(feature = "iroh-keys")]
 use std::ops::Deref;
 
 use curve25519_dalek::edwards::CompressedEdwardsY;
-use iroh::{PublicKey as PPublicKey, SecretKey as SSecretKey};
 use serde::{Deserialize, Serialize};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
+
+// Inner key types swap between iroh's wrappers (default, used by every native
+// binary) and ed25519-dalek directly (wasm builds, where iroh's networking
+// stack does not compile to wasm32-unknown-unknown).
+#[cfg(not(feature = "iroh-keys"))]
+use ed25519_dalek::{SigningKey as SSecretKey, VerifyingKey as PPublicKey};
+#[cfg(feature = "iroh-keys")]
+use iroh::{PublicKey as PPublicKey, SecretKey as SSecretKey};
 
 /// Size of Ed25519 private key in bytes
 pub const PRIVATE_KEY_SIZE: usize = 32;
@@ -17,27 +25,48 @@ pub enum KeyError {
     Default(#[from] anyhow::Error),
 }
 
-/// Public key for peer identity, key sharing, and update provenance
+/// Public key for peer identity, key sharing, and update provenance.
 ///
-/// A thin wrapper around Iroh's `PublicKey`, representing the public part of an Ed25519 keypair.
-/// This key serves multiple purposes:
-/// - **Peer Identity**: Uniquely identifies a peer in the network (equivalent to Iroh's NodeId)
-/// - **Key Sharing**: Used in ECDH key exchange (after conversion to X25519)
-/// - **Access Control**: Listed in bucket shares to grant access
-///
-/// # Examples
-///
-/// ```ignore
-/// let secret_key = SecretKey::generate();
-/// let public_key = secret_key.public();
-///
-/// // Serialize to hex for storage/transmission
-/// let hex = public_key.to_hex();
-/// let recovered = PublicKey::from_hex(&hex)?;
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord, Copy)]
+/// Wraps Ed25519. With the default `iroh-keys` feature this is an iroh
+/// `PublicKey` (also iroh's `NodeId`); under the `wasm` feature it is an
+/// `ed25519_dalek::VerifyingKey`. The public API on `PublicKey` is the same
+/// either way.
+#[cfg_attr(
+    feature = "iroh-keys",
+    derive(
+        Debug,
+        Clone,
+        PartialEq,
+        Eq,
+        Hash,
+        Serialize,
+        Deserialize,
+        PartialOrd,
+        Ord,
+        Copy
+    )
+)]
+#[cfg_attr(
+    not(feature = "iroh-keys"),
+    derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)
+)]
 pub struct PublicKey(PPublicKey);
 
+#[cfg(not(feature = "iroh-keys"))]
+impl PartialOrd for PublicKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+#[cfg(not(feature = "iroh-keys"))]
+impl Ord for PublicKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.as_bytes().cmp(other.0.as_bytes())
+    }
+}
+
+#[cfg(feature = "iroh-keys")]
 impl Deref for PublicKey {
     type Target = PPublicKey;
     fn deref(&self) -> &Self::Target {
@@ -45,12 +74,14 @@ impl Deref for PublicKey {
     }
 }
 
+#[cfg(feature = "iroh-keys")]
 impl From<PPublicKey> for PublicKey {
     fn from(key: PPublicKey) -> Self {
         PublicKey(key)
     }
 }
 
+#[cfg(feature = "iroh-keys")]
 impl From<PublicKey> for PPublicKey {
     fn from(key: PublicKey) -> Self {
         key.0
@@ -102,15 +133,7 @@ impl PublicKey {
         hex::encode(self.to_bytes())
     }
 
-    /// Convert Ed25519 public key to X25519 (Montgomery curve) for ECDH
-    ///
-    /// This conversion is necessary for the key sharing protocol, which uses
-    /// Elliptic Curve Diffie-Hellman (ECDH) to establish shared secrets.
-    /// Ed25519 uses the Edwards curve, while ECDH requires the Montgomery curve (X25519).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the Ed25519 point cannot be converted (invalid point).
+    /// Convert Ed25519 public key to X25519 (Montgomery curve) for ECDH.
     #[allow(clippy::wrong_self_convention)]
     pub(crate) fn to_x25519(&self) -> Result<X25519PublicKey, KeyError> {
         let edwards_bytes = self.to_bytes();
@@ -124,12 +147,6 @@ impl PublicKey {
     }
 
     /// Verify an Ed25519 signature on a message.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The public key bytes are invalid
-    /// - The signature verification fails
     pub fn verify(
         &self,
         msg: &[u8],
@@ -140,32 +157,10 @@ impl PublicKey {
     }
 }
 
-/// Secret key for peer identity and key sharing
+/// Secret key for peer identity and key sharing.
 ///
-/// A thin wrapper around Iroh's `SecretKey`, representing the private part of an Ed25519 keypair.
-/// This key should be kept secret and securely stored (e.g., in the local config file).
-///
-/// # Security Considerations
-///
-/// - Never share this key over the network
-/// - Store encrypted or in a secure location (e.g., `~/.config/jax/secret.pem`)
-/// - Generate a new key for each peer instance
-///
-/// # Examples
-///
-/// ```ignore
-/// // Generate a new keypair
-/// let secret_key = SecretKey::generate();
-/// let public_key = secret_key.public();
-///
-/// // Persist to PEM format
-/// let pem = secret_key.to_pem();
-/// std::fs::write("secret.pem", pem)?;
-///
-/// // Load from PEM
-/// let pem = std::fs::read_to_string("secret.pem")?;
-/// let recovered = SecretKey::from_pem(&pem)?;
-/// ```
+/// Wraps Ed25519. With the default `iroh-keys` feature this is an iroh
+/// `SecretKey`; under the `wasm` feature it is an `ed25519_dalek::SigningKey`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecretKey(pub SSecretKey);
 
@@ -175,6 +170,7 @@ impl From<[u8; PRIVATE_KEY_SIZE]> for SecretKey {
     }
 }
 
+#[cfg(feature = "iroh-keys")]
 impl Deref for SecretKey {
     type Target = SSecretKey;
     fn deref(&self) -> &Self::Target {
@@ -184,8 +180,6 @@ impl Deref for SecretKey {
 
 impl SecretKey {
     /// Parse a secret key from a hexadecimal string
-    ///
-    /// Accepts both plain hex and "0x"-prefixed hex strings.
     pub fn from_hex(hex: &str) -> Result<Self, KeyError> {
         let hex = hex.strip_prefix("0x").unwrap_or(hex);
         let mut buff = [0; PRIVATE_KEY_SIZE];
@@ -203,7 +197,10 @@ impl SecretKey {
 
     /// Derive the public key from this secret key
     pub fn public(&self) -> PublicKey {
-        PublicKey(self.0.public())
+        #[cfg(feature = "iroh-keys")]
+        return PublicKey(self.0.public());
+        #[cfg(not(feature = "iroh-keys"))]
+        return PublicKey(self.0.verifying_key());
     }
 
     /// Convert secret key to raw bytes
@@ -217,21 +214,12 @@ impl SecretKey {
     }
 
     /// Encode secret key in PEM format for secure storage
-    ///
-    /// Returns a PEM-encoded string with tag "PRIVATE KEY".
     pub fn to_pem(&self) -> String {
         let pem = pem::Pem::new("PRIVATE KEY", self.to_bytes());
         pem::encode(&pem)
     }
 
     /// Parse a secret key from PEM format
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The PEM string is malformed
-    /// - The PEM tag is not "PRIVATE KEY"
-    /// - The key size is incorrect
     pub fn from_pem(pem_str: &str) -> Result<Self, KeyError> {
         let pem = pem::parse(pem_str).map_err(|e| anyhow::anyhow!("failed to parse PEM: {}", e))?;
 
@@ -254,24 +242,35 @@ impl SecretKey {
         Ok(Self::from(bytes))
     }
 
-    /// Convert Ed25519 secret key to X25519 (Montgomery curve) for ECDH
-    ///
-    /// This conversion is used internally for the key sharing protocol.
-    /// The scalar bytes of the Ed25519 key are directly used as the X25519 private key.
+    /// Convert Ed25519 secret key to X25519 (Montgomery curve) for ECDH.
     pub(crate) fn to_x25519(&self) -> StaticSecret {
-        let signing_key = self.0.secret();
-        let scalar_bytes = signing_key.to_scalar_bytes();
-        StaticSecret::from(scalar_bytes)
+        #[cfg(feature = "iroh-keys")]
+        {
+            let signing_key = self.0.secret();
+            let scalar_bytes = signing_key.to_scalar_bytes();
+            StaticSecret::from(scalar_bytes)
+        }
+        #[cfg(not(feature = "iroh-keys"))]
+        {
+            let scalar_bytes = self.0.to_scalar_bytes();
+            StaticSecret::from(scalar_bytes)
+        }
     }
 
     /// Sign a message with this secret key using Ed25519.
-    ///
-    /// Returns a detached signature that can be verified with the corresponding public key.
     pub fn sign(&self, msg: &[u8]) -> ed25519_dalek::Signature {
-        // iroh uses a different version of ed25519_dalek, so we need to convert
-        // the signature via bytes (both versions have the same 64-byte representation)
-        let sig = self.0.sign(msg);
-        ed25519_dalek::Signature::from_bytes(&sig.to_bytes())
+        #[cfg(feature = "iroh-keys")]
+        {
+            // iroh ships its own (older) ed25519_dalek; convert via raw bytes
+            // since both versions share the 64-byte representation.
+            let sig = self.0.sign(msg);
+            ed25519_dalek::Signature::from_bytes(&sig.to_bytes())
+        }
+        #[cfg(not(feature = "iroh-keys"))]
+        {
+            use ed25519_dalek::Signer;
+            self.0.sign(msg)
+        }
     }
 }
 

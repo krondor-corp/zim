@@ -1,10 +1,10 @@
 # Security
 
-This document describes JaxBucket's security model, threat model, best practices, and implementation details.
+This document describes Zim's security model, threat model, best practices, and implementation details.
 
 ## Threat Model
 
-### JaxBucket Protects Against
+### Zim Protects Against
 
 **Untrusted Storage Providers**
 - All blobs are encrypted
@@ -26,7 +26,7 @@ This document describes JaxBucket's security model, threat model, best practices
 - Content addressing ensures integrity
 - Hash verification on all blobs
 
-### JaxBucket Does NOT Protect Against
+### Zim Does NOT Protect Against
 
 **Compromised Peer with Valid Access**
 - If an authorized peer is compromised, attacker gains access

@@ -12,7 +12,7 @@ latest_log() {
     local node=$(resolve_node "$1")
     local dir=$(log_dir "$node")
     if [[ -d "$dir" ]]; then
-        ls -t "$dir"/jax.log.* 2>/dev/null | head -1
+        ls -t "$dir"/zim.log.* 2>/dev/null | head -1
     fi
 }
 
@@ -21,7 +21,7 @@ all_log_files() {
     for node in $(get_node_names); do
         local dir=$(log_dir "$node")
         if [[ -d "$dir" ]]; then
-            ls "$dir"/jax.log.* 2>/dev/null
+            ls "$dir"/zim.log.* 2>/dev/null
         fi
     done
 }
@@ -46,7 +46,7 @@ logs_tail() {
 
         local nick=$(toml_get "$resolved" "nick")
         echo -e "${GREEN}Tailing logs for $resolved ($nick)...${NC}"
-        tail -F "$dir"/jax.log.* 2>/dev/null || echo -e "${YELLOW}No log files found${NC}"
+        tail -F "$dir"/zim.log.* 2>/dev/null || echo -e "${YELLOW}No log files found${NC}"
     else
         # Tail all nodes
         local log_files=$(all_log_files)
@@ -105,7 +105,7 @@ logs_list() {
 
         echo "$node ($nick):"
         if [[ -d "$dir" ]]; then
-            ls -lh "$dir"/jax.log.* 2>/dev/null | sed 's/^/  /' || echo "  (no files)"
+            ls -lh "$dir"/zim.log.* 2>/dev/null | sed 's/^/  /' || echo "  (no files)"
         else
             echo "  (no logs directory)"
         fi
@@ -114,7 +114,7 @@ logs_list() {
 }
 
 logs_help() {
-    echo "Log viewer - helper for viewing jax-bucket logs"
+    echo "Log viewer - helper for viewing zim logs"
     echo ""
     echo "Usage: ./bin/dev logs <command> [args...]"
     echo ""
@@ -129,7 +129,7 @@ logs_help() {
     echo "  - ID: node0, node1, node2"
     echo "  - Nickname: full, app, gw"
     echo ""
-    echo "Log location: ./data/<node>/logs/jax.log.YYYY-MM-DD"
+    echo "Log location: ./data/<node>/logs/zim.log.YYYY-MM-DD"
     echo ""
     echo "Examples:"
     echo "  ./bin/dev logs tail           # Tail all logs"

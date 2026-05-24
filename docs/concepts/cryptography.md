@@ -1,6 +1,6 @@
 # Cryptography
 
-This document describes the cryptographic primitives and protocols used in JaxBucket for identity, key sharing, and content encryption.
+This document describes the cryptographic primitives and protocols used in Zim for identity, key sharing, and content encryption.
 
 ## Identity
 
@@ -14,7 +14,7 @@ pub struct PublicKey(ed25519_dalek::VerifyingKey); // 32 bytes
 ```
 
 **Properties:**
-- **SecretKey**: Stored in `~/.config/jax/secret.pem` (PEM format)
+- **SecretKey**: Stored in `~/.config/zim/secret.pem` (PEM format)
 - **PublicKey**: Derived from secret key, used as Node ID
 - **Dual Purpose**:
   1. Network identity (Iroh uses PublicKey as NodeId)

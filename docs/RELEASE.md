@@ -1,6 +1,6 @@
 # Release Process
 
-This document describes how to release new versions of the JaxBucket crates using `cargo-smart-release`.
+This document describes how to release new versions of the Zim crates using `cargo-smart-release`.
 
 ## Overview
 
@@ -60,7 +60,7 @@ If you prefer to release manually from the command line:
 
 2. **Preview what would happen** (dry-run):
    ```bash
-   cargo smart-release jax-daemon -v
+   cargo smart-release zim-peer -v
    ```
 
    This shows:
@@ -70,13 +70,13 @@ If you prefer to release manually from the command line:
 
 3. **Execute the release**:
    ```bash
-   cargo smart-release jax-daemon --execute --no-publish
+   cargo smart-release zim-peer --execute --no-publish
    ```
 
    This will:
    - Update version numbers in all Cargo.toml files
    - Update CHANGELOGs based on commits since last release
-   - Create git tags (e.g., `jax-common-v0.1.1`, `jax-object-store-v0.1.1`, `jax-daemon-v0.1.1`)
+   - Create git tags (e.g., `zim-fs-v0.1.1`, `zim-store-v0.1.1`, `zim-peer-v0.1.1`)
    - Commit the changes with message like "release"
    - Push tags and commits to GitHub
    - **Note**: It does NOT publish to crates.io (that's handled by GitHub Actions)
@@ -99,11 +99,11 @@ If you prefer to release manually from the command line:
 If you only want to bump a specific crate (not the whole workspace):
 
 ```bash
-# Release only jax-common
-cargo smart-release jax-common --execute --no-publish
+# Release only zim-fs
+cargo smart-release zim-fs --execute --no-publish
 
-# Release only jax-object-store (will also bump jax-common if it depends on unreleased changes)
-cargo smart-release jax-object-store --execute --no-publish
+# Release only zim-store (will also bump zim-fs if it depends on unreleased changes)
+cargo smart-release zim-store --execute --no-publish
 ```
 
 The tool will automatically determine which dependencies need to be updated.
@@ -114,13 +114,13 @@ If you want to force a specific version bump instead of auto-detection:
 
 ```bash
 # Force a minor version bump
-cargo smart-release jax-daemon --execute --no-publish --bump minor
+cargo smart-release zim-peer --execute --no-publish --bump minor
 
 # Force a patch version bump
-cargo smart-release jax-daemon --execute --no-publish --bump patch
+cargo smart-release zim-peer --execute --no-publish --bump patch
 
 # Force a major version bump
-cargo smart-release jax-daemon --execute --no-publish --bump major
+cargo smart-release zim-peer --execute --no-publish --bump major
 ```
 
 ## Editing Changelogs Manually
@@ -133,7 +133,7 @@ If the auto-generated changelog is empty or needs tweaking:
 
 Or use:
 ```bash
-cargo changelog --write jax-daemon
+cargo changelog --write zim-peer
 ```
 
 ## How the Automation Works
@@ -190,7 +190,7 @@ git commit -m "feat: add new file upload feature"
 git push origin main
 
 # 3. GitHub Actions automatically creates/updates a Release PR
-# Check: https://github.com/YOUR_ORG/jax-bucket/pulls
+# Check: https://github.com/YOUR_ORG/Zim/pulls
 
 # 4. Review the Release PR:
 #    - Verify version bumps are correct
@@ -208,13 +208,13 @@ git push origin main
 git log --oneline
 
 # 2. Dry-run to preview
-cargo smart-release jax-daemon -v
+cargo smart-release zim-peer -v
 
 # 3. Execute if everything looks good
-cargo smart-release jax-daemon --execute --no-publish
+cargo smart-release zim-peer --execute --no-publish
 
 # 4. Wait for GitHub Actions to publish to crates.io
-# Check: https://github.com/jax-ethdenver-2025/jax-bucket/actions
+# Check: https://github.com/zim/zim/actions
 ```
 
 ### Emergency Hotfix
@@ -231,5 +231,5 @@ git push origin main
 # Go to Actions → "Create Release PR" → "Run workflow"
 
 # Option 3: Manual release (fastest)
-cargo smart-release jax-daemon --execute --no-publish --bump patch
+cargo smart-release zim-peer --execute --no-publish --bump patch
 ```

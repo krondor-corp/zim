@@ -1,0 +1,34 @@
+{% extends "layouts/base.html" %}
+
+{% block title %}history — {{ bucket_id }} — zim-hub{% endblock %}
+
+{% block content %}
+{% include "partials/breadcrumb.html" %}
+
+<section class="history">
+  {% if entries.is_empty() %}
+    <p class="muted">No history entries.</p>
+  {% else %}
+    <table class="history-table">
+      <thead>
+        <tr>
+          <th>height</th>
+          <th>link hash</th>
+          <th>published</th>
+          <th>created at</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in entries %}
+          <tr>
+            <td>{{ entry.height }}</td>
+            <td><code>{{ entry.link_hash }}</code></td>
+            <td>{% if entry.published %}<span class="badge">public</span>{% endif %}</td>
+            <td><time>{{ entry.created_at }}</time></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,10 +1,10 @@
 # API Reference
 
-This document describes the HTTP API endpoints for jax-daemon.
+This document describes the HTTP API endpoints for zim-peer.
 
 ## Overview
 
-jax-daemon runs two servers on separate ports:
+zim-peer runs two servers on separate ports:
 - **API Server**: REST API for bucket operations (private, localhost only)
 - **Gateway Server**: Read-only content serving (public-facing)
 

@@ -7,6 +7,7 @@ members = [
     "crates/zim-protocol",
     "crates/zim-peer",
     "crates/zim-hub",
+    "crates/zim-wasm",
 ]
 
 [workspace.package]
@@ -76,6 +77,11 @@ iroh-blobs = { version = "^0.95" }
 cid = { version = "0.11", features = ["serde"] }
 ipld-core = { version = "0.4", features = ["serde"] }
 serde_ipld_dagcbor = "0.6"
+
+# WASM (for crates/zim-wasm)
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+console_error_panic_hook = "0.1"
 
 # Time/UUID
 time = { version = "0.3", features = ["serde", "formatting", "parsing"] }

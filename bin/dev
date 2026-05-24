@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# JAX Development Environment
+# Zim Development Environment
 #
 # Usage:
 #   ./bin/dev              Start all nodes in tmux
@@ -37,7 +37,7 @@ source "$DEV_DIR/fixtures.sh"
 source "$DEV_DIR/db.sh"
 
 cmd_help() {
-    echo "JAX Development Environment"
+    echo "Zim Development Environment"
     echo ""
     echo "Usage: ./bin/dev <command> [args...]"
     echo ""

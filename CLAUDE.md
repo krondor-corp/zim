@@ -1,45 +1,43 @@
 # Project Guide
 
-jax-bucket: end-to-end encrypted, peer-to-peer storage built on iroh-blobs with ChaCha20-Poly1305 encryption and X25519 secret sharing.
+zim: end-to-end encrypted, peer-to-peer storage built on iroh-blobs with ChaCha20-Poly1305 encryption and X25519 secret sharing.
 
 ## Quick Reference
 
 ```bash
-cargo build                # Build all crates
-cargo test                 # Run all tests
-cargo clippy -- -D warnings # Lint (warnings are errors)
-cargo fmt                  # Format code
-cargo fmt -- --check       # Check formatting
-make dev                   # Start 2-node dev environment in tmux
-cargo run --bin jax -- --help # Run the CLI
+cargo build                  # Build all crates
+cargo test                   # Run all tests
+cargo clippy -- -D warnings  # Lint (warnings are errors)
+cargo fmt                    # Format code
+cargo fmt -- --check         # Check formatting
+make hub                     # Start zim-hub dev server with hot reload
+make dev                     # Start 2-node dev environment in tmux
+cargo run --bin zim -- --help # Run the CLI
 ```
 
 ## Project Structure
 
 ```
 crates/
-├── daemon/       # CLI binary + daemon library (jax-daemon)
-│   ├── src/cli/  # CLI commands using the Op pattern (see docs/CLI.md)
-│   ├── src/http_server/ # Axum REST API + gateway
-│   ├── src/fuse/  # FUSE filesystem (feature-gated)
-│   └── src/database/ # SQLite persistence
-├── common/       # Core library (jax-common)
-│   ├── src/crypto/ # Ed25519/X25519 keys, ChaCha20-Poly1305, secret sharing
-│   ├── src/mount/  # Virtual filesystem, manifest, CRDT path ops
-│   └── src/peer/   # P2P via iroh, blob storage, sync protocol
-├── object-store/ # Blob storage backend (SQLite + S3/MinIO/local)
-└── desktop/      # Tauri 2.0 desktop app (SolidJS frontend)
+├── zim-crypto/    # Ed25519/X25519 keys, ChaCha20-Poly1305, secret sharing
+├── zim-store/     # Content-addressed blob storage (SQLite + S3/MinIO/local)
+├── zim-fs/        # Filesystem: manifest, nodes, CRDT path ops, conflict resolution
+├── zim-protocol/  # Wire protocol: peer messaging, sync jobs, append-only bucket log
+├── zim-peer/      # System daemon binary `zim` + HTTP API + FUSE + database
+├── zim-hub/       # Read-only web mirror gateway (Askama + Datastar)
+└── zim-wasm/      # Browser-side WASM client for the hub
 
-docs/             # All project documentation (read these first)
-bin/              # Dev scripts (dev, check, db, minio)
-issues/           # File-based issue tracking
+docs/              # Contributor/agent documentation
+wiki/              # End-user documentation (Jekyll)
+bin/               # Dev scripts (dev, check, build, test, db, minio)
 ```
 
 ## Documentation
 
 - `docs/index.md` — Documentation hub and agent instructions
 - `docs/concepts/` — Architecture: overview, data model, cryptography, sync, security
-- `docs/PROJECT_LAYOUT.md` — Crate structure and module map
+- `docs/CRATES.md` — Crate layout, dependency graph, naming conventions
+- `docs/PROJECT_LAYOUT.md` — Module map per crate
 - `docs/PATTERNS.md` — Error handling, async, serialization, module org
 - `docs/CLI.md` — Op pattern, formatting boundary, command_enum! macro
 - `docs/CONTRIBUTING.md` — Contribution workflow, commit conventions, test readability
@@ -51,9 +49,10 @@ issues/           # File-based issue tracking
 - `docs/SUCCESS_CRITERIA.md` — CI checks that must pass
 - `docs/ISSUES.md` — Issue and ticket conventions
 
-## Issues
+## Audience split (binding)
 
-Track work items in `issues/`. See `issues/README.md` for the convention.
+- **`wiki/`** — end-user facing. Operational, copy-pasteable. No Rust internals, no codebase paths, no struct dumps.
+- **`docs/`** — contributors and AI agents. Architecture, patterns, processes, internals.
 
 ## Constraints
 

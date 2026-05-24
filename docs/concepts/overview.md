@@ -1,10 +1,10 @@
 # Overview
 
-High-level architecture and concepts for understanding jax-bucket.
+High-level architecture and concepts for understanding Zim.
 
 ## Overview
 
-jax-bucket organizes data into **Buckets** - encrypted containers that hold files and directories. Each bucket has:
+Zim organizes data into **Buckets** - encrypted containers that hold files and directories. Each bucket has:
 
 - A unique identifier (UUID)
 - A friendly name
@@ -233,7 +233,7 @@ struct Link(Cid);  // Wrapper around CID
 
 ### Peer
 
-jax-bucket uses iroh for P2P networking:
+Zim uses iroh for P2P networking:
 
 ```rust
 struct Peer {

@@ -1,7 +1,6 @@
 use askama::Template;
 use axum::extract::{Path, State};
 use axum::response::Html;
-use base64::Engine;
 use uuid::Uuid;
 
 use crate::errors::{Error, Result};
@@ -26,19 +25,14 @@ pub async fn handler(
     Path((bucket_id, path)): Path<(Uuid, String)>,
 ) -> Result<Html<String>> {
     let api_path = format!("/{path}");
-    let response = state.peer.cat(bucket_id, &api_path, None).await?;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(&response.content)
-        .map_err(|e| Error::Decode(e.to_string()))?;
-
-    let text = render_text(&response.mime_type, &bytes);
-
+    let result = state.peer.cat(bucket_id, &api_path).await?;
+    let text = render_text(&result.mime_type, &result.bytes);
     let tmpl = BlobTemplate {
         bucket_id,
         path,
-        mime_type: response.mime_type,
-        size: response.size,
-        breadcrumb: breadcrumb(bucket_id, &response.path),
+        mime_type: result.mime_type,
+        size: result.size,
+        breadcrumb: breadcrumb(bucket_id, &result.path),
         text,
     };
     Ok(Html(tmpl.render().map_err(Error::Template)?))

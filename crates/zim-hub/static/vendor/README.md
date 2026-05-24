@@ -1,6 +1,13 @@
 # static/vendor/
 
-Single-file JS dependencies, committed to the repo. No npm, no Vite, no toolchain.
+JS / WASM dependencies vendored into the repo. No npm, no Vite, no run-time toolchain. Build-time toolchains (e.g. `wasm-pack` for `zim-wasm`) are acceptable; their outputs land here and get committed.
+
+## Inventory
+
+| Path | What | Per-bundle README |
+|---|---|---|
+| `datastar.min.js` | Datastar hypermedia client (~30 KB). See below. | (this file) |
+| `zim-wasm/` | Browser-side WASM client built from `crates/zim-wasm/`. | `zim-wasm/README.md` |
 
 ## datastar.min.js
 

@@ -5,6 +5,7 @@ members = [
     "crates/zim-store",
     "crates/zim-fs",
     "crates/zim-protocol",
+    "crates/zim-runtime",
     "crates/zim-peer",
     "crates/zim-hub",
     "crates/zim-wasm",

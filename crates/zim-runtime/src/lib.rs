@@ -1,9 +1,10 @@
 //! Service lifecycle + graceful shutdown.
 //!
-//! Adopted from `krondor-corp/pack`'s `runtime` module. Every long-running
-//! component (the HTTP server, future SSE pumps, future task workers) implements
-//! [`Service`]; [`ShutdownHandle`] listens for SIGINT/SIGTERM, broadcasts a
-//! single shutdown signal, and waits for all services to drain.
+//! Aesthetic adopted from `krondor-corp/pack`'s `runtime` module. Every
+//! long-running component (the HTTP server, SSE pumps, task workers, the
+//! daemon's iroh router, sync provider) implements [`Service`];
+//! [`ShutdownHandle`] listens for SIGINT/SIGTERM, broadcasts a single shutdown
+//! signal, and waits for all services to drain.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

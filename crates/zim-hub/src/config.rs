@@ -1,18 +1,19 @@
 use std::env;
 use std::net::SocketAddr;
-
-use url::Url;
+use std::path::PathBuf;
 
 const DEFAULT_LISTEN: &str = "127.0.0.1:8080";
-const DEFAULT_PEER: &str = "http://127.0.0.1:3001";
+const DEFAULT_DATA: &str = "./data/zim-hub";
 const LISTEN_ENV: &str = "ZIM_HUB_LISTEN";
-const PEER_ENV: &str = "ZIM_HUB_PEER";
+const DATA_ENV: &str = "ZIM_HUB_DATA";
 const LOG_ENV: &str = "ZIM_HUB_LOG";
 
 #[derive(Debug, Clone)]
 pub struct Config {
     pub listen_address: SocketAddr,
-    pub peer_endpoint: Url,
+    /// Directory holding the embedded peer's SQLite DB and blob store.
+    /// Created on first run if missing.
+    pub data_dir: PathBuf,
     pub log_level: tracing::Level,
 }
 
@@ -20,8 +21,6 @@ pub struct Config {
 pub enum ConfigError {
     #[error("invalid {LISTEN_ENV}: {0}")]
     InvalidListen(String),
-    #[error("invalid {PEER_ENV}: {0}")]
-    InvalidPeer(String),
     #[error("invalid {LOG_ENV}: {0}")]
     InvalidLogLevel(String),
 }
@@ -33,16 +32,9 @@ impl Config {
             .parse()
             .map_err(|_| ConfigError::InvalidListen(listen_raw.clone()))?;
 
-        let peer_raw = env::var(PEER_ENV).unwrap_or_else(|_| DEFAULT_PEER.to_string());
-        let mut peer_endpoint = peer_raw
-            .parse()
-            .map_err(|_| ConfigError::InvalidPeer(peer_raw.clone()))?;
-        // Normalize: ensure trailing slash so url::Url::join keeps the full base path.
-        if !peer_raw.ends_with('/') {
-            peer_endpoint = format!("{peer_raw}/")
-                .parse()
-                .map_err(|_| ConfigError::InvalidPeer(peer_raw))?;
-        }
+        let data_dir = env::var(DATA_ENV)
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(DEFAULT_DATA));
 
         let log_level = match env::var(LOG_ENV) {
             Ok(s) => s
@@ -53,7 +45,7 @@ impl Config {
 
         Ok(Self {
             listen_address,
-            peer_endpoint,
+            data_dir,
             log_level,
         })
     }

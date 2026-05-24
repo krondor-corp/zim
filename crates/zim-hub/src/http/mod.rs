@@ -7,7 +7,6 @@ use tokio::sync::watch;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
-use crate::runtime;
 use crate::state::AppState;
 
 pub struct HttpServer;
@@ -28,7 +27,7 @@ pub fn build_router(state: AppState) -> Router {
 }
 
 #[async_trait::async_trait]
-impl runtime::Service for HttpServer {
+impl zim_runtime::Service for HttpServer {
     type State = AppState;
 
     async fn run(state: Self::State, mut shutdown_rx: watch::Receiver<()>) {

@@ -1,215 +1,158 @@
-//! Read-only client against the local zim-peer HTTP API.
+//! In-process wrapper around the embedded peer `ServiceState`.
 //!
-//! zim-hub is a strict consumer of zim-peer's `POST /api/v0/bucket/*` surface.
-//! Only the read methods (`list`, `ls`, `cat`, `history`) are implemented here;
-//! mutation endpoints exist on the peer but are never called from the hub.
+//! The hub does NOT talk to the peer over HTTP — it holds the `ServiceState`
+//! directly and calls the same `Database`/`Peer`/`Fs` methods that `zim-peer`'s
+//! own HTTP handlers would. This module is the boundary: handlers see a small
+//! read-only API (`list_buckets`, `ls`, `cat`, `history`); internally it routes
+//! to the embedded peer.
 
-use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+
 use time::OffsetDateTime;
-use url::Url;
 use uuid::Uuid;
 
-#[derive(Debug, Clone)]
-pub struct PeerClient {
-    base: Url,
-    http: reqwest::Client,
-}
+use zim_fs::{FsError, NodeLink};
+use zim_peer::ServiceState;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PeerError {
-    #[error("peer request failed: {0}")]
-    Transport(#[from] reqwest::Error),
-    #[error("peer returned {status}: {body}")]
-    Status {
-        status: reqwest::StatusCode,
-        body: String,
-    },
-    #[error("base url join failed: {0}")]
-    Url(#[from] url::ParseError),
+    #[error("database error: {0}")]
+    Database(String),
+    #[error("fs error: {0}")]
+    Fs(#[from] FsError),
+}
+
+#[derive(Clone)]
+pub struct PeerClient {
+    service: ServiceState,
 }
 
 impl PeerClient {
-    pub fn new(base: Url) -> Self {
-        Self {
-            base,
-            http: reqwest::Client::builder()
-                .user_agent(concat!("zim-hub/", env!("CARGO_PKG_VERSION")))
-                .build()
-                .expect("reqwest client"),
-        }
+    pub fn new(service: ServiceState) -> Self {
+        Self { service }
     }
 
-    pub fn base(&self) -> &Url {
-        &self.base
-    }
-
-    async fn post<Req: Serialize, Res: for<'de> Deserialize<'de>>(
-        &self,
-        path: &str,
-        req: &Req,
-    ) -> Result<Res, PeerError> {
-        let url = self.base.join(path)?;
-        let resp = self.http.post(url).json(req).send().await?;
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(PeerError::Status { status, body });
-        }
-        Ok(resp.json().await?)
-    }
-
-    pub async fn list_buckets(&self) -> Result<ListResponse, PeerError> {
-        self.post("api/v0/bucket/list", &ListRequest::default())
+    pub async fn list_buckets(&self) -> Result<Vec<BucketInfo>, PeerError> {
+        let rows = self
+            .service
+            .database()
+            .list_buckets(None, None)
             .await
+            .map_err(|e| PeerError::Database(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| BucketInfo {
+                bucket_id: r.id,
+                name: r.name,
+                link_hash: r.link.to_string(),
+                created_at: r.created_at,
+            })
+            .collect())
     }
 
-    pub async fn ls(
-        &self,
-        bucket_id: Uuid,
-        path: Option<&str>,
-        at: Option<&str>,
-    ) -> Result<LsResponse, PeerError> {
-        self.post(
-            "api/v0/bucket/ls",
-            &LsRequest {
-                bucket_id,
-                path: path.map(str::to_string),
-                deep: None,
-                at: at.map(str::to_string),
-            },
-        )
-        .await
+    pub async fn ls(&self, bucket_id: Uuid, path: &str) -> Result<Vec<PathInfo>, PeerError> {
+        let fs = self.service.peer().mount_for_read(bucket_id).await?;
+        let entries = fs.ls(Path::new(path)).await?;
+        let mut out = Vec::with_capacity(entries.len());
+        for (entry_path, link) in entries {
+            out.push(PathInfo::from_entry(entry_path, &link));
+        }
+        Ok(out)
     }
 
-    pub async fn cat(
-        &self,
-        bucket_id: Uuid,
-        path: &str,
-        at: Option<&str>,
-    ) -> Result<CatResponse, PeerError> {
-        self.post(
-            "api/v0/bucket/cat",
-            &CatRequest {
-                bucket_id,
-                path: path.to_string(),
-                at: at.map(str::to_string),
-                download: None,
-            },
-        )
-        .await
+    pub async fn cat(&self, bucket_id: Uuid, path: &str) -> Result<CatResult, PeerError> {
+        let fs = self.service.peer().mount_for_read(bucket_id).await?;
+        let bytes = fs.cat(Path::new(path)).await?;
+        let mime_type = mime_guess::from_path(path)
+            .first_or_octet_stream()
+            .to_string();
+        Ok(CatResult {
+            path: path.to_string(),
+            size: bytes.len(),
+            mime_type,
+            bytes,
+        })
     }
 
     pub async fn history(
         &self,
         bucket_id: Uuid,
-        page: Option<u32>,
-        page_size: Option<u32>,
-    ) -> Result<HistoryResponse, PeerError> {
-        self.post(
-            "api/v0/bucket/history",
-            &HistoryRequest {
-                bucket_id,
-                page,
-                page_size,
-            },
-        )
-        .await
+        page: u32,
+        page_size: u32,
+    ) -> Result<Vec<HistoryEntry>, PeerError> {
+        let logs = self
+            .service
+            .database()
+            .get_bucket_logs(&bucket_id, page, page_size)
+            .await
+            .map_err(|e| PeerError::Database(e.to_string()))?;
+        Ok(logs
+            .into_iter()
+            .map(|e| HistoryEntry {
+                link_hash: e.current_link.to_string(),
+                height: e.height,
+                published: e.published,
+                created_at: e.created_at,
+            })
+            .collect())
     }
 }
 
-// Request / response shapes — mirror zim-peer's API types. We deliberately
-// duplicate them here (rather than depend on zim-peer as a crate) to keep the
-// hub independent of the peer's internal types and to avoid a cargo edge.
+// Public types consumed by handlers / templates. Kept simple and template-friendly.
 
-#[derive(Debug, Default, Serialize)]
-pub struct ListRequest {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prefix: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ListResponse {
-    pub buckets: Vec<BucketInfo>,
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BucketInfo {
     pub bucket_id: Uuid,
     pub name: String,
-    pub link: serde_json::Value,
-    pub status: String,
-    #[serde(with = "time::serde::rfc3339")]
+    pub link_hash: String,
     pub created_at: OffsetDateTime,
 }
 
-#[derive(Debug, Serialize)]
-pub struct LsRequest {
-    pub bucket_id: Uuid,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub deep: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub at: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct LsResponse {
-    pub items: Vec<PathInfo>,
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PathInfo {
     pub path: String,
     pub name: String,
-    pub link: serde_json::Value,
     pub is_dir: bool,
     pub mime_type: String,
 }
 
-#[derive(Debug, Serialize)]
-pub struct CatRequest {
-    pub bucket_id: Uuid,
-    pub path: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub download: Option<bool>,
+impl PathInfo {
+    fn from_entry(entry_path: PathBuf, link: &NodeLink) -> Self {
+        let path = entry_path.to_string_lossy().into_owned();
+        let name = entry_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.clone());
+        let is_dir = matches!(link, NodeLink::Dir(..));
+        let mime_type = match link {
+            NodeLink::Dir(..) => String::from("inode/directory"),
+            NodeLink::Data(_, _, data) => data.mime().map(|m| m.to_string()).unwrap_or_else(|| {
+                mime_guess::from_path(&entry_path)
+                    .first_or_octet_stream()
+                    .to_string()
+            }),
+        };
+        Self {
+            path,
+            name,
+            is_dir,
+            mime_type,
+        }
+    }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct CatResponse {
+#[derive(Debug, Clone)]
+pub struct CatResult {
     pub path: String,
-    /// Base64-encoded file content.
-    pub content: String,
+    pub bytes: Vec<u8>,
     pub size: usize,
     pub mime_type: String,
 }
 
-#[derive(Debug, Serialize)]
-pub struct HistoryRequest {
-    pub bucket_id: Uuid,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub page: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub page_size: Option<u32>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct HistoryResponse {
-    pub bucket_id: Uuid,
-    pub entries: Vec<HistoryEntry>,
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HistoryEntry {
     pub link_hash: String,
     pub height: u64,
     pub published: bool,
-    #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
 }

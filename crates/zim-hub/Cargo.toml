@@ -1,4 +1,5 @@
 # Zim hub: read-only web mirror gateway (axum + askama + Datastar).
+# Embeds an in-process peer Service — no external zim-peer daemon required.
 [package]
 name = "zim-hub"
 version = "0.1.0"
@@ -6,7 +7,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Zim read-only web mirror gateway: server-rendered Askama + Datastar over a single-user workspace."
+description = "Zim read-only web mirror gateway: server-rendered Askama + Datastar over a single-user workspace, with an embedded peer Service."
 keywords.workspace = true
 categories.workspace = true
 readme = "README.md"
@@ -20,17 +21,18 @@ name = "zim-hub"
 path = "src/main.rs"
 
 [dependencies]
+# workspace crates — in-process peer Service surface
+zim-runtime = { path = "../zim-runtime", version = "0.1.0" }
+zim-peer = { path = "../zim-peer", version = "0.1.0", default-features = false }
+zim-protocol = { path = "../zim-protocol", version = "0.1.0" }
+zim-fs = { path = "../zim-fs", version = "0.1.0" }
+zim-store = { path = "../zim-store", version = "0.1.0" }
+
 # web + service
 axum = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true, features = ["cors", "trace"] }
 http = { workspace = true }
-
-# peer client
-reqwest = { workspace = true }
-url = { workspace = true }
-base64 = "0.22"
-time = { workspace = true, features = ["serde", "formatting"] }
 
 # templates + static
 askama = { workspace = true }
@@ -47,6 +49,16 @@ futures = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-appender = "0.2"
+
+# identity / auth (T-001a)
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "time", "macros", "uuid", "migrate"] }
+oauth2 = "5"
+tower-cookies = "0.10"
+jsonwebtoken = "9"
+argon2 = "0.5"
+
+# time / utility
+time = { workspace = true, features = ["serde", "formatting"] }
 
 # core
 anyhow = { workspace = true }

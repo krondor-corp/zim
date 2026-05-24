@@ -1,105 +1,115 @@
 # Zim Crate Layout
 
-Target shape of the Zim workspace. Clean break — no compat shims, no phased migration, no deprecation. Owner of this doc: thing1 (T-005). Binding policy: `.coord/broadcast/20260524T014147Z-clean-break-policy.md`.
+The shipped shape of the Zim workspace. Aesthetic reference: [`krondor-corp/pack`](https://github.com/krondor-corp/pack) (pack is aesthetic-only — see `.coord/broadcast/20260524T015636Z-pack-design-language.md`); structural divergence from pack's 3-crate shape is intentional and documented below.
 
-## Target workspace
+## Workspace
 
 ```
 crates/
-├── zim-crypto/     # Ed25519/X25519, ChaCha20-Poly1305, secret sharing
-├── zim-fs/         # Filesystem: manifest, paths, CRDT path ops, nodes, conflicts
-├── zim-store/      # Content store: blob storage + content addressing
-├── zim-protocol/   # Wire protocol: peer messaging, sync, handshake, append log
-├── zim-peer/       # System daemon binary (zim) + HTTP API + FUSE + DB
-└── zim-hub/        # Read-only web mirror gateway, Google-auth-guarded key
+├── zim-crypto/     # Ed25519/X25519 identity, ChaCha20-Poly1305 content encryption, X25519 secret sharing
+├── zim-store/      # Content-addressed blob store: SQLite + S3/MinIO/local + iroh-blobs wrapper + linked_data (Hash/Cid/Link)
+├── zim-fs/         # Filesystem: manifest, nodes, CRDT path ops, conflict resolution, published-set entries
+├── zim-protocol/   # Wire protocol: peer messaging, sync jobs, handshake, append-only bucket log
+├── zim-runtime/    # Service trait + ShutdownHandle (shared lifecycle plumbing) — leaf crate
+├── zim-peer/       # System daemon binary `zim` + HTTP API + FUSE + SQLite DB (also a library)
+├── zim-hub/        # Web gateway binary `zim-hub` — embeds an in-process peer (Mirror), Askama + Datastar UI
+└── zim-wasm/       # Browser-side WASM client for the hub (client-side decryption of published blobs)
 ```
 
-That is the whole workspace. Nothing else lives in `crates/`.
-
-## Current → target mapping
-
-| Source | Destination |
-|---|---|
-| `crates/common/src/crypto/` | `crates/zim-crypto/src/` |
-| `crates/common/src/mount/` | `crates/zim-fs/src/fs/` *(module renamed `mount` → `fs`; types: `MountInner` → `FsInner`, etc.)* |
-| `crates/common/src/linked_data/` | `crates/zim-fs/src/linked_data/` |
-| `crates/common/src/peer/` | `crates/zim-protocol/src/peer/` |
-| `crates/common/src/bucket_log/` | `crates/zim-protocol/src/log/` |
-| `crates/common/src/version.rs` | `crates/zim-peer/src/version.rs` *(build-time only)* |
-| `crates/object-store/` | `crates/zim-store/` *(package rename, no re-exports back)* |
-| `crates/daemon/` | `crates/zim-peer/` *(binary `jax` → `zim`)* |
-| `crates/common/` | **deleted** *(emptied by the moves above)* |
-| `crates/desktop/` | **deleted** |
-| `crates/app/` | **deleted** |
-| *(new)* | `crates/zim-hub/` |
+Two binaries, six libraries. `zim-wasm` is its own thing — a `cdylib + rlib` that the hub vendors as static assets, not consumed via Cargo by any other crate.
 
 ## Dependency graph
 
-Strict DAG. Arrows mean "depends on". No cycles, no upward edges.
+Strict DAG. Arrows mean "depends on" (Cargo path-dep).
 
 ```
-zim-hub  ─┬─→ zim-protocol ─┬─→ zim-fs ─┬─→ zim-store ─→ (iroh-blobs)
-          │                 │           │
-          │                 │           └─→ zim-crypto
-          │                 │
-          │                 └─→ zim-crypto
-          │
-          ├─→ zim-fs
-          ├─→ zim-store
-          └─→ zim-crypto
+zim-wasm  ─→ zim-crypto (wasm feature, no iroh)
 
-zim-peer ─┬─→ zim-protocol
-          ├─→ zim-fs
-          ├─→ zim-store
-          └─→ zim-crypto
+zim-hub   ─┬─→ zim-peer ──┐
+           ├─→ zim-protocol ─┐
+           ├─→ zim-fs       ─┤
+           ├─→ zim-store    ─┤
+           └─→ zim-runtime  ─┤
+                             │
+zim-peer  ─┬─→ zim-protocol ─┤
+           ├─→ zim-fs       ─┤
+           ├─→ zim-store    ─┤
+           ├─→ zim-crypto   ─┤
+           └─→ zim-runtime  ─┘
+
+zim-protocol ─┬─→ zim-fs
+              ├─→ zim-store
+              └─→ zim-crypto
+
+zim-fs    ─┬─→ zim-store
+           └─→ zim-crypto
+
+zim-store ─→ zim-crypto
+
+zim-crypto: leaf (no workspace deps; depends on `iroh` under the default `iroh-keys` feature)
+zim-runtime: leaf (no workspace deps)
 ```
 
 Rules:
 
-- **`zim-crypto`** is a leaf — no workspace deps.
-- **`zim-store`** is a leaf — pure blob storage. **No crypto inside.** Encryption is done by callers (`zim-fs`, `zim-protocol`) before bytes hit the store.
-- **`zim-fs`** depends on `zim-store` + `zim-crypto`.
-- **`zim-protocol`** depends on `zim-fs` + `zim-crypto`.
-- **`zim-peer`** and **`zim-hub`** are the two binary crates. They sit on top of everything. **They do not depend on each other.**
+- **`zim-crypto`** wraps `iroh::PublicKey`/`SecretKey` by default (`iroh-keys` feature). The `wasm` feature falls back to `ed25519-dalek` directly so the crate compiles to `wasm32-unknown-unknown` for `zim-wasm`.
+- **`zim-store`** owns content-addressing primitives (`linked_data::{Hash, Cid, Link, BlockEncoded, DagCborCodec}`) and the iroh-blobs serving wrapper (`BlobsStore`). Both `zim-fs` and `zim-protocol` consume these — that's why they live here rather than in `zim-fs`.
+- **`zim-fs`** depends on `zim-store` (Link, BlobsStore) and `zim-crypto` (manifest principals, envelope keys). It is the home of the filesystem types and the CRDT path-op log.
+- **`zim-protocol`** depends on `zim-fs` (ships manifests over the wire), `zim-store` (Hash/Link), `zim-crypto` (identity, handshake).
+- **`zim-runtime`** is a leaf — `Service` trait + `ShutdownHandle`. Both binaries embed it; aesthetic adopted from pack.
+- **`zim-peer`** is both a library and the headless daemon binary. It exposes `spawn_peer_services(config, &mut handle, shutdown_rx) -> ServiceState` as the shared spawning surface; `zim-hub` calls into the same library code rather than running a separate process.
+- **`zim-hub`** depends on `zim-peer` — the hub embeds a peer in-process as a Mirror (see `.coord/broadcast/20260524T040247Z-zim-hub-embeds-peer.md`). Earlier drafts of this doc said the two binaries don't depend on each other; the embed-peer pivot changed that.
 
-## Naming and package strategy
+## Naming and package conventions
 
 | Aspect | Convention |
 |---|---|
-| Directory | `crates/zim-<name>/` (kebab-case) |
-| Cargo package `name` | `zim-<name>` (kebab-case, no `jax-` prefix anywhere) |
+| Crate directory | `crates/zim-<name>/` (kebab-case) |
+| Cargo package `name` | `zim-<name>` (kebab-case) |
 | Library `name` (Rust import path) | `zim_<name>` (snake_case) |
-| Binary | `zim` (the only binary; was `jax`) |
-| Versions | Reset to `0.1.0` on rename. Pre-1.0, no semver continuity claim. |
-| Workspace metadata | `repository`, `homepage`, keywords updated to the zim repo. |
-| Module names | No `mount`. The filesystem module is `fs`. Types: `Fs`, `FsInner`, `FsNode`, etc. |
-| No-no list | No `core`, no `mount`, no `jax`, no `// DEPRECATED`, no compat shims. |
+| Binaries | `zim` (in `zim-peer`), `zim-hub` (in `zim-hub`) |
+| Versions | All pre-1.0; reset to `0.1.0` on the cut-over commit. No semver continuity to the previous `jax-*` crates. |
+| Module names | No `mount` — the filesystem module is `fs`, types are `Fs`/`FsInner`/`FsNode`. The one literal "mount" in the tree is `crates/zim-peer/src/fuse/mount_manager.rs` — that manages OS-level FUSE mount points (the POSIX concept), not the old filesystem-module name. |
+| No-no list | No `core`, no `mount` (module names), no `jax`, no `// DEPRECATED`, no compat shims. |
 
-## Cut-over sequence
+## Module layout aesthetics (pack-aligned, where it fits)
 
-Single cut-over. Not a phased migration. All of the below lands together (one commit, or one tight series of commits with no green-checkpoint requirement between them — the only required green state is the end state).
+These are adopted from pack as conventions — they apply per-crate, not as crate-shape rules.
 
-1. **Create the six new crate directories** with `Cargo.toml` + `src/lib.rs` (or `src/main.rs` for binaries). Add all six to workspace `members`. Remove `crates/common`, `crates/daemon`, `crates/object-store`, `crates/desktop/src-tauri` from `members`.
+- **Handler-per-file** under `http/views/` (server-rendered HTML) and `http/api/` (JSON RPC), already used by `zim-hub` and partially by `zim-peer`. Each verb has its own file.
+- **`runtime::Service` + `ShutdownHandle`** lives in `zim-runtime`. Both binaries push named handles (`"peer"`, `"sync"`, `"http"`, `"api"`, `"gateway"`, `"fuse-drain"`) onto a single `ShutdownHandle` and `.wait()` for SIGINT/SIGTERM.
+- **Templates**: Askama for server-rendered HTML in `zim-hub`. Hypermedia client: **Datastar**, vendored as a single JS file under `crates/zim-hub/static/vendor/`. Pack uses HTMX — Zim explicitly diverges (see binding broadcast).
+- **CLI Op pattern** in `zim-peer/src/cli/`: each command returns typed data, formats via `Display` in the binary. Documented in `docs/CLI.md`.
 
-2. **Move files** per the mapping table above. `git mv` for history; rename modules in lockstep with the move.
+## Divergence from pack's `core` / `crdt` / `app` shape
 
-3. **Rename `mount` → `fs`** inside `zim-fs`: directory, module declarations, type names (`MountInner` → `FsInner`, `MountConfig` → `FsConfig`, etc.), function signatures, doc text. No backwards-compatible aliases.
+Pack splits its workspace into three crates: `core` (data + business logic), `crdt` (Yjs-backed collaboration), `app` (server + tasks + MCP). Zim does not collapse to that shape. Reasons:
 
-4. **Rename binary `jax` → `zim`** in `zim-peer/Cargo.toml`, `src/main.rs`, all CLI strings, `bin/dev`, install scripts.
+| Pack | Zim equivalent | Why we keep it separate |
+|---|---|---|
+| `core` | Would be a fusion of `zim-fs` + `zim-store` + `zim-crypto` | `zim-store` is the only crate that has to compile both natively (iroh-blobs + SQLite) and serve content-addressed Hash/Cid types; `zim-crypto` is the only crate `zim-wasm` depends on. Keeping them separate isolates the wasm-target surface to one tiny crate. |
+| `crdt` | No equivalent — Zim has no collaborative editor | The path-op CRDT inside `zim-fs` is for filesystem-merge conflict resolution, not for live editor state. No `zim-crdt` crate. |
+| `app` | `zim-peer` + `zim-hub` (two binaries) | Two deployment shapes (headless daemon vs gateway-with-embedded-peer) with different feature sets (FUSE in `zim-peer`, OAuth + Askama in `zim-hub`). Keeping them as separate binaries with shared library code in `zim-peer` is cleaner than feature-gating one massive crate. |
+| (pack has no analogue) | `zim-protocol` | The P2P wire protocol is large enough to warrant its own home; isolating it makes the `zim-fs` and `zim-store` crates testable without iroh networking. |
+| (pack has no analogue) | `zim-runtime` | Shared lifecycle plumbing between the two binaries — leaf crate, ~140 LOC. |
+| (pack has no analogue) | `zim-wasm` | Browser-side artifact; `cdylib` for `wasm-pack`. Cannot live inside `zim-hub` because the `cdylib` crate-type and the hub's `[[bin]]` are incompatible in one crate. |
 
-5. **Update every `use` path** workspace-wide: `common::crypto::*` → `zim_crypto::*`, `common::mount::*` → `zim_fs::fs::*`, `common::peer::*` → `zim_protocol::peer::*`, etc. No re-exports from a defunct `common`.
+Net: 8 crates vs pack's 3. Justified by (a) the P2P/crypto/wasm surface that pack doesn't have, and (b) keeping the wasm-target surface as small as possible.
 
-6. **Delete** `crates/common/`, `crates/desktop/`, `crates/app/` entirely.
+## Cut-over history
 
-7. **Create `crates/zim-hub/`** as a minimal axum skeleton with the dep wiring shown in the graph above. No real handlers yet — just the buildable shape.
+This layout shipped in three commits:
 
-8. **Update root metadata** (`Cargo.toml` workspace package fields), `README.md`, `docs/PROJECT_LAYOUT.md`, `docs/index.md` to describe the new shape only — no "previously known as" footnotes.
+- `0e1eada` — initial cut-over from the legacy `jax-common` / `jax-daemon` / `jax-object-store` / `jax-desktop` workspace to the five core `zim-*` crates (T-009).
+- `fdda0f4` — post-cut-over rename cleanup (scripts, install, README, wiki) (T-009 follow-up).
+- `badcb2e` — `crates/zim-runtime/` extraction, `zim-hub` embed-peer pivot, `zim-wasm` member registration, FUSE/sync shutdown discipline (T-007a + T-015 + T-012).
 
-End state must satisfy: `cargo build && cargo test && cargo clippy -- -D warnings && cargo fmt -- --check`. That is the only checkpoint.
+The original "current → target" mapping table and the eight-step cut-over sequence that used to live in this doc are no longer load-bearing — the cut-over happened. Anything that should remain about *how* the cut-over was done belongs in commit messages or the closed task notes (`.coord/tasks/done/T-009.md`, `T-007a.md`, `T-015.md`).
 
 ## What this doc deliberately does not cover
 
-- Internal API redesign inside any crate. Code moves, then we redesign in follow-ups.
-- HTTP API surface of `zim-hub` — a separate task.
-- Database schema — untouched.
-- Feature work — out of scope until the layout is in place.
+- **Internal API redesign inside any crate.** Per-crate module layouts evolve; see `docs/PROJECT_LAYOUT.md`.
+- **HTTP surface details.** `zim-peer`'s API is in `docs/API.md`; `zim-hub`'s views and actions are documented in `crates/zim-hub/README.md`.
+- **Database schema.** Lives next to the crates that own it (SQLite migrations in `zim-peer/migrations/` and `zim-hub`'s identity DB).
+- **Per-task design history.** Closed tasks in `.coord/tasks/done/`.
+- **Feature gates.** `zim-peer`'s `fuse` feature, `zim-crypto`'s `iroh-keys`/`wasm` features — documented at the crate level, not here.

@@ -1,0 +1,23 @@
+{% extends "layouts/base.html" %}
+
+{% block title %}zim-hub{% endblock %}
+
+{% block content %}
+<section class="hero" data-signals="{ pulse: 0 }">
+  <h1>zim-hub</h1>
+  <p class="lead">
+    Read-only web mirror over a single-user Zim workspace.
+  </p>
+
+  <div class="status-card">
+    <p>Scaffold milestone — no bucket data yet.</p>
+    <p class="muted">Routes <code>/b/{id}/tree/*</code>, <code>/b/{id}/blob/*</code>, <code>/b/{id}/history</code>, <code>/b/{id}/published</code> are reserved and will light up once the peer client and published-set surfaces land.</p>
+  </div>
+
+  <button class="link-button"
+          data-on-click="$pulse++"
+          aria-label="datastar smoke test">
+    datastar signals smoke-test (pulse: <span data-text="$pulse"></span>)
+  </button>
+</section>
+{% endblock %}

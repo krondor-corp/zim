@@ -1,0 +1,108 @@
+/* zim-hub — hand-written CSS. No framework, no preprocessor. */
+
+:root {
+  --bg: #fafaf7;
+  --fg: #1a1a1a;
+  --muted-fg: #6b6b6b;
+  --muted: #ececea;
+  --accent: #2563eb;
+  --border: #d4d4d0;
+  --radius: 6px;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+code, pre {
+  font-family: var(--font-mono);
+  background: var(--muted);
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+  font-size: 0.9em;
+}
+
+.site-header {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: var(--fg);
+}
+
+.site-nav a {
+  color: var(--muted-fg);
+  margin-right: 1rem;
+}
+
+.site-main {
+  max-width: 720px;
+  margin: 2.5rem auto;
+  padding: 0 1.5rem;
+}
+
+.site-footer {
+  margin-top: 4rem;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--border);
+  color: var(--muted-fg);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.hero h1 {
+  font-size: 2rem;
+  margin-bottom: 0.25em;
+}
+
+.hero .lead {
+  font-size: 1.1rem;
+  color: var(--muted-fg);
+  margin-top: 0;
+}
+
+.status-card {
+  margin-top: 2rem;
+  padding: 1rem 1.25rem;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.status-card .muted {
+  color: var(--muted-fg);
+  font-size: 0.92rem;
+}
+
+.link-button {
+  display: inline-block;
+  margin-top: 1.5rem;
+  padding: 0.5rem 0.9rem;
+  background: var(--accent);
+  color: white;
+  border: 0;
+  border-radius: var(--radius);
+  font: inherit;
+  cursor: pointer;
+}
+
+.link-button:hover { filter: brightness(1.08); }

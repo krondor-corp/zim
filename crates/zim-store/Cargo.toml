@@ -1,0 +1,67 @@
+[package]
+name = "zim-store"
+version = "0.1.0"
+edition.workspace = true
+description = "Zim storage layer: SQLite + object storage backend, iroh-blobs network wrapper, content-addressing primitives"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "zim_store"
+path = "src/lib.rs"
+
+[dependencies]
+# workspace crates
+zim-crypto = { path = "../zim-crypto", version = "0.1.0" }
+
+# Core async/error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_ipld_dagcbor = { workspace = true }
+bytes = { workspace = true }
+
+# Time / logging
+chrono = { workspace = true }
+tracing = { workspace = true }
+
+# iroh / blobs
+iroh = { workspace = true }
+iroh-blobs = { workspace = true }
+
+# Content addressing
+cid = { workspace = true }
+ipld-core = { workspace = true }
+multihash = "0.19"
+
+# irpc for RPC channels (same version as iroh-blobs uses)
+irpc = { version = "0.9.0", features = ["rpc", "stream", "derive"], default-features = false }
+
+# bao-tree for BAO content types
+bao-tree = { version = "0.15.1", features = ["experimental-mixed", "serde"], default-features = false }
+
+# range-collections for range types
+range-collections = { version = "0.4.6", features = ["serde"] }
+
+# n0-future for Stream trait
+n0-future = "0.2.0"
+
+# ref-cast for RefCast derive
+ref-cast = "1.0"
+
+# derive_more for From derive
+derive_more = { version = "2.0", features = ["from"] }
+
+# SQLite
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate"] }
+
+# Object storage (external crate, same name)
+object_store = { version = "0.11", features = ["aws"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }

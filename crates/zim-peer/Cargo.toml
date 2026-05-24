@@ -1,0 +1,99 @@
+# Zim system daemon binary (zim) + library.
+[package]
+name = "zim-peer"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Zim system daemon: HTTP API, FUSE filesystem mount, CLI"
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
+build = "build.rs"
+
+[lib]
+name = "zim_peer"
+path = "src/lib.rs"
+
+[[bin]]
+name = "zim"
+path = "src/main.rs"
+
+[features]
+default = ["fuse"]
+fuse = ["fuser", "moka", "libc"]
+
+[dependencies]
+# FUSE filesystem (optional)
+fuser = { version = "0.15", optional = true }
+moka = { version = "0.12", features = ["sync"], optional = true }
+libc = { version = "0.2", optional = true }
+# Workspace crates
+zim-crypto = { path = "../zim-crypto", version = "0.1.0" }
+zim-fs = { path = "../zim-fs", version = "0.1.0" }
+zim-store = { path = "../zim-store", version = "0.1.0" }
+zim-protocol = { path = "../zim-protocol", version = "0.1.0" }
+
+# iroh for peer networking
+iroh = { workspace = true }
+
+# CLI
+clap = { workspace = true }
+owo-colors = { version = "4", features = ["supports-colors"] }
+comfy-table = "7"
+indicatif = { version = "0.17", features = ["tokio"] }
+
+# web + service
+axum = { workspace = true, features = ["macros", "multipart"] }
+axum-extra = { version = "^0.10", features = ["typed-header"] }
+tower = { workspace = true }
+tower-http = { workspace = true, features = ["fs", "cors", "trace"] }
+
+# observability
+tracing-appender = { version = "^0.2" }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# async
+tokio = { workspace = true }
+async-trait = "0.1"
+flume = "0.11"
+
+# http
+askama = { workspace = true }
+askama_axum = { workspace = true }
+rust-embed = "8.5"
+
+# sql
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "time", "macros", "uuid"] }
+time = { workspace = true }
+
+# core
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+url = { workspace = true }
+http = { workspace = true }
+futures = { workspace = true }
+reqwest = { workspace = true, features = ["json", "multipart"] }
+uuid = { workspace = true, features = ["v4"] }
+chrono = { workspace = true }
+base64 = "0.22"
+bytes = { workspace = true }
+regex = "1.11"
+pulldown-cmark = "0.12"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+tempfile = { workspace = true }
+mime = "0.3"
+mime_guess = { workspace = true }
+directories = { workspace = true }
+dirs = { workspace = true }
+toml = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+[build-dependencies]
+chrono = { workspace = true }

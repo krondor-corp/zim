@@ -1,0 +1,63 @@
+[package]
+name = "zim-fs"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Zim filesystem: manifest, content-addressed nodes, CRDT path operations, conflict resolution"
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+name = "zim_fs"
+path = "src/lib.rs"
+
+[dependencies]
+# workspace crates
+zim-crypto = { path = "../zim-crypto", version = "0.1.0" }
+zim-store = { path = "../zim-store", version = "0.1.0" }
+
+# core
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+async-trait = "0.1"
+
+# serialization
+serde = { workspace = true }
+serde_with = { workspace = true }
+serde_ipld_dagcbor = { workspace = true }
+bincode = { workspace = true }
+bytes = { workspace = true }
+
+# hashing / content addressing
+sha2 = "0.10"
+blake3 = "1.5"
+hex = "0.4"
+
+# linked data (Hash/Cid types come via zim-store)
+iroh-blobs = { workspace = true }
+ipld-core = { workspace = true }
+cid = { workspace = true }
+
+# mime
+mime = "0.3.17"
+mime_guess = "2.0"
+mime_serde_shim = "0.2.2"
+
+# uuid
+uuid = { workspace = true }
+
+# concurrency
+tokio = { workspace = true }
+futures = { workspace = true }
+parking_lot = { workspace = true }
+flume = "0.11"
+
+# tracing
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+serde_json = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -1,0 +1,523 @@
+use std::future::IntoFuture;
+use std::ops::Deref;
+use std::path::Path;
+use std::sync::Arc;
+
+use anyhow::anyhow;
+use bytes::Bytes;
+use futures::Stream;
+use iroh::{Endpoint, NodeId};
+use iroh_blobs::{
+    api::{
+        blobs::{BlobReader as Reader, BlobStatus, Blobs},
+        downloader::{Downloader, Shuffled},
+        ExportBaoError, RequestError,
+    },
+    store::{fs::FsStore, mem::MemStore},
+    BlobsProtocol, Hash,
+};
+
+use object_store::ObjectStore as ObjStore;
+
+use crate::{
+    crypto::PublicKey,
+    linked_data::{BlockEncoded, CodecError, DagCborCodec},
+};
+
+// TODO (amiller68): maybe at some point it would make sense
+//  to implement some sort of `BlockStore` trait over BlobStore
+/// Client over a local iroh-blob store.
+///  Exposes an iroh-blobs peer over the endpoint.
+///  Router must handle the iroh-blobs APLN
+/// Also acts as our main BlockStore implemenetation
+///  for bucket, node, and data storage and retrieval
+#[derive(Clone, Debug)]
+pub struct BlobsStore {
+    pub inner: Arc<BlobsProtocol>,
+}
+
+impl Deref for BlobsStore {
+    type Target = Arc<BlobsProtocol>;
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum BlobsStoreError {
+    #[error("blobs store error: {0}")]
+    Default(#[from] anyhow::Error),
+    #[error("blob store i/o error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("export bao error: {0}")]
+    ExportBao(#[from] ExportBaoError),
+    #[error("request error: {0}")]
+    Request(#[from] RequestError),
+    #[error("decode error: {0}")]
+    Decode(#[from] CodecError),
+    #[error("object store error: {0}")]
+    ObjectStore(#[from] object_store::BlobStoreError),
+}
+
+impl BlobsStore {
+    /// Legacy: load from filesystem using iroh's FsStore directly.
+    pub async fn legacy_fs(path: &Path) -> Result<Self, BlobsStoreError> {
+        tracing::debug!("BlobsStore::legacy_fs called with path: {:?}", path);
+        let store = FsStore::load(path).await?;
+        tracing::debug!("BlobsStore::legacy_fs completed loading FsStore");
+        let blobs = BlobsProtocol::new(&store, None);
+        Ok(Self {
+            inner: Arc::new(blobs),
+        })
+    }
+
+    /// Legacy: in-memory using iroh's MemStore directly.
+    pub async fn legacy_memory() -> Result<Self, BlobsStoreError> {
+        let store = MemStore::new();
+        let blobs = BlobsProtocol::new(&store, None);
+        Ok(Self {
+            inner: Arc::new(blobs),
+        })
+    }
+
+    /// Local filesystem via ObjectStore (SQLite + local object storage).
+    ///
+    /// # Arguments
+    /// * `db_path` - Path to the SQLite database file
+    /// * `objects_path` - Directory for object storage
+    /// * `max_import_size` - Maximum blob size for BAO imports, or None for default (1GB)
+    pub async fn fs(
+        db_path: &Path,
+        objects_path: &Path,
+        max_import_size: Option<u64>,
+    ) -> Result<Self, BlobsStoreError> {
+        let store = ObjStore::new_local(db_path, objects_path, max_import_size).await?;
+        Ok(Self::from_store(store.into()))
+    }
+
+    /// In-memory via ObjectStore.
+    pub async fn memory() -> Result<Self, BlobsStoreError> {
+        let store = ObjStore::new_ephemeral().await?;
+        Ok(Self::from_store(store.into()))
+    }
+
+    /// S3-backed via ObjectStore.
+    ///
+    /// # Arguments
+    /// * `max_import_size` - Maximum blob size for BAO imports, or None for default (1GB)
+    pub async fn s3(
+        db_path: &Path,
+        endpoint: &str,
+        access_key: &str,
+        secret_key: &str,
+        bucket: &str,
+        region: Option<&str>,
+        max_import_size: Option<u64>,
+    ) -> Result<Self, BlobsStoreError> {
+        let store = ObjStore::new_s3(
+            db_path,
+            endpoint,
+            access_key,
+            secret_key,
+            bucket,
+            region,
+            max_import_size,
+        )
+        .await?;
+        Ok(Self::from_store(store.into()))
+    }
+
+    /// Wrap an existing iroh-blobs Store (kept for flexibility).
+    pub fn from_store(store: iroh_blobs::api::Store) -> Self {
+        let blobs = BlobsProtocol::new(&store, None);
+        Self {
+            inner: Arc::new(blobs),
+        }
+    }
+
+    /// Get a handle to the underlying blobs client against
+    ///  the store
+    pub fn blobs(&self) -> &Blobs {
+        self.inner.store().blobs()
+    }
+
+    /// Get a blob as bytes
+    pub async fn get(&self, hash: &Hash) -> Result<Bytes, BlobsStoreError> {
+        let bytes = self.blobs().get_bytes(*hash).await?;
+        Ok(bytes)
+    }
+
+    /// Get a blob as a block encoded
+    pub async fn get_cbor<T: BlockEncoded<DagCborCodec>>(
+        &self,
+        hash: &Hash,
+    ) -> Result<T, BlobsStoreError> {
+        let bytes = self.blobs().get_bytes(*hash).await?;
+        Ok(T::decode(&bytes)?)
+    }
+
+    /// Get a blob from the store as a reader
+    pub async fn get_reader(&self, hash: Hash) -> Result<Reader, BlobsStoreError> {
+        let reader = self.blobs().reader(hash);
+        Ok(reader)
+    }
+
+    /// Store a stream of bytes as a blob
+    pub async fn put_stream(
+        &self,
+        stream: impl Stream<Item = std::io::Result<Bytes>> + Send + Unpin + 'static + std::marker::Sync,
+    ) -> Result<Hash, BlobsStoreError> {
+        let outcome = self
+            .blobs()
+            .add_stream(stream)
+            .into_future()
+            .await
+            .with_tag()
+            .await?
+            .hash;
+        Ok(outcome)
+    }
+
+    /// Store a vec of bytes as a blob
+    pub async fn put(&self, data: Vec<u8>) -> Result<Hash, BlobsStoreError> {
+        let hash = self.blobs().add_bytes(data).into_future().await?.hash;
+        Ok(hash)
+    }
+
+    /// Get the stat of a blob
+    pub async fn stat(&self, hash: &Hash) -> Result<bool, BlobsStoreError> {
+        let stat = self
+            .blobs()
+            .status(*hash)
+            .await
+            .map_err(|err| BlobsStoreError::Default(anyhow!(err)))?;
+        Ok(matches!(stat, BlobStatus::Complete { .. }))
+    }
+
+    /// Download a single hash from peers
+    ///
+    /// This checks if the hash exists locally first, then downloads if needed.
+    /// Uses the Downloader API with Shuffled content discovery.
+    pub async fn download_hash(
+        &self,
+        hash: Hash,
+        peer_ids: Vec<PublicKey>,
+        endpoint: &Endpoint,
+    ) -> Result<(), BlobsStoreError> {
+        tracing::debug!("download_hash: Checking if hash {} exists locally", hash);
+
+        // Check if we already have this hash
+        if self.stat(&hash).await? {
+            tracing::debug!(
+                "download_hash: Hash {} already exists locally, skipping download",
+                hash
+            );
+            return Ok(());
+        }
+
+        tracing::info!(
+            "download_hash: Downloading hash {} from {} peers: {:?}",
+            hash,
+            peer_ids.len(),
+            peer_ids
+        );
+
+        // Create downloader - needs the Store from BlobsProtocol
+        let downloader = Downloader::new(self.inner.store(), endpoint);
+
+        // Create content discovery with shuffled peers
+        let discovery = Shuffled::new(
+            peer_ids
+                .iter()
+                .map(|peer_id| NodeId::from(*peer_id))
+                .collect(),
+        );
+
+        tracing::debug!(
+            "download_hash: Starting download of hash {} with downloader",
+            hash
+        );
+
+        // Download the hash and wait for completion
+        // DownloadProgress implements IntoFuture, so we can await it directly
+        match downloader.download(hash, discovery).await {
+            Ok(_) => {
+                tracing::info!("download_hash: Successfully downloaded hash {}", hash);
+
+                // Verify it was actually downloaded
+                match self.stat(&hash).await {
+                    Ok(true) => tracing::debug!(
+                        "download_hash: Verified hash {} exists after download",
+                        hash
+                    ),
+                    Ok(false) => {
+                        tracing::error!("download_hash: Hash {} NOT found after download!", hash);
+                        return Err(anyhow!("Hash not found after download").into());
+                    }
+                    Err(e) => {
+                        tracing::error!("download_hash: Error verifying hash {}: {}", hash, e);
+                        return Err(e);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!(
+                    "download_hash: Failed to download hash {} from peers {:?}: {}",
+                    hash,
+                    peer_ids,
+                    e
+                );
+                return Err(e.into());
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Download a hash list (pinset) and all referenced hashes
+    ///
+    /// This first downloads the hash list blob, reads the list of hashes,
+    /// then downloads each referenced hash.
+    pub async fn download_hash_list(
+        &self,
+        hash_list_hash: Hash,
+        peer_ids: Vec<PublicKey>,
+        endpoint: &Endpoint,
+    ) -> Result<(), BlobsStoreError> {
+        tracing::debug!(
+            "download_hash_list: Starting download of hash list {} from {} peers",
+            hash_list_hash,
+            peer_ids.len()
+        );
+
+        // First download the hash list itself
+        tracing::debug!("download_hash_list: Downloading hash list blob itself");
+        self.download_hash(hash_list_hash, peer_ids.clone(), endpoint)
+            .await?;
+        tracing::debug!("download_hash_list: Hash list blob downloaded successfully");
+
+        // Verify it exists
+        match self.stat(&hash_list_hash).await {
+            Ok(true) => tracing::debug!(
+                "download_hash_list: Verified hash list blob {} exists",
+                hash_list_hash
+            ),
+            Ok(false) => {
+                tracing::error!(
+                    "download_hash_list: Hash list blob {} NOT found after download!",
+                    hash_list_hash
+                );
+                return Err(anyhow!("Hash list blob not found after download").into());
+            }
+            Err(e) => {
+                tracing::error!("download_hash_list: Error checking hash list blob: {}", e);
+                return Err(e);
+            }
+        }
+
+        // Read the list of hashes
+        tracing::debug!("download_hash_list: Reading hash list contents");
+        let hashes = self.read_hash_list(hash_list_hash).await?;
+        tracing::info!(
+            "download_hash_list: Hash list contains {} hashes, downloading all...",
+            hashes.len()
+        );
+
+        if hashes.is_empty() {
+            tracing::warn!("download_hash_list: Hash list is EMPTY - no content to download");
+            return Ok(());
+        }
+
+        // Download each hash in the list
+        for (idx, hash) in hashes.iter().enumerate() {
+            tracing::debug!(
+                "download_hash_list: Downloading content hash {}/{}: {:?}",
+                idx + 1,
+                hashes.len(),
+                hash
+            );
+            match self.download_hash(*hash, peer_ids.clone(), endpoint).await {
+                Ok(()) => {
+                    tracing::debug!(
+                        "download_hash_list: Content hash {}/{} downloaded successfully",
+                        idx + 1,
+                        hashes.len()
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "download_hash_list: Failed to download content hash {}/{} ({:?}): {}",
+                        idx + 1,
+                        hashes.len(),
+                        hash,
+                        e
+                    );
+                    return Err(e);
+                }
+            }
+        }
+
+        tracing::info!(
+            "download_hash_list: Successfully downloaded all {} hashes from hash list",
+            hashes.len()
+        );
+
+        Ok(())
+    }
+
+    /// Create a simple blob containing a sequence of hashes
+    /// Each hash is 32 bytes, stored consecutively
+    /// Returns the hash of the blob containing all the hashes
+    pub async fn create_hash_list<I>(&self, hashes: I) -> Result<Hash, BlobsStoreError>
+    where
+        I: IntoIterator<Item = Hash>,
+    {
+        // Serialize hashes as raw bytes (32 bytes each, concatenated)
+        let mut data = Vec::new();
+        for hash in hashes {
+            data.extend_from_slice(hash.as_bytes());
+        }
+
+        // Store as a single blob
+        let hash = self.put(data).await?;
+        Ok(hash)
+    }
+
+    /// Read all hashes from a hash list blob
+    /// Returns a Vec of all hashes in the list
+    pub async fn read_hash_list(&self, list_hash: Hash) -> Result<Vec<Hash>, BlobsStoreError> {
+        let mut hashes = Vec::new();
+
+        // Read the blob
+        let data = self.get(&list_hash).await?;
+
+        // Parse hashes (32 bytes each)
+        if data.len() % 32 != 0 {
+            return Err(anyhow!("Invalid hash list: length is not a multiple of 32").into());
+        }
+
+        for chunk in data.chunks_exact(32) {
+            let mut hash_bytes = [0u8; 32];
+            hash_bytes.copy_from_slice(chunk);
+            hashes.push(Hash::from_bytes(hash_bytes));
+        }
+
+        Ok(hashes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use futures::stream;
+    use tempfile::TempDir;
+
+    async fn setup_test_store() -> (BlobsStore, TempDir) {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("blobs.db");
+        let objects_path = temp_dir.path().join("objects");
+
+        let blobs = BlobsStore::fs(&db_path, &objects_path, None).await.unwrap();
+        (blobs, temp_dir)
+    }
+
+    #[tokio::test]
+    async fn test_put_and_get() {
+        let (store, _temp) = setup_test_store().await;
+
+        // Test data
+        let data = b"Hello, BlobsStore!";
+
+        // Put data
+        let hash = store.put(data.to_vec()).await.unwrap();
+        assert!(!hash.as_bytes().is_empty());
+
+        // Get data back
+        let retrieved = store.get(&hash).await.unwrap();
+        assert_eq!(retrieved.as_ref(), data);
+    }
+
+    #[tokio::test]
+    async fn test_put_stream() {
+        let (store, _temp) = setup_test_store().await;
+
+        // Create a stream of data
+        let data = b"Streaming data test";
+        let stream =
+            stream::once(async move { Ok::<_, std::io::Error>(Bytes::from(data.to_vec())) });
+
+        // Put stream
+        let hash = store.put_stream(Box::pin(stream)).await.unwrap();
+
+        // Verify we can get it back
+        let retrieved = store.get(&hash).await.unwrap();
+        assert_eq!(retrieved.as_ref(), data);
+    }
+
+    #[tokio::test]
+    async fn test_stat() {
+        let (store, _temp) = setup_test_store().await;
+
+        let data = b"Test data for stat";
+        let hash = store.put(data.to_vec()).await.unwrap();
+
+        // Should exist
+        assert!(store.stat(&hash).await.unwrap());
+
+        // Non-existent hash should not exist
+        let fake_hash = iroh_blobs::Hash::from_bytes([0u8; 32]);
+        assert!(!store.stat(&fake_hash).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_large_data() {
+        let (store, _temp) = setup_test_store().await;
+
+        // Create large data (1MB)
+        let data = vec![42u8; 1024 * 1024];
+
+        // Put and get large data
+        let hash = store.put(data.clone()).await.unwrap();
+        let retrieved = store.get(&hash).await.unwrap();
+
+        assert_eq!(retrieved.len(), data.len());
+        assert_eq!(retrieved.as_ref(), data.as_slice());
+    }
+
+    #[tokio::test]
+    async fn test_multiple_puts() {
+        let (store, _temp) = setup_test_store().await;
+
+        let data1 = b"First data";
+        let data2 = b"Second data";
+        let data3 = b"Third data";
+
+        // Put multiple items
+        let hash1 = store.put(data1.to_vec()).await.unwrap();
+        let hash2 = store.put(data2.to_vec()).await.unwrap();
+        let hash3 = store.put(data3.to_vec()).await.unwrap();
+
+        // Verify all are different hashes
+        assert_ne!(hash1, hash2);
+        assert_ne!(hash2, hash3);
+        assert_ne!(hash1, hash3);
+
+        // Verify all can be retrieved
+        assert_eq!(store.get(&hash1).await.unwrap().as_ref(), data1);
+        assert_eq!(store.get(&hash2).await.unwrap().as_ref(), data2);
+        assert_eq!(store.get(&hash3).await.unwrap().as_ref(), data3);
+    }
+
+    #[tokio::test]
+    async fn test_get_nonexistent() {
+        let (store, _temp) = setup_test_store().await;
+
+        // Try to get non-existent data
+        let fake_hash = iroh_blobs::Hash::from_bytes([99u8; 32]);
+        let result = store.get(&fake_hash).await;
+
+        // Should return an error
+        assert!(result.is_err());
+    }
+}

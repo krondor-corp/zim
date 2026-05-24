@@ -1,0 +1,466 @@
+# API Reference
+
+This document describes the HTTP API endpoints for jax-daemon.
+
+## Overview
+
+jax-daemon runs two servers on separate ports:
+- **API Server**: REST API for bucket operations (private, localhost only)
+- **Gateway Server**: Read-only content serving (public-facing)
+
+## Base URLs
+
+When using the dev environment (`./bin/dev`):
+
+| Node | API Server | Gateway |
+|------|------------|---------|
+| owner | http://localhost:5002 | http://localhost:8081 |
+| _owner | http://localhost:5003 | http://localhost:8082 |
+| mirror | http://localhost:5004 | http://localhost:8083 |
+
+Default production ports: API on 5001, Gateway on 8080.
+
+## Health Endpoints
+
+All servers expose health endpoints at `/_status/`:
+
+### GET /_status/livez
+Liveness check - returns immediately if server is running.
+
+```bash
+curl http://localhost:5001/_status/livez
+```
+
+Response: `{"status": "ok"}`
+
+### GET /_status/readyz
+Readiness check - verifies all dependencies are ready.
+
+```bash
+curl http://localhost:5001/_status/readyz
+```
+
+Response: `{"status": "ok"}` or `{"status": "error", "message": "..."}`
+
+### GET /_status/identity
+Returns the node's peer identity.
+
+```bash
+curl http://localhost:5001/_status/identity
+```
+
+Response:
+```json
+{
+  "node_id": "2gx...abc"
+}
+```
+
+### GET /_status/version
+Returns build version information.
+
+```bash
+curl http://localhost:5001/_status/version
+```
+
+## Bucket API
+
+All bucket operations are under `/api/v0/bucket/`. Most use POST with JSON bodies.
+
+### POST /api/v0/bucket - Create Bucket
+
+Creates a new bucket.
+
+```bash
+curl -X POST http://localhost:5001/api/v0/bucket \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my-bucket"}'
+```
+
+Request:
+```json
+{
+  "name": "my-bucket"
+}
+```
+
+Response (201 Created):
+```json
+{
+  "bucket_id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "my-bucket",
+  "created_at": "2024-01-20T12:00:00Z"
+}
+```
+
+### POST /api/v0/bucket/list - List Buckets
+
+Lists all buckets on the node.
+
+```bash
+curl -X POST http://localhost:5001/api/v0/bucket/list \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+Request:
+```json
+{
+  "prefix": "optional-filter",
+  "limit": 100,
+  "status": "active"
+}
+```
+
+All fields are optional. The `status` field filters by bucket status (`pending`, `active`, or `ignored`).
+
+Response:
+```json
+{
+  "buckets": [
+    {
+      "bucket_id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "my-bucket",
+      "link": { "codec": 85, "hash": "..." },
+      "status": "active",
+      "created_at": "2024-01-20T12:00:00Z"
+    }
+  ]
+}
+```
+
+### POST /api/v0/bucket/ls - List Directory
+
+Lists contents of a directory within a bucket.
+
+```bash
+curl -X POST http://localhost:5001/api/v0/bucket/ls \
+  -H "Content-Type: application/json" \
+  -d '{"bucket_id": "550e8400-...", "path": "/"}'
+```
+
+Request:
+```json
+{
+  "bucket_id": "550e8400-e29b-41d4-a716-446655440000",
+  "path": "/",
+  "deep": false
+}
+```
+
+Response:
+```json
+{
+  "items": [
+    {
+      "path": "/readme.txt",
+      "name": "readme.txt",
+      "link": { "codec": 85, "hash": "..." },
+      "is_dir": false,
+      "mime_type": "text/plain"
+    },
+    {
+      "path": "/docs",
+      "name": "docs",
+      "link": { "codec": 85, "hash": "..." },
+      "is_dir": true,
+      "mime_type": "inode/directory"
+    }
+  ]
+}
+```
+
+### POST /api/v0/bucket/cat - Read File (JSON)
+
+Reads file content, returns base64-encoded.
+
+```bash
+curl -X POST http://localhost:5001/api/v0/bucket/cat \
+  -H "Content-Type: application/json" \
+  -d '{"bucket_id": "550e8400-...", "path": "/readme.txt"}'
+```
+
+Request:
+```json
+{
+  "bucket_id": "550e8400-e29b-41d4-a716-446655440000",
+  "path": "/readme.txt",
+  "at": "optional-hash-for-specific-version"
+}
+```
+
+Response:
+```json
+{
+  "path": "/readme.txt",
+  "content": "SGVsbG8gV29ybGQh",
+  "size": 12,
+  "mime_type": "text/plain"
+}
+```
+
+### GET /api/v0/bucket/cat - Read File (Binary)
+
+Returns raw file content with proper Content-Type.
+
+```bash
+curl "http://localhost:5001/api/v0/bucket/cat?bucket_id=550e8400-...&path=/readme.txt"
+```
+
+Query params:
+- `bucket_id` (required): UUID of the bucket
+- `path` (required): Absolute path to file
+- `at` (optional): Version hash
+- `download` (optional): If `true`, forces download (attachment disposition)
+
+### POST /api/v0/bucket/add - Upload File
+
+Uploads files using multipart form data.
+
+```bash
+curl -X POST http://localhost:5001/api/v0/bucket/add \
+  -F "bucket_id=550e8400-..." \
+  -F "mount_path=/" \
+  -F "file=@local-file.txt"
+```
+
+Form fields:
+- `bucket_id`: UUID of the bucket
+- `mount_path`: Directory path to upload into (e.g., `/` or `/docs`)
+- `file` or `files`: File(s) to upload (can be multiple)
+
+Response:
+```json
+{
+  "bucket_link": { "codec": 85, "hash": "..." },
+  "files": [
+    {
+      "mount_path": "/local-file.txt",
+      "mime_type": "text/plain",
+      "size": 1234,
+      "success": true,
+      "error": null
+    }
+  ],
+  "total_files": 1,
+  "successful_files": 1,
+  "failed_files": 0
+}
+```
+
+### POST /api/v0/bucket/mkdir - Create Directory
+
+Creates a directory within a bucket.
+
+```bash
+curl -X POST http://localhost:5001/api/v0/bucket/mkdir \
+  -H "Content-Type: application/json" \
+  -d '{"bucket_id": "550e8400-...", "path": "/new-folder"}'
+```
+
+Request:
+```json
+{
+  "bucket_id": "550e8400-e29b-41d4-a716-446655440000",
+  "path": "/new-folder"
+}
+```
+
+### POST /api/v0/bucket/delete - Delete File/Directory
+
+Deletes a file or directory from a bucket.
+
+```bash
+curl -X POST http://localhost:5001/api/v0/bucket/delete \
+  -H "Content-Type: application/json" \
+  -d '{"bucket_id": "550e8400-...", "path": "/old-file.txt"}'
+```
+
+Request:
+```json
+{
+  "bucket_id": "550e8400-e29b-41d4-a716-446655440000",
+  "path": "/old-file.txt"
+}
+```
+
+### POST /api/v0/bucket/mv - Move/Rename
+
+Moves or renames a file or directory.
+
+```bash
+curl -X POST http://localhost:5001/api/v0/bucket/mv \
+  -H "Content-Type: application/json" \
+  -d '{"bucket_id": "550e8400-...", "from": "/old.txt", "to": "/new.txt"}'
+```
+
+### POST /api/v0/bucket/rename - Rename Bucket
+
+Renames a bucket.
+
+```bash
+curl -X POST http://localhost:5001/api/v0/bucket/rename \
+  -H "Content-Type: application/json" \
+  -d '{"bucket_id": "550e8400-...", "name": "new-name"}'
+```
+
+### POST /api/v0/bucket/share - Create Share Link
+
+Creates a shareable link for a bucket (read-only access).
+
+```bash
+curl -X POST http://localhost:5001/api/v0/bucket/share \
+  -H "Content-Type: application/json" \
+  -d '{"bucket_id": "550e8400-..."}'
+```
+
+### POST /api/v0/bucket/ping - Sync with Peer
+
+Initiates sync with a remote peer for a bucket.
+
+```bash
+curl -X POST http://localhost:5001/api/v0/bucket/ping \
+  -H "Content-Type: application/json" \
+  -d '{"bucket_id": "550e8400-...", "node_id": "2gx..."}'
+```
+
+### POST /api/v0/bucket/approve - Approve Bucket
+
+Approves a pending bucket for full sync. Triggers catch-up download of any pins that were skipped while the bucket was pending.
+
+```bash
+curl -X POST http://localhost:5001/api/v0/bucket/approve \
+  -H "Content-Type: application/json" \
+  -d '{"bucket_id": "550e8400-..."}'
+```
+
+Request:
+```json
+{
+  "bucket_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+Response:
+```json
+{
+  "bucket_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "active"
+}
+```
+
+### POST /api/v0/bucket/ignore - Ignore Bucket
+
+Sets a bucket to ignored status. Stops syncing and unmounts any FUSE mounts. Preserves bucket log entries as an audit trail.
+
+```bash
+curl -X POST http://localhost:5001/api/v0/bucket/ignore \
+  -H "Content-Type: application/json" \
+  -d '{"bucket_id": "550e8400-..."}'
+```
+
+Request:
+```json
+{
+  "bucket_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+Response:
+```json
+{
+  "bucket_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "ignored"
+}
+```
+
+### POST /api/v0/bucket/export - Export Bucket
+
+Exports bucket contents.
+
+## Gateway Endpoints
+
+The gateway server provides read-only access to bucket contents:
+
+### GET /gw/:bucket_id/*file_path
+
+Serves files from a bucket. The bucket_id can be either:
+- A UUID for owned buckets
+- A share token for shared buckets
+
+```bash
+# Using dev API helper (recommended)
+./bin/dev api gw fetch 550e8400-... /           # List root directory (JSON)
+./bin/dev api gw fetch 550e8400-... /docs/      # List subdirectory
+./bin/dev api full fetch 550e8400-... /file.txt # Fetch file content
+
+# Direct curl (if needed)
+curl http://localhost:8080/gw/550e8400-.../
+curl http://localhost:8080/gw/550e8400-.../path/to/file.txt
+```
+
+Query parameters:
+- `download=true` - Force download with Content-Disposition: attachment
+- `viewer=true` - Show file in viewer UI instead of rendering HTML/Markdown
+- `deep=true` - Recursively list all files (for directories)
+- `at=<hash>` - Access a specific version by content hash
+- `w=<pixels>` - Resize image to target width (maintains aspect ratio if `h` omitted)
+- `h=<pixels>` - Resize image to target height (optional, used with `w`)
+- `q=<1-100>` - Output quality for JPEG/WebP (default: 80)
+
+#### Image Transform
+
+The gateway supports on-the-fly image resizing and quality adjustment for image files (`image/jpeg`, `image/png`, `image/webp`, `image/gif`):
+
+```bash
+# Resize to 400px wide (aspect ratio maintained)
+curl http://localhost:8080/gw/550e8400-.../photos/beach.jpg?w=400
+
+# Resize to exact dimensions
+curl http://localhost:8080/gw/550e8400-.../photos/beach.jpg?w=400&h=300
+
+# Lower quality (smaller file size)
+curl http://localhost:8080/gw/550e8400-.../photos/beach.jpg?w=400&q=75
+```
+
+Constraints:
+- `w` and `h` are capped at 4096px. Values of 0 or above 4096 return 400 Bad Request.
+- `q` must be 1-100. Values outside this range return 400 Bad Request.
+- Transform params are ignored for non-image files.
+- Output format matches input format.
+
+#### Response Cache
+
+The gateway includes a two-tier response cache that eliminates repeated tree traversal and decryption:
+
+- **Layer 1 (Path Index)**: Maps `(bucket_id, height, path, transform_params)` to a content hash. Stored in SQLite.
+- **Layer 2 (Content Store)**: Maps content hash to decrypted/transformed bytes. Content-addressed and naturally deduplicated.
+
+On cache hit, responses are served directly without mount traversal or decryption. Cached and transformed responses include `Cache-Control: public, max-age=31536000, immutable`.
+
+A background actor periodically evicts old entries based on configurable policies (version retention, size limits, TTL).
+
+### GET /gw/:bucket_id/version
+
+Returns the latest published version metadata for a bucket as JSON. No authentication required.
+
+```bash
+curl http://localhost:8080/gw/550e8400-e29b-41d4-a716-446655440000/version
+```
+
+Response (200 OK):
+```json
+{
+  "bucket_id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "my-bucket",
+  "height": 42,
+  "link": "bafy2bzace...full_hash",
+  "published": true,
+  "content_url": "/gw/550e8400-e29b-41d4-a716-446655440000/"
+}
+```
+
+Response codes:
+- `200` — success, returns version JSON
+- `404` — bucket not found or no published version exists
+- `503` — bucket is still syncing (with `Retry-After: 5` header)

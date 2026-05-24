@@ -1,0 +1,23 @@
+pub use clap::Parser;
+
+use std::path::PathBuf;
+use url::Url;
+
+#[derive(Parser, Debug)]
+#[command(name = "cli")]
+#[command(about = "A basic CLI example")]
+pub struct Args {
+    #[arg(long, global = true)]
+    pub remote: Option<Url>,
+
+    /// Path to the jax config directory (defaults to ~/.jax)
+    #[arg(long, global = true)]
+    pub config_path: Option<PathBuf>,
+
+    /// Output plain text (no colors, no table borders) for scripting
+    #[arg(long, global = true)]
+    pub plain: bool,
+
+    #[command(subcommand)]
+    pub command: crate::Command,
+}

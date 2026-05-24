@@ -20,13 +20,13 @@ pub async fn handler(
     State(state): State<AppState>,
     Path(bucket_id): Path<Uuid>,
 ) -> Result<Html<String>> {
-    let response = state.peer.history(bucket_id, None, None).await?;
+    let entries = state.peer.history(bucket_id, 0, 50).await?;
     let mut crumbs = breadcrumb(bucket_id, "");
     crumbs.push(("history".to_string(), None));
     let tmpl = HistoryTemplate {
         bucket_id,
         breadcrumb: crumbs,
-        entries: response.entries,
+        entries,
     };
     Ok(Html(tmpl.render().map_err(Error::Template)?))
 }

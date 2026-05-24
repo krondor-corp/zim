@@ -33,12 +33,11 @@ pub async fn handler(
 
 async fn render(state: AppState, bucket_id: Uuid, path: String) -> Result<Html<String>> {
     let api_path = if path.is_empty() {
-        None
+        String::from("/")
     } else {
-        Some(format!("/{path}"))
+        format!("/{path}")
     };
-    let response = state.peer.ls(bucket_id, api_path.as_deref(), None).await?;
-    let mut items = response.items;
+    let mut items = state.peer.ls(bucket_id, &api_path).await?;
     items.sort_by(|a, b| match (a.is_dir, b.is_dir) {
         (true, false) => std::cmp::Ordering::Less,
         (false, true) => std::cmp::Ordering::Greater,

@@ -11,32 +11,22 @@
 <section class="buckets">
   <h2>Buckets</h2>
 
-  {% match buckets %}
-    {% when Some with (list) %}
-      {% if list.is_empty() %}
-        <p class="muted">No buckets on this peer yet.</p>
-      {% else %}
-        <ul class="bucket-list">
-          {% for b in list %}
-            <li class="bucket-row">
-              <a class="bucket-name" href="/b/{{ b.bucket_id }}/tree">{{ b.name }}</a>
-              <span class="bucket-meta">
-                <span class="bucket-id"><code>{{ b.bucket_id }}</code></span>
-                <span class="bucket-status">{{ b.status }}</span>
-              </span>
-            </li>
-          {% endfor %}
-        </ul>
-      {% endif %}
-    {% when None %}
-      <div class="status-card">
-        <p>Peer at <code>{{ peer_endpoint }}</code> is not reachable.</p>
-        {% match peer_error %}
-          {% when Some with (msg) %}<p class="muted">{{ msg }}</p>
-          {% when None %}
-        {% endmatch %}
-        <p class="muted">Start <code>zim</code> on this host or set <code>ZIM_HUB_PEER</code> to a reachable peer URL.</p>
-      </div>
-  {% endmatch %}
+  {% if buckets.is_empty() %}
+    <div class="status-card">
+      <p class="muted">No buckets in the embedded peer's data store yet.</p>
+      <p class="muted">Add data via the <code>zim</code> CLI, or run <code>make dev</code> to point at a multi-peer dev environment.</p>
+    </div>
+  {% else %}
+    <ul class="bucket-list">
+      {% for b in buckets %}
+        <li class="bucket-row">
+          <a class="bucket-name" href="/b/{{ b.bucket_id }}/tree">{{ b.name }}</a>
+          <span class="bucket-meta">
+            <span class="bucket-id"><code>{{ b.bucket_id }}</code></span>
+          </span>
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
 </section>
 {% endblock %}

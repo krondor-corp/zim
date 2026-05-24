@@ -26,8 +26,8 @@ hub: ## Run zim-hub dev server with hot reload
 	@bash -c '\
 		export RUST_LOG="$${RUST_LOG:-info,zim_hub=debug}" \
 		       ZIM_HUB_LISTEN="$${ZIM_HUB_LISTEN:-127.0.0.1:$(HUB_PORT)}" \
-		       ZIM_HUB_PEER="$${ZIM_HUB_PEER:-http://127.0.0.1:3001}"; \
-		echo "Starting zim-hub on http://localhost:$(HUB_PORT) (peer: $$ZIM_HUB_PEER)" && \
+		       ZIM_HUB_DATA="$${ZIM_HUB_DATA:-./data/zim-hub}"; \
+		echo "Starting zim-hub on http://localhost:$(HUB_PORT) (data: $$ZIM_HUB_DATA)" && \
 		cargo watch \
 			-w crates/zim-hub/src \
 			-w crates/zim-hub/templates \

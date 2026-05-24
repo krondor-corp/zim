@@ -9,8 +9,6 @@ pub enum Error {
     Template(#[from] askama::Error),
     #[error("peer error: {0}")]
     Peer(#[from] PeerError),
-    #[error("decode error: {0}")]
-    Decode(String),
     #[error("not found")]
     NotFound,
     #[error("not implemented: {0}")]
@@ -22,8 +20,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let status = match &self {
-            Error::Template(_) | Error::Decode(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            Error::Peer(_) => StatusCode::BAD_GATEWAY,
+            Error::Template(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Error::Peer(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::NotFound => StatusCode::NOT_FOUND,
             Error::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
         };

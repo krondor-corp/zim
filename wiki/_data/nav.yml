@@ -3,6 +3,11 @@
     - quickstart
     - install
 
+- title: Usage
+  items:
+    - cli
+    - mounting
+
 - title: Development
   items:
     - local-development

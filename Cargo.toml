@@ -1,12 +1,19 @@
 [workspace]
 resolver = "2"
-members = ["crates/daemon", "crates/common", "crates/object-store", "crates/desktop/src-tauri"]
+members = [
+    "crates/zim-crypto",
+    "crates/zim-store",
+    "crates/zim-fs",
+    "crates/zim-protocol",
+    "crates/zim-peer",
+    "crates/zim-hub",
+]
 
 [workspace.package]
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/jax-ethdenver-2025/jax-bucket"
-homepage = "https://github.com/jax-ethdenver-2025/jax-bucket"
+repository = "https://github.com/zim/zim"
+homepage = "https://github.com/zim/zim"
 keywords = ["p2p", "encryption", "storage", "ipfs", "sync"]
 categories = ["cryptography", "network-programming", "filesystem"]
 
@@ -64,9 +71,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 clap = { version = "4.5", features = ["derive", "env"] }
 
 # IPFS/P2P
-# iroh = { version = "^0.35", features = ["discovery-pkarr-dht"] }
 iroh = { version = "^0.93", features = ["discovery-pkarr-dht"] }
-# iroh-blobs = { version = "^0.35", features = ["rpc"] }
 iroh-blobs = { version = "^0.95" }
 cid = { version = "0.11", features = ["serde"] }
 ipld-core = { version = "0.4", features = ["serde"] }

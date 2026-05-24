@@ -1,0 +1,107 @@
+use axum::extract::{Json, State};
+use axum::response::{IntoResponse, Response};
+use reqwest::{Client, RequestBuilder, Url};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+use zim_fs::FsError;
+use zim_fs::PrincipalRole;
+
+use crate::http_server::api::client::ApiRequest;
+use crate::ServiceState;
+
+#[derive(Debug, Clone, Serialize, Deserialize, clap::Args)]
+pub struct PublishRequest {
+    /// Bucket ID to publish
+    #[arg(long)]
+    pub bucket_id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublishResponse {
+    pub bucket_id: Uuid,
+    pub published: bool,
+    pub new_bucket_link: String,
+}
+
+pub async fn handler(
+    State(state): State<ServiceState>,
+    Json(req): Json<PublishRequest>,
+) -> Result<impl IntoResponse, PublishError> {
+    tracing::info!("PUBLISH API: Publishing bucket {}", req.bucket_id);
+
+    // Load mount at current head
+    let mount = state.peer().mount(req.bucket_id).await?;
+
+    // Check that the caller is the bucket owner
+    let our_key = state.peer().secret().public();
+    {
+        let manifest = mount.inner().await;
+        let our_share = manifest
+            .manifest()
+            .get_share(&our_key)
+            .ok_or(PublishError::NotOwner)?;
+        if *our_share.role() != PrincipalRole::Owner {
+            return Err(PublishError::NotOwner);
+        }
+    }
+
+    // Check if already published
+    if mount.is_published().await {
+        tracing::info!("PUBLISH API: Bucket {} is already published", req.bucket_id);
+        // Still return success, just note it's already published
+    }
+
+    // Publish: save with public secret, append to log, notify peers
+    let new_bucket_link = state.peer().save_mount(&mount, Some(true)).await?;
+
+    tracing::info!(
+        "PUBLISH API: Bucket {} published, new link: {}",
+        req.bucket_id,
+        new_bucket_link.hash()
+    );
+
+    Ok((
+        http::StatusCode::OK,
+        Json(PublishResponse {
+            bucket_id: req.bucket_id,
+            published: true,
+            new_bucket_link: new_bucket_link.hash().to_string(),
+        }),
+    )
+        .into_response())
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum PublishError {
+    #[error("Fs error: {0}")]
+    Fs(#[from] FsError),
+    #[error("Only the bucket owner can publish")]
+    NotOwner,
+}
+
+impl IntoResponse for PublishError {
+    fn into_response(self) -> Response {
+        match self {
+            PublishError::Fs(_) => (
+                http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Unexpected error".to_string(),
+            )
+                .into_response(),
+            PublishError::NotOwner => (
+                http::StatusCode::FORBIDDEN,
+                "Only the bucket owner can publish".to_string(),
+            )
+                .into_response(),
+        }
+    }
+}
+
+// Client implementation - builds request for this operation
+impl ApiRequest for PublishRequest {
+    type Response = PublishResponse;
+
+    fn build_request(self, base_url: &Url, client: &Client) -> RequestBuilder {
+        let full_url = base_url.join("/api/v0/bucket/publish").unwrap();
+        client.post(full_url).json(&self)
+    }
+}

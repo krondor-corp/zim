@@ -1,0 +1,50 @@
+# Zim hub: read-only web mirror gateway (axum + askama + Datastar).
+[package]
+name = "zim-hub"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Zim read-only web mirror gateway: server-rendered Askama + Datastar over a single-user workspace."
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
+
+[lib]
+name = "zim_hub"
+path = "src/lib.rs"
+
+[[bin]]
+name = "zim-hub"
+path = "src/main.rs"
+
+[dependencies]
+# web + service
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true, features = ["cors", "trace"] }
+http = { workspace = true }
+
+# templates + static
+askama = { workspace = true }
+askama_axum = { workspace = true }
+rust-embed = "8.5"
+mime_guess = { workspace = true }
+
+# async + runtime
+tokio = { workspace = true }
+async-trait = "0.1"
+futures = { workspace = true }
+
+# observability
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = "0.2"
+
+# core
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }

@@ -13,6 +13,16 @@ categories.workspace = true
 name = "zim_crypto"
 path = "src/lib.rs"
 
+[features]
+# Default for the daemon/peer/protocol/hub/store binaries: PublicKey/SecretKey
+# wrap iroh's Ed25519 types so they Deref to iroh::PublicKey / NodeId for free.
+default = ["iroh-keys"]
+iroh-keys = ["dep:iroh"]
+# Browser target: opts out of iroh (its networking/runtime stack doesn't
+# compile to wasm32-unknown-unknown). PublicKey/SecretKey wrap ed25519-dalek
+# directly. Enable via `default-features = false, features = ["wasm"]`.
+wasm = []
+
 [dependencies]
 thiserror = { workspace = true }
 anyhow = { workspace = true }
@@ -21,12 +31,12 @@ serde_with = { workspace = true }
 bincode = { workspace = true }
 pem = { workspace = true }
 rand = "0.9"
-getrandom = "0.2"
+getrandom = { version = "0.2", features = ["js"] }
 sha2 = "0.10"
 hex = "0.4"
 
-# iroh PublicKey/SecretKey wrappers
-iroh = { workspace = true }
+# iroh PublicKey/SecretKey wrappers (gated for wasm builds)
+iroh = { workspace = true, optional = true }
 
 # crypto primitives
 aes-kw = { version = "0.2", features = ["alloc"] }

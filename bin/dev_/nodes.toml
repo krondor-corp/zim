@@ -31,4 +31,4 @@ nick = "mirror"
 blob_store = "s3"
 api_port = 5004
 gateway_port = 8083
-s3_url = "s3://minioadmin:minioadmin@localhost:9000/jax-blobs"
+s3_url = "s3://minioadmin:minioadmin@localhost:9000/zim-blobs"

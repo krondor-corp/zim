@@ -5,8 +5,13 @@ Single-file JS dependencies, committed to the repo. No npm, no Vite, no toolchai
 ## datastar.min.js
 
 - **Source**: <https://data-star.dev/>
-- **Current version**: placeholder (see `datastar.min.js`)
-- **Upstream URL**: <https://cdn.jsdelivr.net/gh/starfederation/datastar@main/bundles/datastar.js> (or pin to a release tag)
+- **Current version**: `v1.0.0-RC.7` (~30 KB unminified, vendored 2026-05-24)
+- **Upstream URL**: <https://cdn.jsdelivr.net/gh/starfederation/datastar@main/bundles/datastar.js> (pin to a release tag once one is published; `@main` is acceptable while Datastar is in RC)
+- **Bump command**:
+  ```
+  curl -fsSL -o crates/zim-hub/static/vendor/datastar.min.js \
+      https://cdn.jsdelivr.net/gh/starfederation/datastar@main/bundles/datastar.js
+  ```
 
 ### How to bump
 

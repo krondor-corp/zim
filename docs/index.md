@@ -2,6 +2,8 @@
 
 Central hub for project documentation. AI agents should read this first.
 
+> User-facing documentation lives in [`wiki/`](../wiki/) (Jekyll, modeled on the [krondor-corp/generic](https://github.com/krondor-corp/generic) template). The files here cover contributor and agent process — patterns, conventions, CI gates.
+
 ## Quick Start
 
 ```bash
@@ -12,7 +14,7 @@ cargo clippy -- -D warnings
 cargo fmt -- --check
 
 # Run the CLI
-cargo run --bin jax -- --help
+cargo run --bin zim -- --help
 
 # Start 2-node dev environment (requires tmux)
 make dev

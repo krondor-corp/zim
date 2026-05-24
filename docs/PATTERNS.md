@@ -1,10 +1,10 @@
 # Rust Patterns
 
-This document describes the architectural patterns and conventions for Rust code in jax-bucket. Follow these patterns when adding new functionality or modifying existing code.
+This document describes the architectural patterns and conventions for Rust code in Zim. Follow these patterns when adding new functionality or modifying existing code.
 
 ## Overview
 
-jax-bucket follows idiomatic Rust patterns with:
+Zim follows idiomatic Rust patterns with:
 
 - **Error handling** via `thiserror` and the `?` operator
 - **Async operations** via `tokio`
@@ -65,8 +65,8 @@ pub async fn load(link: &Link, secret_key: &SecretKey, blobs: &BlobsStore) -> Re
 
 ### Library vs Application Errors
 
-- **Library code** (`jax-common`): Use `thiserror`, be specific
-- **Application code** (`jax-bucket`): Can use `anyhow` for top-level errors
+- **Library code** (`zim-fs`): Use `thiserror`, be specific
+- **Application code** (`Zim`): Can use `anyhow` for top-level errors
 
 ---
 
@@ -533,7 +533,7 @@ fn foo(m: Mime) -> Mime { ... }
 
 ### Don't Recompute Content Hashes
 
-Blobs in jax-bucket are content-addressed — their hash is computed at creation time and stored in `NodeLink`. When caching or processing decrypted data, pass the existing hash through rather than recomputing it:
+Blobs in Zim are content-addressed — their hash is computed at creation time and stored in `NodeLink`. When caching or processing decrypted data, pass the existing hash through rather than recomputing it:
 
 ```rust
 // Bad — redundant BLAKE3 computation
@@ -676,39 +676,3 @@ pub async fn lookup(bucket_id: &Uuid, db: &Database) -> Result<...> {
 | Method order | constructors → `/* Getters */` → `/* Setters */` |
 | Predicate names | `is_*`, `can_*`, `has_*` |
 
----
-
-## Tauri Desktop Patterns
-
-### Embedding Resources
-
-When bundling a Tauri app, relative file paths don't work from the installed location. Use `include_bytes!` to embed resources at compile time:
-
-**Bad** - Relative path fails when app is installed:
-```rust
-// This looks for icons/tray-icon.png relative to CWD, not the app bundle
-let icon = Image::from_path("icons/tray-icon.png")?;
-```
-
-**Good** - Embed at compile time:
-```rust
-// Embeds the icon bytes directly into the binary
-let icon = Image::from_bytes(include_bytes!("../icons/tray-icon.png"))?;
-```
-
-This works because:
-- `include_bytes!` reads the file at compile time
-- The bytes become part of the binary
-- No filesystem lookup needed at runtime
-
-### Tauri Setup Errors
-
-If the app crashes during setup with "No such file or directory", check:
-1. System tray icon paths
-2. Any `from_path()` calls in `setup()` hook
-3. Resource files that need bundling
-
-Debug by running the binary directly:
-```bash
-/Applications/Jax.app/Contents/MacOS/jax-desktop
-```

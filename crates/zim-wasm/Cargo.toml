@@ -1,0 +1,32 @@
+[package]
+name = "zim-wasm"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Browser-side WASM client for Zim: decrypts published encrypted blobs served by zim-hub."
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+name = "zim_wasm"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = { workspace = true }
+js-sys = { workspace = true }
+console_error_panic_hook = { workspace = true }
+# getrandom 0.3 is pulled transitively (via rand 0.9 → chacha20poly1305 / x25519-dalek
+# nonce generation paths). On wasm32-unknown-unknown it requires BOTH the
+# `wasm_js` cargo feature here AND `--cfg getrandom_backend="wasm_js"` in
+# rustflags (see crates/zim-wasm/.cargo/config.toml).
+getrandom = { version = "0.3", features = ["wasm_js"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex = "0.4"
+zim-crypto = { path = "../zim-crypto", default-features = false, features = ["wasm"] }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"

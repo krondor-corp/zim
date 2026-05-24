@@ -1,6 +1,6 @@
 # Data Model
 
-This document describes the core data structures in JaxBucket: Buckets, Manifests, Nodes, Pins, and the Bucket Log.
+This document describes the core data structures in Zim: Buckets, Manifests, Nodes, Pins, and the Bucket Log.
 
 ## Buckets
 

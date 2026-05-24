@@ -1,10 +1,10 @@
 # Conflict Resolution
 
-This document describes JaxBucket's pluggable conflict resolution system for handling concurrent edits during peer synchronization.
+This document describes Zim's pluggable conflict resolution system for handling concurrent edits during peer synchronization.
 
 ## Overview
 
-When two peers edit the same file path concurrently (without seeing each other's changes), a conflict occurs. JaxBucket provides a pluggable resolution system that lets applications choose how to handle these conflicts.
+When two peers edit the same file path concurrently (without seeing each other's changes), a conflict occurs. Zim provides a pluggable resolution system that lets applications choose how to handle these conflicts.
 
 **Location**: `crates/common/src/mount/conflict.rs`
 
@@ -41,7 +41,7 @@ Operations from the **same peer** are never concurrent (Lamport clocks ensure or
 
 ## Resolution Strategies
 
-JaxBucket provides four built-in strategies:
+Zim provides four built-in strategies:
 
 | Strategy | Behavior | Use Case |
 |----------|----------|----------|
@@ -140,7 +140,7 @@ pub enum Resolution {
 ### Basic Merge with Resolver
 
 ```rust
-use jax_common::mount::{PathOpLog, ConflictFile, MergeResult};
+use zim_fs::mount::{PathOpLog, ConflictFile, MergeResult};
 
 let mut local_log = PathOpLog::new(local_peer);
 let incoming_log = PathOpLog::new(remote_peer);

@@ -262,7 +262,7 @@ api_fetch() {
 }
 
 api_help() {
-    echo "API helper - curl commands for interacting with jax-bucket"
+    echo "API helper - curl commands for interacting with zim"
     echo ""
     echo "Usage: ./bin/dev api <node> <command> [args...]"
     echo ""

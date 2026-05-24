@@ -7,11 +7,10 @@ use indicatif::ProgressBar;
 
 use crate::cli::ui;
 
-const GITHUB_REPO: &str = "jax-protocol/jax-fs";
-const INSTALL_SCRIPT_URL: &str =
-    "https://raw.githubusercontent.com/jax-protocol/jax-fs/main/install.sh";
+const GITHUB_REPO: &str = "zim/zim";
+const INSTALL_SCRIPT_URL: &str = "https://raw.githubusercontent.com/zim/zim/main/install.sh";
 
-/// Update jax to the latest release.
+/// Update zim to the latest release.
 #[derive(Args, Debug, Clone)]
 pub struct Update {
     /// Force update even if already on latest version
@@ -103,7 +102,7 @@ impl fmt::Display for UpdateOutput {
                     ui::success(
                         "Updated",
                         &format!(
-                            "jax {} {} {}",
+                            "zim {} {} {}",
                             self.current_version,
                             ui::PROGRESS,
                             self.latest_version
@@ -285,7 +284,7 @@ impl crate::cli::op::Op for Update {
                     eprintln!();
                     eprintln!("To update manually:");
                     eprintln!(
-                        "  cargo install --git https://github.com/{} jax-daemon",
+                        "  cargo install --git https://github.com/{} zim-peer",
                         GITHUB_REPO
                     );
 
@@ -324,12 +323,12 @@ async fn fetch_latest_version() -> Result<String, String> {
 
     let body = String::from_utf8_lossy(&output.stdout);
 
-    // Find first jax-daemon-v* tag
+    // Find first zim-peer-v* tag
     for line in body.lines() {
         let line = line.trim();
-        if line.contains("\"tag_name\"") && line.contains("jax-daemon-v") {
-            if let Some(start) = line.find("jax-daemon-v") {
-                let rest = &line[start + "jax-daemon-v".len()..];
+        if line.contains("\"tag_name\"") && line.contains("zim-peer-v") {
+            if let Some(start) = line.find("zim-peer-v") {
+                let rest = &line[start + "zim-peer-v".len()..];
                 if let Some(end) = rest.find('"') {
                     return Ok(rest[..end].to_string());
                 }
@@ -337,7 +336,7 @@ async fn fetch_latest_version() -> Result<String, String> {
         }
     }
 
-    Err("Could not find jax-daemon release version".to_string())
+    Err("Could not find zim-peer release version".to_string())
 }
 
 fn run_install_script(fuse: bool) -> Result<(), String> {

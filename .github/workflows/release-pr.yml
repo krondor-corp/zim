@@ -11,7 +11,7 @@ jobs:
     name: Create/Update Release PR
     runs-on: ubuntu-latest
     # CRITICAL: Skip if this is a release PR merge to prevent infinite loop
-    if: "!contains(github.event.head_commit.message, 'Bump jax-')"
+    if: "!contains(github.event.head_commit.message, 'Bump zim-')"
     permissions:
       contents: write
       pull-requests: write
@@ -55,8 +55,8 @@ jobs:
         run: |
           # Check if any crates are unpublished on crates.io using the API
           UNPUBLISHED=""
-          for crate in jax-daemon jax-object-store jax-common; do
-            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "User-Agent: jax-release-workflow" "https://crates.io/api/v1/crates/$crate")
+          for crate in zim-crypto zim-store zim-fs zim-protocol zim-peer; do
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "User-Agent: zim-release-workflow" "https://crates.io/api/v1/crates/$crate")
             if [ "$HTTP_STATUS" = "404" ]; then
               echo "Crate $crate is not published on crates.io"
               UNPUBLISHED="$UNPUBLISHED $crate"
@@ -74,7 +74,7 @@ jobs:
           fi
 
           # Get the latest release tag
-          LATEST_TAG=$(git describe --tags --abbrev=0 --match "jax-daemon-v*" 2>/dev/null || echo "")
+          LATEST_TAG=$(git describe --tags --abbrev=0 --match "zim-peer-v*" 2>/dev/null || echo "")
 
           if [ -z "$LATEST_TAG" ]; then
             echo "No previous release found, will create initial release"
@@ -95,19 +95,7 @@ jobs:
             exit 0
           fi
 
-          # Also check if desktop has unreleased changes (smart-release can't detect these)
-          LATEST_DESKTOP_TAG=$(git describe --tags --abbrev=0 --match "jax-desktop-v*" 2>/dev/null || echo "")
-          if [ -n "$LATEST_DESKTOP_TAG" ]; then
-            DESKTOP_CHANGES=$(git diff --name-only "$LATEST_DESKTOP_TAG"..HEAD -- crates/desktop/ | wc -l | tr -d ' ')
-            if [ "$DESKTOP_CHANGES" -gt 0 ]; then
-              echo "Found $DESKTOP_CHANGES desktop file changes since $LATEST_DESKTOP_TAG"
-              echo "needs_release=true" >> $GITHUB_OUTPUT
-              echo "reason=new_commits" >> $GITHUB_OUTPUT
-              exit 0
-            fi
-          fi
-
-          echo "No conventional commits or desktop changes - skipping release PR"
+          echo "No conventional commits - skipping release PR"
           echo "needs_release=false" >> $GITHUB_OUTPUT
 
       - name: Create/update release branch
@@ -128,10 +116,9 @@ jobs:
         if: steps.check.outputs.needs_release == 'true' && steps.check.outputs.reason != 'unpublished_crates'
         run: |
           # Execute release: updates files, creates commits, but NO TAGS
-          # Tags will be created by publish workflow after PR is merged
-          # Note: jax-desktop is publish=false so smart-release can't handle it;
-          # it gets bumped in the next step instead.
-          if cargo smart-release jax-daemon \
+          # Tags will be created by publish workflow after PR is merged.
+          # zim-peer is the top of the dep graph; smart-release walks the rest.
+          if cargo smart-release zim-peer \
             --execute \
             --no-publish \
             --no-tag \
@@ -142,62 +129,6 @@ jobs:
             echo "smart-release found no crate changes to release"
             echo "has_changes=false" >> $GITHUB_OUTPUT
           fi
-
-      - name: Bump desktop version if needed
-        id: desktop-bump
-        if: steps.check.outputs.needs_release == 'true' && steps.check.outputs.reason != 'unpublished_crates'
-        run: |
-          # jax-desktop has publish=false so cargo smart-release skips it.
-          # Bump the desktop patch version when desktop files changed OR
-          # the daemon (which it embeds) was bumped.
-          LATEST_DESKTOP_TAG=$(git describe --tags --abbrev=0 --match "jax-desktop-v*" 2>/dev/null || echo "")
-
-          NEEDS_BUMP=false
-          if [ -z "$LATEST_DESKTOP_TAG" ]; then
-            echo "No previous desktop release tag — will bump"
-            NEEDS_BUMP=true
-          else
-            # Check for desktop-specific changes
-            DESKTOP_CHANGES=$(git diff --name-only "$LATEST_DESKTOP_TAG"..HEAD -- crates/desktop/ | wc -l | tr -d ' ')
-            echo "Desktop file changes since $LATEST_DESKTOP_TAG: $DESKTOP_CHANGES"
-
-            # Check if daemon version was bumped (desktop embeds the daemon)
-            DAEMON_BUMPED=false
-            if git log --oneline "$LATEST_DESKTOP_TAG"..HEAD | grep -q "Bump jax-daemon\|Bump jax-common"; then
-              DAEMON_BUMPED=true
-            fi
-            echo "Daemon/common bumped since last desktop release: $DAEMON_BUMPED"
-
-            if [ "$DESKTOP_CHANGES" -gt 0 ] || [ "$DAEMON_BUMPED" = "true" ]; then
-              NEEDS_BUMP=true
-            fi
-          fi
-
-          if [ "$NEEDS_BUMP" = "false" ]; then
-            echo "No desktop-relevant changes — skipping bump"
-            echo "bumped=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          # Read current version and bump patch
-          CURRENT=$(grep '^version' crates/desktop/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
-          MAJOR=$(echo "$CURRENT" | cut -d. -f1)
-          MINOR=$(echo "$CURRENT" | cut -d. -f2)
-          PATCH=$(echo "$CURRENT" | cut -d. -f3)
-          NEW_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
-          echo "Bumping jax-desktop $CURRENT -> $NEW_VERSION"
-
-          # Update all three version files
-          sed -i "s/^version = \"$CURRENT\"/version = \"$NEW_VERSION\"/" crates/desktop/src-tauri/Cargo.toml
-          sed -i "s/\"version\": \"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" crates/desktop/src-tauri/tauri.conf.json
-          sed -i "s/\"version\": \"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" crates/desktop/package.json
-
-          # Update Cargo.lock to reflect the new version
-          cargo generate-lockfile
-
-          git add crates/desktop/src-tauri/Cargo.toml crates/desktop/src-tauri/tauri.conf.json crates/desktop/package.json Cargo.lock
-          git commit -m "Bump jax-desktop v$NEW_VERSION"
-          echo "bumped=true" >> $GITHUB_OUTPUT
 
       - name: Create marker commit (for unpublished crates)
         id: unpublished
@@ -211,13 +142,13 @@ jobs:
           echo "has_changes=true" >> $GITHUB_OUTPUT
 
       - name: Push release branch
-        if: steps.check.outputs.needs_release == 'true' && (steps.smart-release.outputs.has_changes == 'true' || steps.unpublished.outputs.has_changes == 'true' || steps.desktop-bump.outputs.bumped == 'true')
+        if: steps.check.outputs.needs_release == 'true' && (steps.smart-release.outputs.has_changes == 'true' || steps.unpublished.outputs.has_changes == 'true')
         run: |
           # Push branch (no tags to push)
           git push -u origin release-automation --force
 
       - name: Create or update PR
-        if: steps.check.outputs.needs_release == 'true' && (steps.smart-release.outputs.has_changes == 'true' || steps.unpublished.outputs.has_changes == 'true' || steps.desktop-bump.outputs.bumped == 'true')
+        if: steps.check.outputs.needs_release == 'true' && (steps.smart-release.outputs.has_changes == 'true' || steps.unpublished.outputs.has_changes == 'true')
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
@@ -225,25 +156,26 @@ jobs:
           PR_NUM=$(gh pr list --head release-automation --base main --json number --jq '.[0].number')
 
           # Get version info from Cargo.toml
-          COMMON_VERSION=$(grep "^version" crates/common/Cargo.toml | cut -d'"' -f2)
-          DAEMON_VERSION=$(grep "^version" crates/daemon/Cargo.toml | cut -d'"' -f2)
-          OBJECT_STORE_VERSION=$(grep "^version" crates/object-store/Cargo.toml | cut -d'"' -f2)
-          DESKTOP_VERSION=$(grep "^version" crates/desktop/src-tauri/Cargo.toml | cut -d'"' -f2)
+          CRYPTO_VERSION=$(grep "^version" crates/zim-crypto/Cargo.toml | cut -d'"' -f2)
+          STORE_VERSION=$(grep "^version" crates/zim-store/Cargo.toml | cut -d'"' -f2)
+          FS_VERSION=$(grep "^version" crates/zim-fs/Cargo.toml | cut -d'"' -f2)
+          PROTOCOL_VERSION=$(grep "^version" crates/zim-protocol/Cargo.toml | cut -d'"' -f2)
+          PEER_VERSION=$(grep "^version" crates/zim-peer/Cargo.toml | cut -d'"' -f2)
 
           PR_BODY="## Release Updates
 
           This PR contains automated version bumps and changelog updates based on conventional commits.
 
           ### New versions:
-          - jax-common v$COMMON_VERSION
-          - jax-object-store v$OBJECT_STORE_VERSION
-          - jax-daemon v$DAEMON_VERSION
-          - jax-desktop v$DESKTOP_VERSION
+          - zim-crypto v$CRYPTO_VERSION
+          - zim-store v$STORE_VERSION
+          - zim-fs v$FS_VERSION
+          - zim-protocol v$PROTOCOL_VERSION
+          - zim-peer v$PEER_VERSION
 
           ### What happens when merged:
           1. Tags will be created automatically
           2. Crates will be published to crates.io
-          3. Desktop app binaries will be built and released to GitHub
 
           ### What to review:
           - Version bumps in \`Cargo.toml\` files

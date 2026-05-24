@@ -1,3 +1,4 @@
+mod bucket;
 mod index;
 mod static_files;
 
@@ -10,6 +11,7 @@ pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/", get(index::handler))
         .route("/static/*path", get(static_files::handler))
+        .nest("/b", bucket::router(state.clone()))
         .with_state(state)
 }
 

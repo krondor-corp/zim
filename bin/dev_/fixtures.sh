@@ -4,7 +4,7 @@
 FIXTURES_FILE="$SCRIPT_DIR/fixtures.toml"
 
 # State file for tracking created buckets (name -> id mapping)
-BUCKET_CACHE_FILE="${TMPDIR:-/tmp}/jax-dev-bucket-cache-$$"
+BUCKET_CACHE_FILE="${TMPDIR:-/tmp}/zim-dev-bucket-cache-$$"
 
 # Clean up cache on exit
 trap 'rm -f "$BUCKET_CACHE_FILE"' EXIT
@@ -364,7 +364,7 @@ fixture_mount() {
     if echo "$start_result" | jq -e '.started // .success' >/dev/null 2>&1; then
         echo -e "  ${GREEN}Mounted at $mount_point${NC}"
         # Store mount_id for later unmount
-        echo "$bucket=$mount_id" >> "${TMPDIR:-/tmp}/jax-dev-mount-cache-$$"
+        echo "$bucket=$mount_id" >> "${TMPDIR:-/tmp}/zim-dev-mount-cache-$$"
         # Give FUSE a moment to initialize
         sleep 1
     else
@@ -380,8 +380,8 @@ fixture_unmount() {
 
     # Get mount_id from cache
     local mount_id=""
-    if [[ -f "${TMPDIR:-/tmp}/jax-dev-mount-cache-$$" ]]; then
-        mount_id=$(grep "^$bucket=" "${TMPDIR:-/tmp}/jax-dev-mount-cache-$$" 2>/dev/null | head -1 | cut -d= -f2)
+    if [[ -f "${TMPDIR:-/tmp}/zim-dev-mount-cache-$$" ]]; then
+        mount_id=$(grep "^$bucket=" "${TMPDIR:-/tmp}/zim-dev-mount-cache-$$" 2>/dev/null | head -1 | cut -d= -f2)
     fi
 
     if [[ -z "$mount_id" ]]; then

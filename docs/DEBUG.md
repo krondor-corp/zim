@@ -1,6 +1,6 @@
 # Debugging Workflow
 
-Guide for debugging jax-bucket during development.
+Guide for debugging Zim during development.
 
 ## Quick Start
 
@@ -45,11 +45,11 @@ Once in the tmux session:
 - `Ctrl+B` then `0/1/2` - Switch to pane 0, 1, or 2
 - `Ctrl+B` then arrow keys - Navigate between panes
 - `Ctrl+B` then `d` - Detach from session
-- `tmux attach -t jax-dev` - Reattach to session
+- `tmux attach -t zim-dev` - Reattach to session
 
 ## Log Files
 
-Logs are written to `./data/<node>/logs/jax.log.YYYY-MM-DD`.
+Logs are written to `./data/<node>/logs/zim.log.YYYY-MM-DD`.
 
 ### Viewing Logs
 
@@ -91,7 +91,7 @@ Set `RUST_LOG` environment variable:
 ```bash
 RUST_LOG=debug cargo run ...     # Debug and above
 RUST_LOG=warn cargo run ...      # Warn and above
-RUST_LOG=jax=debug cargo run ... # Debug for jax, info for deps
+RUST_LOG=zim=debug cargo run ... # Debug for zim, info for deps
 ```
 
 ## API Testing
@@ -214,7 +214,7 @@ Can you help debug this?
 
 ## Database Inspection
 
-SQLite databases are at `./data/<node>/jax.db`.
+SQLite databases are at `./data/<node>/zim.db`.
 
 ```bash
 # Use the db helper

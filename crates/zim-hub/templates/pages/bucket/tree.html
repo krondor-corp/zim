@@ -1,0 +1,32 @@
+{% extends "layouts/base.html" %}
+
+{% block title %}{{ bucket_id }}{% if !path.is_empty() %} / {{ path }}{% endif %} — zim-hub{% endblock %}
+
+{% block content %}
+{% include "partials/breadcrumb.html" %}
+
+<section class="tree">
+  <div class="tree-toolbar">
+    <a class="link" href="/b/{{ bucket_id }}/history">history</a>
+  </div>
+
+  {% if items.is_empty() %}
+    <p class="muted">Empty directory.</p>
+  {% else %}
+    <ul class="tree-list">
+      {% for entry in items %}
+        <li class="tree-row {% if entry.is_dir %}is-dir{% else %}is-file{% endif %}">
+          {% if entry.is_dir %}
+            <span class="icon" aria-hidden="true">▸</span>
+            <a href="/b/{{ bucket_id }}/tree{{ entry.path }}">{{ entry.name }}/</a>
+          {% else %}
+            <span class="icon" aria-hidden="true">·</span>
+            <a href="/b/{{ bucket_id }}/blob{{ entry.path }}">{{ entry.name }}</a>
+            <span class="mime">{{ entry.mime_type }}</span>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+</section>
+{% endblock %}

@@ -34,7 +34,7 @@ struct WriteBuffer {
 }
 
 /// FUSE filesystem for a jax bucket
-pub struct JaxFs {
+pub struct FuseFs {
     /// Tokio runtime handle for async operations
     rt: Handle,
     /// Direct mount reference for reads (ls, cat, getattr)
@@ -60,14 +60,14 @@ pub struct JaxFs {
     next_fh: std::sync::atomic::AtomicU64,
 }
 
-impl JaxFs {
+impl FuseFs {
     /// Default TTL for FUSE attributes
     const ATTR_TTL: Duration = Duration::from_secs(1);
 
     /// Block size for FUSE
     const BLOCK_SIZE: u32 = 512;
 
-    /// Create a new JaxFs
+    /// Create a new FuseFs
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         rt: Handle,
@@ -491,7 +491,7 @@ impl JaxFs {
     }
 }
 
-impl Filesystem for JaxFs {
+impl Filesystem for FuseFs {
     fn init(
         &mut self,
         _req: &Request<'_>,

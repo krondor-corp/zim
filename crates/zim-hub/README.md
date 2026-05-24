@@ -14,11 +14,37 @@ This is the first-milestone scaffold per `T-002` and the design from `T-003`'s `
 
 ## How to run
 
+**Canonical (hot reload):**
+
+```
+make hub
+```
+
+Starts the hub on `http://localhost:8080` with `cargo watch` on `src/`, `templates/`, `static/`, and `Cargo.toml` — edit a template, see the page reload. Prints the bound URL before exec. Requires `cargo-watch` (install once with `cargo install cargo-watch`).
+
+Defaults baked into `make hub`:
+- `ZIM_HUB_LISTEN=127.0.0.1:8080` (override with `HUB_PORT=9000 make hub` or by exporting `ZIM_HUB_LISTEN` directly)
+- `ZIM_HUB_PEER=http://127.0.0.1:3001`
+- `RUST_LOG=info,zim_hub=debug`
+
+Copy `.env.example` at the repo root to `.env` and `source .env` (or use direnv) to override.
+
+**Fallback (no hot reload):**
+
 ```
 cargo run -p zim-hub
 ```
 
-Defaults to `127.0.0.1:8080`. Override via `ZIM_HUB_LISTEN` (e.g. `ZIM_HUB_LISTEN=0.0.0.0:3000`).
+Same defaults, no watcher. Useful when `cargo-watch` isn't available or you want a single run.
+
+## Environment
+
+| Var | Default | Effect |
+|---|---|---|
+| `ZIM_HUB_LISTEN` | `127.0.0.1:8080` | HTTP bind address. |
+| `ZIM_HUB_PEER` | `http://127.0.0.1:3001` | Base URL of the local `zim-peer` daemon the hub reads from. |
+| `ZIM_HUB_LOG` | `info` | zim-hub-only tracing level. Overridden by `RUST_LOG`. |
+| `RUST_LOG` | (unset) | Full tracing-subscriber filter. Overrides `ZIM_HUB_LOG`. |
 
 ## Aesthetic / pattern reference
 

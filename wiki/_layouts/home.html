@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  {% include head.html %}
+</head>
+<body>
+  {% include header.html %}
+  <main class="home">
+
+    <section class="hero">
+      <div class="hero-content">
+        <span class="hero-eyebrow">End-to-end encrypted peer-to-peer storage</span>
+        <h1 class="hero-title">Zim</h1>
+        <p class="hero-tagline">Local-first encrypted buckets that sync directly between your devices. ChaCha20-Poly1305 for content, X25519 secret sharing for access control, iroh-blobs for transport. No servers required.</p>
+        <div class="hero-install" id="hero-install">
+          <code>curl -fsSL https://raw.githubusercontent.com/zim/zim/main/install.sh | sh</code>
+          <button class="copy-btn copy-btn-visible" onclick="navigator.clipboard.writeText('curl -fsSL https://raw.githubusercontent.com/zim/zim/main/install.sh | sh').then(function(){var b=document.querySelector('#hero-install .copy-btn');b.textContent='copied';setTimeout(function(){b.textContent='copy'},1500)})">copy</button>
+        </div>
+        <div class="hero-links">
+          <a href="{{ '/docs/quickstart/' | relative_url }}" class="hero-cta">Get started</a>
+          <a href="https://github.com/zim/zim" class="hero-link">View on GitHub</a>
+        </div>
+      </div>
+      <div class="hero-logo">
+        <img src="{{ '/assets/images/favicon.svg' | relative_url }}" alt="Zim logo">
+      </div>
+    </section>
+
+    <section class="features">
+      <h2 class="section-heading">What you get</h2>
+      <p class="section-description">A small set of strong primitives for storing files that move between your devices without trusting a server.</p>
+      <div class="feature-grid">
+        <div class="feature">
+          <h3>Encrypt</h3>
+          <p>Every file and directory has its own ChaCha20-Poly1305 key. Content is encrypted before it leaves the device; the network and disk never see plaintext.</p>
+        </div>
+        <div class="feature">
+          <h3>Share</h3>
+          <p>Bucket secrets are split into per-owner shares using X25519 ECDH + AES-KW. Add or revoke a device by adding or removing a share &mdash; no key rotation required.</p>
+        </div>
+        <div class="feature">
+          <h3>Sync</h3>
+          <p>Content-addressed blobs replicate over iroh's QUIC transport. Local-first: every operation works offline and converges when peers reconnect.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="commands-preview">
+      <h2 class="section-heading">Workflow</h2>
+      <p class="section-description">From install to sharing a bucket in four commands.</p>
+      <div class="workflow-steps">
+        <div class="workflow-step">
+          <span class="step-cmd">zim init</span>
+          <div>
+            <strong>Initialize identity</strong>
+            <p>Generates this device's Ed25519 keypair and local state.</p>
+          </div>
+        </div>
+        <div class="workflow-step">
+          <span class="step-cmd">zim daemon</span>
+          <div>
+            <strong>Start the daemon</strong>
+            <p>Runs the local sync daemon and HTTP API.</p>
+          </div>
+        </div>
+        <div class="workflow-step">
+          <span class="step-cmd">zim bucket create</span>
+          <div>
+            <strong>Create a bucket</strong>
+            <p>Generates the bucket secret, encrypts a share to your key, and writes the initial manifest.</p>
+          </div>
+        </div>
+        <div class="workflow-step">
+          <span class="step-cmd">zim bucket add</span>
+          <div>
+            <strong>Add files</strong>
+            <p>Encrypts and stores files as content-addressed blobs; the manifest chain advances by one version.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="home-bottom">
+      <p>Zim is an experimental project built for learning. The cryptography and protocol have not been independently audited. Do not use it to protect data you cannot afford to lose. Built on <a href="https://iroh.computer/">iroh</a> and <a href="https://www.rust-lang.org/">Rust</a>.</p>
+    </section>
+
+  </main>
+  {% include footer.html %}
+</body>
+</html>

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -e
+
+# Navigate to rust directory
+cd "$(dirname "$0")/.."
+
+echo "Building Rust project..."
+cargo build --workspace --exclude jax-desktop ${CARGO_FEATURES:---all-features} --release
+
+echo ""
+echo "Build complete! ✅"

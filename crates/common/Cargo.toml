@@ -1,0 +1,69 @@
+[package]
+name = "jax-common"
+version = "0.1.11"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Core data structures and cryptography for JaxBucket - end-to-end encrypted P2P storage"
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
+
+[lib]
+name = "common"
+path = "src/lib.rs"
+
+[dependencies]
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+bincode.workspace = true
+rand = "0.9"
+getrandom = "0.2"
+sha2 = "0.10"
+hex = "0.4"
+mime = "0.3.17"
+mime_guess = "2.0"
+mime_serde_shim = "0.2.2"
+serde = { workspace = true }
+serde_with.workspace = true
+uuid.workspace = true
+pem = { workspace = true }
+async-trait = "0.1"
+
+# crypto
+aes-kw = { version = "0.2", features = ["alloc"] }
+aes-gcm = "0.10"
+chacha20poly1305 = { version = "0.10", features = ["stream"] }
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+curve25519-dalek = "4.0"
+ed25519-dalek = { version = "2.2.0", features = ["serde"] }
+blake3 = "1.5"
+
+# linked data
+cid = { workspace = true }
+ipld-core = { workspace = true }
+serde_ipld_dagcbor.workspace = true
+multihash = "0.19"
+
+# Object store
+object-store = { package = "jax-object-store", version = "^0.1.4", path = "../object-store" }
+
+# iroh
+iroh.workspace = true
+iroh-blobs.workspace = true
+bytes.workspace = true
+futures.workspace = true
+tokio.workspace = true
+parking_lot.workspace = true
+tempfile = "3.8"
+tracing.workspace = true
+flume = "0.11"
+
+[build-dependencies]
+chrono = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.8"
+serde_json.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

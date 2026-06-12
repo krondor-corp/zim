@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 22" width="20" height="22" aria-hidden="true">
+  <!-- "Z" lattice — three horizontal blocks fading along the diagonal,
+       evoking encrypted blocks stacked through a chain. Same "vertical
+       rectangles with opacity ramp" treatment as oops's mark. -->
+  <rect x="2"  y="0"  width="16" height="3" rx="1" class="logo-stem"/>
+  <rect x="12" y="5"  width="6"  height="3" rx="1" class="logo-stem" opacity="0.85"/>
+  <rect x="8"  y="9"  width="6"  height="3" rx="1" class="logo-fade" opacity="0.65"/>
+  <rect x="4"  y="13" width="6"  height="3" rx="1" class="logo-fade" opacity="0.45"/>
+  <rect x="2"  y="18" width="16" height="3" rx="1" class="logo-dot"/>
+</svg>

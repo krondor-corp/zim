@@ -1,0 +1,60 @@
+[package]
+name = "zim"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Zim CLI + daemon: command-line interface to a Zim peer, with embedded long-running daemon"
+keywords.workspace = true
+categories.workspace = true
+build = "build.rs"
+
+[lib]
+name = "zim"
+path = "src/lib.rs"
+
+[[bin]]
+name = "zim"
+path = "src/main.rs"
+
+[dependencies]
+zim-core = { path = "../zim-core", version = "0.1.0" }
+zim-crypto = { path = "../zim-crypto", version = "0.1.0" }
+zim-did = { path = "../zim-did", version = "0.1.0" }
+zim-runtime = { path = "../zim-runtime", version = "0.1.0" }
+zim-peer = { path = "../zim-peer", version = "0.1.0" }
+
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+axum = { workspace = true }
+base64 = "0.22"
+bytes = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true }
+comfy-table = "7.1"
+dirs = { workspace = true }
+http = { workspace = true }
+owo-colors = { version = "4", features = ["supports-colors"] }
+reqwest = { workspace = true }
+hex = "0.4"
+hostname = "0.4"
+serde = { workspace = true }
+serde_json = { workspace = true }
+service-manager = "0.8"
+thiserror = { workspace = true }
+tokio = { workspace = true }
+toml = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tracing = { workspace = true }
+tracing-appender = "0.2"
+tracing-subscriber = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
+
+[build-dependencies]
+chrono = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

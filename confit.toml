@@ -1,0 +1,30 @@
+# zim's confit config. Mirrors krondor-corp/generic's shape so the
+# same dev tools (`confit show`, `confit run`, `make validate`) work
+# here.
+#
+# Credentials come from a 1Password Environment via the official
+# `op environment read <env-id>` CLI — one bulk fetch per resolve.
+# Auth uses the desktop-app integration (no token env var needed
+# when the CLI is logged into your account); CI uses a service
+# account token via OP_SERVICE_ACCOUNT_TOKEN.
+
+[sources.op_env]
+load   = "op environment read {vars.op_env_id}"
+secret = true
+
+[project]
+name = "zim"
+admin_email = "al@krondor.org"
+
+[vars]
+stage = "production"
+# Krondor's shared dev 1Password Environment.
+op_env_id = "e43zlujyshpwnd7xtvda6brhaq"
+
+[credentials.app]
+google_o_auth_client_id     = "op_env://GOOGLE_O_AUTH_CLIENT_ID"
+google_o_auth_client_secret = "op_env://GOOGLE_O_AUTH_CLIENT_SECRET"
+
+[services.hub]
+domain = "hub.zim.krondor.org"
+port   = 8080

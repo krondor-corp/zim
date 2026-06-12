@@ -1,7 +1,8 @@
 #!/bin/bash
-# Node management commands
+# Node lifecycle + tmux session management.
 
 TMUX_SESSION="zim-dev"
+ZIM_BIN="${ZIM_BIN:-$PROJECT_ROOT/target/debug/zim}"
 
 cmd_clean() {
     echo -e "${YELLOW}Cleaning dev data...${NC}"
@@ -13,45 +14,32 @@ cmd_clean() {
 
 cmd_kill() {
     local force=false
-    if [[ "$1" == "--force" ]] || [[ "$1" == "-f" ]]; then
-        force=true
-    fi
+    [[ "$1" == "--force" || "$1" == "-f" ]] && force=true
 
     echo -e "${YELLOW}Killing $TMUX_SESSION tmux session...${NC}"
-    tmux kill-session -t "$TMUX_SESSION" 2>/dev/null && \
-        echo -e "${GREEN}Done${NC}" || \
+    if tmux kill-session -t "$TMUX_SESSION" 2>/dev/null; then
+        echo -e "${GREEN}Done${NC}"
+    else
         echo -e "${YELLOW}No session found${NC}"
+    fi
 
-    # Kill any orphaned zim processes on our ports
     if $force; then
         echo -e "${YELLOW}Force killing processes on dev ports...${NC}"
         kill_dev_ports
     fi
 }
 
-# Kill processes on dev environment ports
 kill_dev_ports() {
     local killed=0
     for node in $(get_node_names); do
-        local api_port=$(get_api_port "$node")
-        local gw_port=$(get_gw_port "$node")
-
-        # Find PID using the API port (macOS lsof)
-        local pid=$(lsof -ti tcp:$api_port 2>/dev/null)
+        local port=$(get_api_port "$node")
+        local pid=$(lsof -ti tcp:"$port" 2>/dev/null)
         if [[ -n "$pid" ]]; then
-            echo -e "  Killing process $pid on API port $api_port"
-            kill -9 $pid 2>/dev/null && killed=$((killed + 1))
-        fi
-
-        # Find PID using the gateway port
-        pid=$(lsof -ti tcp:$gw_port 2>/dev/null)
-        if [[ -n "$pid" ]]; then
-            echo -e "  Killing process $pid on gateway port $gw_port"
+            echo -e "  killing pid $pid on port $port"
             kill -9 $pid 2>/dev/null && killed=$((killed + 1))
         fi
     done
-
-    if [[ $killed -eq 0 ]]; then
+    if (( killed == 0 )); then
         echo -e "${GREEN}No orphaned processes found${NC}"
     else
         echo -e "${GREEN}Killed $killed process(es)${NC}"
@@ -59,248 +47,181 @@ kill_dev_ports() {
 }
 
 cmd_status() {
-    echo -e "${BLUE}Node Status${NC}"
+    echo -e "${BLUE}Dev environment status${NC}"
     echo ""
 
-    # Check tmux session
     if tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
-        echo -e "tmux session: ${GREEN}running${NC}"
+        echo -e "tmux session: ${GREEN}running${NC} ($TMUX_SESSION)"
     else
         echo -e "tmux session: ${YELLOW}not running${NC}"
     fi
     echo ""
 
-    list_nodes
-    echo ""
-
-    # Check if nodes are responding
-    echo "Health checks:"
+    printf "%-10s %-7s %-10s %s\n" "PEER" "PORT" "STATUS" "ZIM_HOME"
     for node in $(get_node_names); do
-        local api_port=$(get_api_port "$node")
-        local nick=$(toml_get "$node" "nick")
-        printf "  %-8s %-10s " "$node" "($nick)"
-
-        if curl -s --connect-timeout 1 "http://localhost:$api_port/_status/livez" >/dev/null 2>&1; then
-            echo -e "${GREEN}healthy${NC}"
-        else
-            echo -e "${RED}not responding${NC}"
+        local port=$(get_api_port "$node")
+        local home=$(get_data_dir "$node")
+        local status="${RED}down${NC}"
+        if curl -sf "http://127.0.0.1:$port/_status/livez" >/dev/null 2>&1; then
+            status="${GREEN}up${NC}"
         fi
+        printf "%-10s %-7s %-20b %s\n" "$node" "$port" "$status" "$home"
     done
 }
 
-# Initialize a node if it doesn't exist
-init_node() {
-    local node="$1"
-    local data_path="$DATA_DIR/$node"
-
-    if [[ -d "$data_path" ]]; then
-        return 0
+# Build the zim binary up-front so each pane doesn't redo it.
+ensure_zim_built() {
+    if [[ ! -x "$ZIM_BIN" ]]; then
+        echo -e "${BLUE}Building zim...${NC}"
+        (cd "$PROJECT_ROOT" && cargo build -p zim --quiet) || {
+            echo -e "${RED}cargo build failed${NC}"
+            exit 1
+        }
     fi
-
-    local name=$(get_node_name "$node")
-    local blob_store=$(get_blob_store "$node")
-    local api_port=$(get_api_port "$node")
-    local gw_port=$(get_gw_port "$node")
-    local peer_port=$(toml_get "$node" "peer_port")
-
-    echo -e "${YELLOW}Initializing $node ($name)...${NC}"
-
-    local init_args="--config-path $data_path init"
-    init_args="$init_args --api-port $api_port"
-    init_args="$init_args --gateway-port $gw_port"
-    if [[ -n "$peer_port" ]]; then
-        init_args="$init_args --peer-port $peer_port"
-    fi
-    init_args="$init_args --blob-store $blob_store"
-
-    if [[ "$blob_store" == "s3" ]]; then
-        local s3_url=$(get_s3_url "$node")
-        init_args="$init_args --s3-url $s3_url"
-    fi
-
-    cargo run --bin zim --features fuse -- $init_args
-}
-
-# Build the daemon command for a node (for use with cargo watch -x)
-# Returns just the cargo subcommand (without 'cargo ' prefix)
-get_daemon_cmd() {
-    local node="$1"
-    local data_path="$DATA_DIR/$node"
-    local log_dir="$data_path/logs"
-
-    local cmd="run --bin zim --features fuse -- --config-path $data_path daemon --log-dir $log_dir"
-
-    echo "$cmd"
 }
 
 cmd_run() {
     local background=false
-    if [[ "$1" == "--background" ]] || [[ "$1" == "-b" ]]; then
-        background=true
-        shift
+    [[ "$1" == "--background" || "$1" == "-b" ]] && background=true
+
+    if ! command -v tmux >/dev/null 2>&1; then
+        echo -e "${RED}tmux not installed${NC}"
+        exit 1
     fi
 
-    # Check if session already exists and nodes are healthy
     if tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
-        echo -e "${BLUE}Tmux session already exists, checking nodes...${NC}"
-        local all_healthy=true
-        for node in $(get_node_names); do
-            local api_port=$(get_api_port "$node")
-            if ! curl -s --connect-timeout 1 "http://localhost:$api_port/_status/livez" >/dev/null 2>&1; then
-                all_healthy=false
-                break
-            fi
-        done
-
-        if $all_healthy; then
-            echo -e "${GREEN}All nodes healthy${NC}"
-            if ! $background; then
-                tmux attach -t "$TMUX_SESSION"
-            fi
-            return 0
-        else
-            echo -e "${YELLOW}Nodes not healthy, recreating session...${NC}"
-        fi
-    fi
-
-    echo -e "${BLUE}Setting up Zim dev environment...${NC}"
-
-    # Check cargo-watch
-    if ! command -v cargo-watch &>/dev/null; then
-        echo -e "${YELLOW}Installing cargo-watch...${NC}"
-        cargo install cargo-watch
-    fi
-
-    # Start MinIO for s3 nodes
-    local need_minio=false
-    for node in $(get_node_names); do
-        if [[ "$(get_blob_store $node)" == "s3" ]]; then
-            need_minio=true
-            break
-        fi
-    done
-
-    if $need_minio; then
-        echo -e "${BLUE}Starting MinIO...${NC}"
-        "$PROJECT_ROOT/bin/minio" up || true
-    fi
-
-    # Initialize nodes
-    for node in $(get_node_names); do
-        init_node "$node"
-    done
-
-    # Kill existing session (if unhealthy)
-    tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
-
-    # Count nodes for pane layout
-    local node_count=$(get_node_names | wc -l | tr -d ' ')
-
-    # Create tmux session
-    tmux new-session -d -s "$TMUX_SESSION" -n nodes
-
-    # Split into panes
-    for ((i=1; i<node_count; i++)); do
-        tmux split-window -v -t "$TMUX_SESSION:0"
-    done
-
-    # Make panes equal size
-    tmux select-layout -t "$TMUX_SESSION:0" even-vertical
-
-    # Start each node in its pane
-    local pane=0
-    for node in $(get_node_names); do
-        local name=$(get_node_name "$node")
-        local nick=$(toml_get "$node" "nick")
-        local api_port=$(get_api_port "$node")
-        local gw_port=$(get_gw_port "$node")
-        local daemon_cmd=$(get_daemon_cmd "$node")
-
-        # Build info line
-        local info="API: http://localhost:$api_port  GW: http://localhost:$gw_port"
-
-        # Send commands to pane
-        tmux send-keys -t "$TMUX_SESSION:0.$pane" "cd $PROJECT_ROOT && echo -e '${GREEN}=== $node ($nick): $name ===${NC}' && echo '$info' && echo '' && RUST_LOG=info cargo watch --why --ignore 'data/*' --ignore '*.sqlite*' --ignore '*.db*' -x '$daemon_cmd'" C-m
-
-        pane=$((pane + 1))
-    done
-
-    # Print summary
-    echo ""
-    echo -e "${GREEN}Started nodes:${NC}"
-    for node in $(get_node_names); do
-        local nick=$(toml_get "$node" "nick")
-        local name=$(get_node_name "$node")
-        local api_port=$(get_api_port "$node")
-        local gw_port=$(get_gw_port "$node")
-        echo "  $node ($nick): API http://localhost:$api_port  GW http://localhost:$gw_port"
-    done
-    echo ""
-
-    if $need_minio; then
-        echo "MinIO console: http://localhost:9001"
-        echo ""
-    fi
-
-    echo "Logs: ./data/<node>/logs/zim.log.*"
-    echo ""
-
-    # Wait for nodes to be healthy and apply fixtures
-    wait_for_nodes
-    apply_fixtures_on_startup
-
-    echo "Use './bin/dev logs' to view logs"
-    echo "Use './bin/dev api <node> <command>' for API commands"
-    echo ""
-
-    if ! $background; then
-        tmux attach -t "$TMUX_SESSION"
-    else
-        echo -e "${GREEN}Dev environment running in background${NC}"
-        echo "Use './bin/dev status' to check health"
-        echo "Use 'tmux attach -t $TMUX_SESSION' to attach"
-    fi
-}
-
-# Wait for all nodes to be healthy
-wait_for_nodes() {
-    echo -e "${BLUE}Waiting for nodes to be healthy...${NC}"
-    local max_attempts=30
-    local attempt=0
-
-    while [[ $attempt -lt $max_attempts ]]; do
-        local all_healthy=true
-
-        for node in $(get_node_names); do
-            local api_port=$(get_api_port "$node")
-
-            if ! curl -s --connect-timeout 1 "http://localhost:$api_port/_status/livez" >/dev/null 2>&1; then
-                all_healthy=false
-                break
-            fi
-        done
-
-        if $all_healthy; then
-            echo -e "${GREEN}All nodes healthy${NC}"
-            return 0
-        fi
-
-        attempt=$((attempt + 1))
-        printf "."
-        sleep 1
-    done
-
-    echo ""
-    echo -e "${YELLOW}Warning: Some nodes may not be ready${NC}"
-    return 1
-}
-
-# Apply fixtures after nodes start
-apply_fixtures_on_startup() {
-    if [[ ! -f "$FIXTURES_FILE" ]]; then
+        echo -e "${YELLOW}Session $TMUX_SESSION already running. Attach with: tmux attach -t $TMUX_SESSION${NC}"
+        $background || tmux attach -t "$TMUX_SESSION"
         return 0
     fi
 
-    echo ""
-    fixtures_apply
+    ensure_zim_built
+
+    mkdir -p "$DATA_DIR"
+    seed_node_configs
+
+    local nodes=($(get_node_names))
+    local n=${#nodes[@]}
+
+    # Window 0: a pane per node.
+    tmux new-session -d -s "$TMUX_SESSION" -n nodes
+
+    for (( i = 1; i < n; i++ )); do
+        tmux split-window -v -t "$TMUX_SESSION:0"
+    done
+    tmux select-layout -t "$TMUX_SESSION:0" even-vertical >/dev/null
+
+    for (( i = 0; i < n; i++ )); do
+        local node="${nodes[$i]}"
+        local port=$(get_api_port "$node")
+        local home=$(get_data_dir "$node")
+        local header="${GREEN}=== $node on :$port ===${NC}"
+
+        tmux send-keys -t "$TMUX_SESSION:0.$i" \
+            "cd $PROJECT_ROOT && printf '%b\n' '$header' && ZIM_HOME='$home' ZIM_LOG='\${ZIM_LOG:-zim=info,zim_peer=info}' '$ZIM_BIN' daemon run --port $port" \
+            C-m
+    done
+
+    # Window 1: a control shell, ready for CLI commands.
+    tmux new-window -t "$TMUX_SESSION:1" -n cli "cd $PROJECT_ROOT && exec \$SHELL"
+
+    # Show the nodes window first.
+    tmux select-window -t "$TMUX_SESSION:0"
+
+    if $background; then
+        echo -e "${GREEN}Session $TMUX_SESSION started in background.${NC}"
+        echo "Attach with: tmux attach -t $TMUX_SESSION"
+        echo "Or run commands: ./bin/dev cli <nick> <args>"
+    else
+        tmux attach -t "$TMUX_SESSION"
+    fi
+}
+
+# `./bin/dev cli <nick> <args>` — run zim against the named peer.
+# Sets $ZIM_HOME; the CLI reads the per-peer port from its
+# config.toml (seeded by `seed_node_configs`).
+cmd_cli() {
+    if [[ -z "$1" ]]; then
+        echo -e "${RED}Usage: ./bin/dev cli <nick> <args...>${NC}"
+        echo "Available nicks:"
+        for node in $(get_node_names); do
+            echo "  $node (port $(get_api_port "$node"))"
+        done
+        exit 1
+    fi
+
+    local nick="$1"
+    shift
+
+    if ! get_api_port "$nick" >/dev/null 2>&1; then
+        echo -e "${RED}Unknown nick: $nick${NC}"
+        exit 1
+    fi
+    local home=$(get_data_dir "$nick")
+
+    ensure_zim_built
+    ZIM_HOME="$home" "$ZIM_BIN" "$@"
+}
+
+# Seed each node's $ZIM_HOME with a config.toml that pins its
+# `api_port`. Idempotent — overwrites the file every time so changes
+# to nodes.toml propagate. Shared by `cmd_run` and `cmd_shell` so the
+# CLI resolves the right daemon port regardless of whether the user
+# started the tmux session first.
+seed_node_configs() {
+    for node in $(get_node_names); do
+        local home=$(get_data_dir "$node")
+        local port=$(get_api_port "$node")
+        mkdir -p "$home"
+        printf 'api_port = %s\nlog_level = "info"\n' "$port" > "$home/config.toml"
+    done
+}
+
+# `./bin/dev shell` — emit shell functions, one per nick, that wrap
+# the zim binary with the right $ZIM_HOME baked in. Activate in the
+# current terminal with:
+#
+#     eval "$(./bin/dev shell)"
+#
+# After that, `alice vault demo head` and `bob vaults list` just work.
+# Regenerate after editing nodes.toml. Seeds each node's config.toml
+# so commands don't accidentally hit the default port 17171 because a
+# config wasn't written yet.
+cmd_shell() {
+    ensure_zim_built
+    seed_node_configs
+    echo "# zim per-peer shells — generated $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "# eval \"\$(./bin/dev shell)\" to activate"
+    for node in $(get_node_names); do
+        local home=$(get_data_dir "$node")
+        # Quote $home for safety; $ZIM_BIN is already an absolute path.
+        printf '%s() { ZIM_HOME=%q %q "$@"; }\n' "$node" "$home" "$ZIM_BIN"
+    done
+}
+
+# `./bin/dev logs <nick>` — tail the tmux pane for that node.
+cmd_logs() {
+    if [[ -z "$1" ]]; then
+        echo -e "${RED}Usage: ./bin/dev logs <nick>${NC}"
+        exit 1
+    fi
+    local nick="$1"
+    if ! get_api_port "$nick" >/dev/null 2>&1; then
+        echo -e "${RED}Unknown nick: $nick${NC}"
+        exit 1
+    fi
+    if ! tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
+        echo -e "${RED}No tmux session — start it with: ./bin/dev${NC}"
+        exit 1
+    fi
+    # Pane index = position in the sorted node list.
+    local nodes=($(get_node_names))
+    local idx=0
+    for (( i = 0; i < ${#nodes[@]}; i++ )); do
+        if [[ "${nodes[$i]}" == "$nick" ]]; then
+            idx=$i
+            break
+        fi
+    done
+    tmux capture-pane -t "$TMUX_SESSION:0.$idx" -p
 }

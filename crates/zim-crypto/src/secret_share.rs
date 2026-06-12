@@ -25,11 +25,12 @@
 
 use std::convert::TryFrom;
 
+use super::keys::{
+    KeyError, PrivateKey, PublicKey, SharingPrivateKey, SharingPublicKey, PUBLIC_KEY_SIZE,
+};
+use super::secret::{Secret, SecretError, SECRET_SIZE};
 use aes_kw::KekAes256 as Kek;
 use serde::{Deserialize, Serialize};
-
-use super::keys::{KeyError, PublicKey, SecretKey, PUBLIC_KEY_SIZE};
-use super::secret::{Secret, SecretError, SECRET_SIZE};
 
 /// Size of AES Key Wrap padding/nonce in bytes
 pub const KW_NONCE_SIZE: usize = 8;
@@ -215,20 +216,15 @@ impl SecretShare {
     /// Returns an error if key conversion or encryption fails.
     pub fn new(secret: &Secret, recipient: &PublicKey) -> Result<Self, SecretShareError> {
         // Generate ephemeral Ed25519 keypair
-        let ephemeral_private = SecretKey::generate();
+        let ephemeral_private = PrivateKey::generate();
         let ephemeral_public = ephemeral_private.public();
 
         // Convert both keys to X25519 for ECDH
-        let ephemeral_x25519_private = ephemeral_private.to_x25519();
-        let recipient_x25519_public = recipient.to_x25519()?;
+        let ephemeral_sharing = SharingPrivateKey::from(&ephemeral_private);
+        let recipient_sharing = SharingPublicKey::try_from(recipient)?;
 
         // Perform ECDH to get shared secret
-        let shared_secret = ephemeral_x25519_private.diffie_hellman(&recipient_x25519_public);
-
-        // Use shared secret as KEK for AES-KW
-        // copy the bytes to a fixed array
-        let mut shared_secret_bytes = [0; SECRET_SIZE];
-        shared_secret_bytes.copy_from_slice(shared_secret.as_bytes());
+        let shared_secret_bytes = ephemeral_sharing.shared_secret(&recipient_sharing);
         let kek = Kek::from(shared_secret_bytes);
         let wrapped = kek
             .wrap_vec(secret.bytes())
@@ -273,20 +269,17 @@ impl SecretShare {
     ///
     /// If this function returns an error, it means either the Share was created for a different
     /// recipient, the data was corrupted, or an attacker tampered with it.
-    pub fn recover(&self, recipient_secret: &SecretKey) -> Result<Secret, SecretShareError> {
+    pub fn recover(&self, recipient_secret: &PrivateKey) -> Result<Secret, SecretShareError> {
         // Extract the ephemeral public key
         let ephemeral_public_bytes = &self.0[..PUBLIC_KEY_SIZE];
         let ephemeral_public = PublicKey::try_from(ephemeral_public_bytes)?;
 
         // Convert keys to X25519 for ECDH
-        let recipient_x25519_private = recipient_secret.to_x25519();
-        let ephemeral_x25519_public = ephemeral_public.to_x25519()?;
+        let recipient_sharing = SharingPrivateKey::from(recipient_secret);
+        let ephemeral_sharing = SharingPublicKey::try_from(&ephemeral_public)?;
 
         // Perform ECDH to get same shared secret
-        let shared_secret = recipient_x25519_private.diffie_hellman(&ephemeral_x25519_public);
-
-        // Use shared secret as KEK for AES-KW unwrapping
-        let shared_secret_bytes = *shared_secret.as_bytes();
+        let shared_secret_bytes = recipient_sharing.shared_secret(&ephemeral_sharing);
         let kek = Kek::from(shared_secret_bytes);
         let wrapped_data = &self.0[PUBLIC_KEY_SIZE..];
 
@@ -317,7 +310,7 @@ mod test {
     #[test]
     fn test_share_secret() {
         let secret = Secret::from_slice(&[42u8; SECRET_SIZE]).unwrap();
-        let private_key = SecretKey::generate();
+        let private_key = PrivateKey::generate();
         let public_key = private_key.public();
         let share = SecretShare::new(&secret, &public_key).unwrap();
         let recovered_secret = share.recover(&private_key).unwrap();
@@ -327,9 +320,9 @@ mod test {
     #[test]
     fn test_share_different_keys() {
         let secret = Secret::generate();
-        let alice_private = SecretKey::generate();
+        let alice_private = PrivateKey::generate();
         let alice_public = alice_private.public();
-        let bob_private = SecretKey::generate();
+        let bob_private = PrivateKey::generate();
         // Alice creates a share for Bob
         let share = SecretShare::new(&secret, &alice_public).unwrap();
         // Alice can recover the secret
@@ -343,7 +336,7 @@ mod test {
     #[test]
     fn test_share_hex_roundtrip() {
         let secret = Secret::generate();
-        let private_key = SecretKey::generate();
+        let private_key = PrivateKey::generate();
         let public_key = private_key.public();
         let share = SecretShare::new(&secret, &public_key).unwrap();
         let hex = share.to_hex();
@@ -356,7 +349,7 @@ mod test {
     #[test]
     fn test_share_serde_json_roundtrip() {
         let secret = Secret::generate();
-        let private_key = SecretKey::generate();
+        let private_key = PrivateKey::generate();
         let public_key = private_key.public();
         let share = SecretShare::new(&secret, &public_key).unwrap();
 
@@ -377,7 +370,7 @@ mod test {
     #[test]
     fn test_share_serde_bincode_roundtrip() {
         let secret = Secret::generate();
-        let private_key = SecretKey::generate();
+        let private_key = PrivateKey::generate();
         let public_key = private_key.public();
         let share = SecretShare::new(&secret, &public_key).unwrap();
 
@@ -425,7 +418,7 @@ mod test {
     #[test]
     fn test_share_serde_multiple_formats() {
         let secret = Secret::generate();
-        let private_key = SecretKey::generate();
+        let private_key = PrivateKey::generate();
         let public_key = private_key.public();
         let original_share = SecretShare::new(&secret, &public_key).unwrap();
 

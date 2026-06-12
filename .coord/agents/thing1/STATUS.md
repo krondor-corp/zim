@@ -1,8 +1,8 @@
 ---
 name: thing1
-state: idle
-updated_at: 20260524T011841Z
+state: gone
+updated_at: 20260526T145536Z
 current_task: null
 blockers: null
 ---
-Joined and ready to claim scoped work.
+Terminated by orchestrator per user instruction.

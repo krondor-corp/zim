@@ -1,0 +1,57 @@
+use clap::{Args, Subcommand};
+
+pub mod add;
+pub mod approve;
+pub mod cat;
+pub mod clone;
+pub mod clone_state;
+pub mod create;
+pub mod files;
+pub mod folders;
+pub mod ignore;
+pub mod list;
+pub mod ls;
+pub mod mirror;
+pub mod shares;
+pub mod stat;
+pub mod sync;
+pub mod viewer;
+
+use crate::cli::op::Op;
+
+crate::command_enum! {
+    (Create, create::Create),
+    (List, list::List),
+    (Add, add::Add),
+    (Ls, ls::Ls),
+    (Cat, cat::Cat),
+    (Shares, shares::Shares),
+    (Stat, stat::Stat),
+    (Clone, clone::Clone),
+    (Files, files::Files),
+    (Folders, folders::Folders),
+    (Approve, approve::Approve),
+    (Ignore, ignore::Ignore),
+    (Viewer, viewer::Viewer),
+    (Relay, mirror::Relay),
+    (Sync, sync::Sync),
+}
+
+// Rename the generated Command to BucketCommand for clarity
+pub type BucketCommand = Command;
+
+#[derive(Args, Debug, Clone)]
+pub struct Bucket {
+    #[command(subcommand)]
+    pub command: BucketCommand,
+}
+
+#[async_trait::async_trait]
+impl Op for Bucket {
+    type Error = OpError;
+    type Output = OpOutput;
+
+    async fn execute(&self, ctx: &crate::cli::op::OpContext) -> Result<Self::Output, Self::Error> {
+        self.command.execute(ctx).await
+    }
+}

@@ -49,7 +49,7 @@ Unit tests live alongside the code in `#[cfg(test)]` modules:
 cargo test
 
 # Run tests for specific crate
-cargo test -p zim-fs
+cargo test -p zim-core
 cargo test -p zim-peer
 
 # Run specific test
@@ -62,7 +62,7 @@ Integration tests live in `crates/*/tests/`:
 
 ```bash
 # Run integration tests for common crate
-cargo test -p zim-fs --test mount_tests
+cargo test -p zim-core --test mount_tests
 ```
 
 ---

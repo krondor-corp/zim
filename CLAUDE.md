@@ -20,8 +20,7 @@ cargo run --bin zim -- --help # Run the CLI
 ```
 crates/
 ├── zim-crypto/    # Ed25519/X25519 keys, ChaCha20-Poly1305, secret sharing
-├── zim-store/     # Content-addressed blob storage (SQLite + S3/MinIO/local)
-├── zim-fs/        # Filesystem: manifest, nodes, CRDT path ops, conflict resolution
+├── zim-core/      # Core: filesystem, content store, linked data, iroh abstraction
 ├── zim-protocol/  # Wire protocol: peer messaging, sync jobs, append-only bucket log
 ├── zim-peer/      # System daemon binary `zim` + HTTP API + FUSE + database
 ├── zim-hub/       # Read-only web mirror gateway (Askama + Datastar)
@@ -34,18 +33,15 @@ bin/               # Dev scripts (dev, check, build, test, db, minio)
 
 ## Documentation
 
-- `docs/index.md` — Documentation hub and agent instructions
-- `docs/concepts/` — Architecture: overview, data model, cryptography, sync, security
-- `docs/CRATES.md` — Crate layout, dependency graph, naming conventions
-- `docs/PROJECT_LAYOUT.md` — Module map per crate
+- `docs/index.md` — Documentation hub and navigation
+- `docs/getting-started.md` — Build, run, orient
+- `docs/concepts/` — What and why: overview, data model, crypto, sync, security, access model, identity
+- `docs/architecture/` — How it's built: project layout, FUSE
+- `docs/reference/` — Lookup: HTTP API, CLI, debugging, dev environment
+- `docs/deployment/` — Ship: release process, infra (future)
 - `docs/PATTERNS.md` — Error handling, async, serialization, module org
-- `docs/CLI.md` — Op pattern, formatting boundary, command_enum! macro
 - `docs/CONTRIBUTING.md` — Contribution workflow, commit conventions, test readability
-- `docs/DEVELOPMENT.md` — Dev environment setup, 2-node tmux workflow
-- `docs/DEBUG.md` — Debugging workflow, log inspection, API testing
-- `docs/API.md` — HTTP API reference
-- `docs/INSTALL.md` — Installation and setup guide
-- `docs/RELEASE.md` — Release process and automation
+- `docs/CRATES.md` — Crate layout, dependency graph, naming conventions
 - `docs/SUCCESS_CRITERIA.md` — CI checks that must pass
 - `docs/ISSUES.md` — Issue and ticket conventions
 

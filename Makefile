@@ -2,63 +2,61 @@ ARGS ?=
 
 .PHONY: help
 help: ## Show this help message
-	@echo 'Usage: make [target]'
+	@echo 'Usage: make [target] [ARGS=...]'
 	@echo ''
-	@echo 'Available targets:'
-	@echo '  hub: Run zim-hub dev server with hot reload (http://localhost:$(HUB_PORT))'
-	@echo '  dev: Start development environment with two nodes in tmux'
-	@echo '  check: Check all Rust code'
-	@echo '  install: Install dependencies'
-	@echo '  build: Build all Rust packages'
-	@echo '  test: Run all tests'
-	@echo '  lint: Run clippy linter'
-	@echo '  fmt: Format code'
-	@echo '  fmt-check: Check code formatting'
-	@echo '  clean: Clean build artifacts'
-
-HUB_PORT ?= 8080
-
-.PHONY: hub
-hub: ## Run zim-hub dev server with hot reload
-	@command -v cargo-watch >/dev/null 2>&1 || { \
-		echo "cargo-watch not installed. Run: cargo install cargo-watch"; exit 1; \
-	}
-	@bash -c '\
-		export RUST_LOG="$${RUST_LOG:-info,zim_hub=debug}" \
-		       ZIM_HUB_LISTEN="$${ZIM_HUB_LISTEN:-127.0.0.1:$(HUB_PORT)}" \
-		       ZIM_HUB_DATA="$${ZIM_HUB_DATA:-./data/zim-hub}"; \
-		echo "Starting zim-hub on http://localhost:$(HUB_PORT) (data: $$ZIM_HUB_DATA)" && \
-		cargo watch \
-			-w crates/zim-hub/src \
-			-w crates/zim-hub/templates \
-			-w crates/zim-hub/static \
-			-w crates/zim-hub/Cargo.toml \
-			-x "run -p zim-hub" \
-	'
+	@echo 'Common:'
+	@echo '  install        Install the `zim` binary into ~/.cargo/bin (release).'
+	@echo '                 Pass ARGS="--dev" to symlink the debug build instead.'
+	@echo '  uninstall      Remove ~/.cargo/bin/zim. ARGS="--purge" also deletes $$ZIM_HOME.'
+	@echo '  dev            Spawn 2 daemons in tmux for local sync testing.'
+	@echo ''
+	@echo 'Build / test:'
+	@echo '  build          cargo build --workspace'
+	@echo '  test           cargo test --workspace'
+	@echo '  check          cargo check --workspace'
+	@echo '  lint           cargo clippy --workspace -- -D warnings'
+	@echo '  fmt            cargo fmt --all'
+	@echo '  fmt-check      cargo fmt --all -- --check'
+	@echo ''
+	@echo 'Misc:'
+	@echo '  deps           cargo fetch (download dependencies)'
+	@echo '  clean          cargo clean'
 
 .PHONY: dev
-dev: ## Start development environment with two nodes in tmux
-	./bin/dev
+dev: ## Start the local dev environment (2 daemons in tmux)
+	./bin/dev $(ARGS)
+
+.PHONY: hub
+hub: ## Start zim-hub dev server with hot reload
+	$(MAKE) -C crates/zim-hub dev
 
 .PHONY: check
 check: ## Check all Rust code
-	cargo check --all
+	cargo check --workspace
 
 .PHONY: install
-install: ## Install dependencies
+install: ## Install the `zim` binary into ~/.cargo/bin (ARGS=--dev for symlink)
+	./bin/install $(ARGS)
+
+.PHONY: uninstall
+uninstall: ## Remove the `zim` binary (ARGS=--purge to delete $ZIM_HOME)
+	./bin/uninstall $(ARGS)
+
+.PHONY: deps
+deps: ## Download dependencies into the cargo cache
 	cargo fetch
 
 .PHONY: build
 build: ## Build all Rust packages
-	cargo build --all
+	cargo build --workspace
 
 .PHONY: test
 test: ## Run all tests
-	cargo test --all
+	cargo test --workspace
 
 .PHONY: lint
 lint: ## Run clippy linter
-	cargo clippy --all -- -D warnings
+	cargo clippy --workspace -- -D warnings
 
 .PHONY: fmt
 fmt: ## Format code

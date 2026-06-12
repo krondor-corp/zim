@@ -1,7 +1,7 @@
 #!/bin/bash
-# Config parsing utilities for dev environment
+# TOML config parsing for the dev environment.
 
-# Parse a value from TOML config
+# Read a value from nodes.toml.
 # Usage: toml_get <section> <key>
 toml_get() {
     local section="$1"
@@ -9,10 +9,10 @@ toml_get() {
     local in_section=false
 
     while IFS= read -r line; do
-        # Skip comments
+        # Skip comments.
         [[ "$line" =~ ^[[:space:]]*# ]] && continue
 
-        # Check for section header
+        # Section header.
         if [[ "$line" =~ ^\[([a-zA-Z0-9_]+)\]$ ]]; then
             if [[ "${BASH_REMATCH[1]}" == "$section" ]]; then
                 in_section=true
@@ -22,14 +22,14 @@ toml_get() {
             continue
         fi
 
-        # Parse key=value in current section
+        # key = value in current section.
         if $in_section && [[ "$line" =~ ^${key}[[:space:]]*=[[:space:]]*(.+)$ ]]; then
             local value="${BASH_REMATCH[1]}"
-            # Remove inline comments (after #)
+            # Strip inline comments.
             value="${value%%#*}"
-            # Trim trailing whitespace
+            # Trim trailing whitespace.
             value="${value%"${value##*[![:space:]]}"}"
-            # Remove quotes if present
+            # Strip surrounding quotes.
             value="${value%\"}"
             value="${value#\"}"
             echo "$value"
@@ -40,82 +40,15 @@ toml_get() {
     return 1
 }
 
-# Get all node names from config
+# Every section name in nodes.toml is a peer nick. Sorted + dedup'd.
 get_node_names() {
-    grep -E '^\[node[0-9]+\]$' "$CONFIG_FILE" | tr -d '[]'
+    grep -E '^\[[a-zA-Z0-9_]+\]$' "$CONFIG_FILE" | tr -d '[]' | sort -u
 }
 
-# Resolve a node reference (id, nick, or name) to node id
-# Usage: resolve_node <ref>
-# Returns: node id (e.g., "node0") or empty if not found
-resolve_node() {
-    local ref="$1"
+# Convenience accessors.
+get_api_port() { toml_get "$1" api_port; }
 
-    # If it's already a node id, return it
-    if [[ "$ref" =~ ^node[0-9]+$ ]]; then
-        echo "$ref"
-        return 0
-    fi
-
-    # Search by nickname or name
-    for node in $(get_node_names); do
-        local nick=$(toml_get "$node" "nick")
-        local name=$(toml_get "$node" "name")
-
-        if [[ "$nick" == "$ref" ]] || [[ "$name" == "$ref" ]]; then
-            echo "$node"
-            return 0
-        fi
-    done
-
-    return 1
-}
-
-# Get the default node (first node)
-get_default_node() {
-    get_node_names | head -1
-}
-
-# Get API port for a node
-get_api_port() {
-    local node=$(resolve_node "${1:-$(get_default_node)}")
-    toml_get "$node" "api_port"
-}
-
-# Get gateway port for a node
-get_gw_port() {
-    local node=$(resolve_node "${1:-$(get_default_node)}")
-    toml_get "$node" "gateway_port"
-}
-
-# Get node display name
-get_node_name() {
-    local node=$(resolve_node "${1:-$(get_default_node)}")
-    toml_get "$node" "name"
-}
-
-# Get blob store type
-get_blob_store() {
-    local node=$(resolve_node "${1:-$(get_default_node)}")
-    toml_get "$node" "blob_store"
-}
-
-# Get S3 URL (for s3 blob store)
-get_s3_url() {
-    local node=$(resolve_node "${1:-$(get_default_node)}")
-    toml_get "$node" "s3_url"
-}
-
-# List all nodes with their info
-list_nodes() {
-    echo "Available nodes:"
-    echo ""
-    for node in $(get_node_names); do
-        local nick=$(toml_get "$node" "nick")
-        local name=$(toml_get "$node" "name")
-        local api_port=$(toml_get "$node" "api_port")
-        local gw_port=$(toml_get "$node" "gateway_port")
-
-        printf "  %-8s %-10s %-25s API:%s  GW:%s\n" "$node" "($nick)" "$name" "$api_port" "$gw_port"
-    done
+# Data dir for a node. The nick == the section name == the directory.
+get_data_dir() {
+    echo "$DATA_DIR/$1"
 }

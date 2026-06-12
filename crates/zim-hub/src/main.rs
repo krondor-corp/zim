@@ -1,18 +1,11 @@
-use std::sync::Arc;
-
-use tokio::sync::watch;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
 
 use zim_hub::config::Config;
 use zim_hub::http::HttpServer;
-use zim_hub::identity::IdentityStore;
-use zim_hub::peer_client::PeerClient;
 use zim_hub::state::AppState;
 use zim_hub::{Service, ShutdownHandle};
-use zim_peer::state::BlobStoreConfig;
-use zim_peer::{ServiceConfig, ServiceState};
 
 const DEFAULT_FILTER: &str = "info,\
     hyper=warn,\
@@ -28,7 +21,7 @@ fn init_logging(log_level: tracing::Level) -> Vec<tracing_appender::non_blocking
     let (stdout_writer, stdout_guard) = tracing_appender::non_blocking(std::io::stdout());
     guards.push(stdout_guard);
 
-    let base = format!("{DEFAULT_FILTER},zim_hub={log_level},zim_peer=info,zim_protocol=info");
+    let base = format!("{DEFAULT_FILTER},zim_hub={log_level},zim=info");
     let filter = EnvFilter::builder().parse_lossy(
         std::env::var("RUST_LOG")
             .ok()
@@ -59,18 +52,24 @@ fn init_logging(log_level: tracing::Level) -> Vec<tracing_appender::non_blocking
     guards
 }
 
-fn banner(config: &Config, node_id: &impl std::fmt::Display) {
+fn banner(config: &Config) {
     let version = env!("CARGO_PKG_VERSION");
+    let did = config.did();
     tracing::info!("─────────────────────────────────────────");
     tracing::info!("  zim-hub v{version}");
     tracing::info!("  listen   {}", config.listen_address);
-    tracing::info!("  data     {}", config.data_dir.display());
-    tracing::info!("  node     {node_id}");
-    tracing::info!("  services http, peer (in-process / mirror)");
+    tracing::info!("  home     {}", config.data_dir.display());
+    tracing::info!("  did      {did}");
+    tracing::info!(
+        "  doc      http://{}/.well-known/did.json",
+        config.listen_address
+    );
+    tracing::info!("  services http, peer (in-process / relay)");
     tracing::info!("─────────────────────────────────────────");
     tracing::info!("");
-    tracing::info!("To mirror a bucket on this hub, run on the owning peer:");
-    tracing::info!("  zim bucket mirror add <BUCKET_ID> {node_id}");
+    tracing::info!("To mirror a vault on this hub, run on the owning peer:");
+    tracing::info!("  zim peers add hub {did}");
+    tracing::info!("  zim vault <vault-id> relays add hub");
     tracing::info!("");
 }
 
@@ -86,7 +85,6 @@ async fn main() {
 
     let _guards = init_logging(config.log_level);
 
-    // Ensure data dir exists before constructing the embedded peer.
     if let Err(e) = std::fs::create_dir_all(&config.data_dir) {
         tracing::error!(
             "failed to create data dir {}: {e}",
@@ -95,96 +93,97 @@ async fn main() {
         std::process::exit(2);
     }
 
-    // Embedded peer config. We pin api_port/gateway_port to 0 because we do not
-    // spawn the zim-peer HTTP servers — the hub serves HTTP itself, and the
-    // peer is consumed in-process via ServiceState.
-    //
-    // ServiceState::from_config rejects a sqlite_path that doesn't exist on
-    // disk, so we create an empty file here when this is the first launch;
-    // sqlx then connects + runs migrations against the empty file.
-    let sqlite_path = config.data_dir.join("zim-hub.db");
-    if !sqlite_path.exists() {
-        if let Err(e) = std::fs::File::create(&sqlite_path) {
-            tracing::error!(
-                "failed to create sqlite file {}: {e}",
-                sqlite_path.display()
-            );
-            std::process::exit(2);
+    // Blob store: S3-compatible object store (minio in dev) when
+    // `ZIM_HUB_S3_*` is configured, local filesystem store otherwise.
+    // The SQLite index that maps blake3 hashes onto object keys
+    // always lives in the data dir.
+    let service = match &config.s3 {
+        Some(s3) => {
+            tracing::info!("  blobs    s3 {} bucket={}", s3.endpoint, s3.bucket);
+            let index_path = config.data_dir.join("blob-index.sqlite");
+            let blobs = match zim_peer::object_store::s3_provider(
+                &index_path,
+                &s3.endpoint,
+                &s3.access_key,
+                &s3.secret_key,
+                &s3.bucket,
+                s3.region.as_deref(),
+            )
+            .await
+            {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::error!("failed to open s3 blob store: {e}");
+                    std::process::exit(3);
+                }
+            };
+            zim::ServiceState::boot_with_blobs(&config.data_dir, blobs).await
         }
+        None => {
+            tracing::info!("  blobs    local fs (set ZIM_HUB_S3_* for object storage)");
+            zim::ServiceState::boot(&config.data_dir).await
+        }
+    };
+    let service = match service {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("failed to boot embedded peer: {e}");
+            std::process::exit(3);
+        }
+    };
+
+    // Hub-local state DB. Co-located with the peer's data dir but in
+    // its own file so a `rm state/hub.db` only wipes hub-app state
+    // (users, peers, escrow) and leaves the vault mirror intact.
+    // URL form so the same code accepts `postgres://…` when we go
+    // multi-node.
+    let state_dir = config.data_dir.join("state");
+    if let Err(e) = std::fs::create_dir_all(&state_dir) {
+        tracing::error!("failed to create state dir {}: {e}", state_dir.display());
+        std::process::exit(4);
     }
-    let svc_cfg = ServiceConfig {
-        node_listen_addr: None,
-        node_secret: None,
-        blob_store: BlobStoreConfig::default(),
-        jax_dir: config.data_dir.clone(),
-        max_import_size: 100 * 1024 * 1024,
-        api_port: 0,
-        gateway_port: 0,
-        sqlite_path: Some(sqlite_path),
-        log_level: config.log_level,
-        log_dir: None,
-        gateway_url: None,
-    };
-
-    let service = match ServiceState::from_config(&svc_cfg).await {
-        Ok(s) => s,
+    let hub_db_path = state_dir.join("hub.db");
+    // sqlx's SqliteConnectOptions::from_url wants `sqlite:<path>`.
+    // We canonicalize via `std::fs::canonicalize` so the URL has an
+    // absolute path; if the file doesn't exist yet, canonicalize the
+    // parent and re-append the filename.
+    let abs_path = match std::fs::canonicalize(&state_dir) {
+        Ok(parent) => parent.join("hub.db"),
         Err(e) => {
-            tracing::error!("failed to initialize embedded peer state: {e}");
-            std::process::exit(3);
+            tracing::error!("failed to canonicalize {}: {e}", state_dir.display());
+            std::process::exit(4);
+        }
+    };
+    let db_url = match url::Url::parse(&format!("sqlite://{}", abs_path.display())) {
+        Ok(u) => u,
+        Err(e) => {
+            tracing::error!("failed to build sqlite URL for {}: {e}", abs_path.display());
+            std::process::exit(4);
+        }
+    };
+    tracing::info!("hub db at {}", abs_path.display());
+    let _ = hub_db_path; // silence unused warning
+    let db = match zim_hub::Database::connect(&db_url).await {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::error!("hub db setup failed: {e}");
+            std::process::exit(4);
         }
     };
 
-    // Banner deferred until after ServiceState init so we can include the
-    // embedded peer's node id and a copy-pasteable `zim bucket mirror add`
-    // command template (T-016d).
-    banner(&config, &service.peer().id());
+    banner(&config);
 
-    // Hub-side identity store (T-001a M1). Separate SQLite DB from the
-    // embedded peer; lives in the same data dir.
-    let identity_path = config.data_dir.join("identity.db");
-    let identity = match IdentityStore::open(&identity_path).await {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::error!(
-                "failed to open identity store at {}: {e}",
-                identity_path.display()
-            );
-            std::process::exit(3);
-        }
-    };
-
-    let state = AppState {
-        listen_address: config.listen_address,
-        peer: PeerClient::new(service.clone()),
-        identity,
-    };
+    let app_state = AppState::new(&config, service.clone(), db);
 
     let (mut handle, shutdown_rx) = ShutdownHandle::new();
 
-    // Spawn the in-process peer task (sync, blob serving, etc.).
-    let peer_for_spawn = service.peer().clone();
-    let peer_shutdown = shutdown_rx.clone();
-    handle.push(
-        "peer",
-        tokio::spawn(async move {
-            if let Err(e) = zim_protocol::spawn(peer_for_spawn, peer_shutdown).await {
-                tracing::error!("embedded peer exited: {e}");
-            }
-        }),
-    );
+    // The embedded peer's sync loop runs as its own task. ServiceState
+    // is clone-cheap (Peer is Arc-wrapped internally).
+    let peer = service.peer().clone();
+    let peer_task = peer.spawn(shutdown_rx.clone());
+    handle.push("peer", peer_task);
 
-    // Spawn the HTTP server.
-    handle.push(
-        "http",
-        HttpServer::spawn(state.clone(), shutdown_rx.clone()),
-    );
-
-    // Keep ServiceState alive for the lifetime of the process. AppState holds
-    // a clone; this keeps the original around via an Arc-ish hold (Database
-    // pool, peer, etc. are themselves cheaply cloneable, but holding the
-    // original here is cheap insurance against premature drop).
-    let _keep_service_alive = Arc::new(service);
-    let _keep_shutdown_rx = watch::Receiver::clone(&shutdown_rx);
+    handle.push("http", HttpServer::spawn(app_state, shutdown_rx));
 
     handle.wait().await;
 }

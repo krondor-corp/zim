@@ -47,11 +47,11 @@ Zim implements a pull-based P2P sync protocol using height-based version compari
 
 **Architecture**: Queue-based sync provider with background job processing
 **Protocol**: Custom QUIC/bincode messages over Iroh
-**ALPN**: `/iroh-jax/1`
+**ALPN**: `/iroh-zim/1`
 
 ### Sync Architecture
 
-**Location**: `crates/daemon/src/daemon/sync_provider.rs`
+**Location**: `crates/zim-peer/src/sync_provider.rs`
 
 Zim uses a **QueuedSyncProvider** that decouples protocol handlers from sync execution:
 
@@ -82,7 +82,7 @@ pub enum SyncJob {
 
 ### Protocol Messages
 
-**Location**: `crates/common/src/peer/protocol/messages/ping.rs`
+**Location**: `crates/zim-protocol/src/peer/protocol/messages/ping.rs`
 
 Zim uses a **bidirectional request/response pattern** where both the initiator and responder can trigger sync jobs as side effects.
 
@@ -169,7 +169,7 @@ This ensures:
 
 ### Sync Workflow
 
-**Location**: `crates/common/src/peer/sync/jobs/sync_bucket.rs`
+**Location**: `crates/zim-protocol/src/peer/sync/sync_bucket.rs`
 
 #### Height-Based Sync Process
 
@@ -256,7 +256,7 @@ async fn find_common_ancestor(
 
 ### Sync Verification
 
-**Location**: `crates/common/src/peer/sync/jobs/sync_bucket.rs`
+**Location**: `crates/zim-protocol/src/peer/sync/sync_bucket.rs`
 
 Core verification checks applied during sync:
 
@@ -337,7 +337,7 @@ This provides:
 
 ### Periodic Sync Coordination
 
-**Location**: `crates/daemon/src/daemon/sync_provider.rs:run_worker()`
+**Location**: `crates/zim-peer/src/sync_provider.rs:run_worker()`
 
 The background worker runs a periodic ping scheduler:
 

@@ -1,9 +1,8 @@
 ---
 name: thing4
-state: idle
-updated_at: 20260524T012636Z
+state: gone
+updated_at: 20260526T145536Z
 current_task: null
 blockers: null
 ---
-
-Available and waiting for scoped work.
+Terminated by orchestrator per user instruction.

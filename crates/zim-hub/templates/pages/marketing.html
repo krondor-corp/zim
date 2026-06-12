@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>zim &mdash; end-to-end encrypted storage</title>
+  <meta name="description" content="End-to-end encrypted, peer-to-peer storage. The hub mirrors ciphertext between your devices — nobody but you can read it.">
+  <link rel="icon" type="image/svg+xml" href="/static/zim-logo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  {% include "partials/theme-init.html" %}
+</head>
+<body>
+
+  {% include "partials/header-marketing.html" %}
+
+  <main class="home">
+
+    <section class="hero">
+      <span class="hero-eyebrow">your encrypted workspace</span>
+      <h1 class="hero-title">welcome to <span class="accent">zim</span>.</h1>
+      <p class="hero-tagline">
+        End-to-end encrypted, peer-to-peer storage. The hub mirrors ciphertext between your devices &mdash; nobody but you can read it.
+      </p>
+      <div class="hero-links">
+        <a href="/auth/google/login" class="hero-cta">Sign in</a>
+        <a href="https://github.com/amiller68/zim" class="hero-link">View on GitHub</a>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>How it works</h2>
+      <div class="card-grid">
+        <div class="card">
+          <h3>End-to-end encryption</h3>
+          <span class="card-meta dim">ChaCha20-Poly1305 + X25519 secret sharing</span>
+          <p>Every byte is encrypted with keys that never touch the hub. The hub stores ciphertext and routes blocks; it can't read your files.</p>
+        </div>
+        <div class="card">
+          <h3>Peer-to-peer sync</h3>
+          <span class="card-meta dim">iroh-blobs over QUIC, DHT discovery</span>
+          <p>Your devices talk to each other directly when they can. The hub is a always-on relay when they can't &mdash; same ciphertext, no decryption.</p>
+        </div>
+        <div class="card">
+          <h3>Self-hostable</h3>
+          <span class="card-meta dim">single static binary</span>
+          <p>One Rust binary, SQLite for app state, your data dir. Run it on a Raspberry Pi, a VPS, or a hosted service &mdash; all the same.</p>
+        </div>
+        <div class="card">
+          <h3>Browser access</h3>
+          <span class="card-meta dim">zim-wasm + passphrase recovery</span>
+          <p>Recover an identity from any browser with your passphrase. The hub never sees the unwrapped key.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Getting started</h2>
+      <div class="workflow-steps">
+        <div class="workflow-step">
+          <span class="step-cmd">install</span>
+          <div class="step-body">
+            <strong>Run the daemon</strong>
+            <p><code>cargo install zim</code> on any machine you want to be a peer.</p>
+          </div>
+        </div>
+        <div class="workflow-step">
+          <span class="step-cmd">sign in</span>
+          <div class="step-body">
+            <strong>Sign in to the hub</strong>
+            <p>Google OAuth. First-time admins are configured in the hub's <code>admin_emails</code>; everyone else lands on a pending-approval page.</p>
+          </div>
+        </div>
+        <div class="workflow-step">
+          <span class="step-cmd">register</span>
+          <div class="step-body">
+            <strong>Register your daemon</strong>
+            <p>Paste your daemon's pubkey (from <code>zim id</code>) on <a href="/app/devices">/app/devices</a> &mdash; the hub joins on this to scope vaults to you.</p>
+          </div>
+        </div>
+        <div class="workflow-step">
+          <span class="step-cmd">mirror</span>
+          <div class="step-body">
+            <strong>Mirror a vault</strong>
+            <p><code>zim vault &lt;name&gt; relays add hub</code> &mdash; the hub starts mirroring ciphertext.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  {% include "partials/footer.html" %}
+
+</body>
+</html>

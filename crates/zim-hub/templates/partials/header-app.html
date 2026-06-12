@@ -1,0 +1,30 @@
+{# Header for the authenticated /app workspace. Shows the user email,
+   devices/admin links, theme toggle, sign-out. #}
+<header class="site-header">
+  <div class="header-inner">
+    <a href="/app" class="site-title">
+      <svg class="site-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 22" width="14" height="22">
+        <rect x="2"  y="0"  width="16" height="3" rx="1" class="logo-stem"/>
+        <rect x="12" y="5"  width="6"  height="3" rx="1" class="logo-stem" opacity="0.85"/>
+        <rect x="8"  y="9"  width="6"  height="3" rx="1" class="logo-fade" opacity="0.65"/>
+        <rect x="4"  y="13" width="6"  height="3" rx="1" class="logo-fade" opacity="0.45"/>
+        <rect x="2"  y="18" width="16" height="3" rx="1" class="logo-dot"/>
+      </svg>
+      <span class="site-title-text">zim</span>
+    </a>
+    <div class="site-nav">
+      <span class="who">{{ user_email }}</span>
+      <a href="/app/devices" class="site-nav-link">Devices</a>
+      {% if is_admin %}
+        <a href="/app/_admin" class="site-nav-link">Admin</a>
+      {% endif %}
+      <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
+        <svg class="theme-icon-light" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+        <svg class="theme-icon-dark" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      </button>
+      <form method="post" action="/auth/logout" class="inline-form">
+        <button type="submit" class="linkish">Sign out</button>
+      </form>
+    </div>
+  </div>
+</header>

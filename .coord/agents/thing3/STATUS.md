@@ -1,8 +1,8 @@
 ---
 name: thing3
-state: idle
-updated_at: 20260524T011855Z
+state: gone
+updated_at: 20260526T145536Z
 current_task: null
 blockers: null
 ---
-Joined coordination as worker thing3; reading inbox and awaiting assignment.
+Terminated by orchestrator per user instruction.

@@ -19,11 +19,32 @@ MINIO_ROOT_PASSWORD=minioadmin
 MINIO_IMAGE_NAME=minio/minio:latest
 MINIO_BUCKET_NAME="${PROJECT_NAME}-blobs"
 
-# Check if docker or podman is available
-CONTAINER_RUNTIME="docker"
-if ! which docker &>/dev/null && which podman &>/dev/null; then
-    CONTAINER_RUNTIME="podman"
-fi
+# Pick a container runtime. `ZIM_CONTAINER_RUNTIME` forces one;
+# otherwise prefer whichever actually responds (`<runtime> ps`
+# succeeding means the binary exists AND its daemon/machine is up —
+# a docker CLI with a stopped daemon shouldn't shadow a running
+# podman). Fall back to whichever binary merely exists so the
+# error message in check_runtime names something sensible.
+function pick_runtime {
+    if [[ -n "${ZIM_CONTAINER_RUNTIME:-}" ]]; then
+        echo "$ZIM_CONTAINER_RUNTIME"
+        return
+    fi
+    for rt in docker podman; do
+        if command -v "$rt" &>/dev/null && "$rt" ps &>/dev/null; then
+            echo "$rt"
+            return
+        fi
+    done
+    for rt in docker podman; do
+        if command -v "$rt" &>/dev/null; then
+            echo "$rt"
+            return
+        fi
+    done
+    echo "docker"
+}
+CONTAINER_RUNTIME="$(pick_runtime)"
 
 # Detect OS and set network flags accordingly
 OS_TYPE=$(uname -s)
@@ -35,10 +56,12 @@ elif [[ "$OS_TYPE" == "Darwin" ]]; then
     NETWORK_FLAGS=""
 fi
 
-# Verify Docker/Podman is running
+# Verify the chosen runtime is actually usable
 function check_runtime {
     if ! $CONTAINER_RUNTIME ps &>/dev/null; then
-        echo -e "${RED}Error: $CONTAINER_RUNTIME is not running. Please start it first.${NC}"
+        echo -e "${RED}Error: no working container runtime.${NC}"
+        echo "  tried: $CONTAINER_RUNTIME (install/start docker or podman," >&2
+        echo "  or force one with ZIM_CONTAINER_RUNTIME=podman)" >&2
         exit 1
     fi
 }

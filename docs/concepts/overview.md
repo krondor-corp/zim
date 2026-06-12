@@ -6,7 +6,7 @@ High-level architecture and concepts for understanding Zim.
 
 Zim organizes data into **Buckets** - encrypted containers that hold files and directories. Each bucket has:
 
-- A unique identifier (UUID)
+- A unique identifier (`VaultId` — the BLAKE3 hash of the genesis manifest, derived rather than declared)
 - A friendly name
 - Encrypted content (files, directories)
 - Access control (who can read/write)
@@ -52,7 +52,7 @@ A bucket is the top-level container for your data. It's similar to a folder or r
 A mount is the runtime representation of a bucket. When you "mount" a bucket, you:
 
 1. Load the bucket's manifest from storage
-2. Decrypt the secret using your share (or `published_secret` if mirror)
+2. Decrypt the secret using your share
 3. Gain access to the virtual filesystem
 
 The mount provides file operations: `add`, `ls`, `cat`, `mkdir`, `mv`, `rm`.
@@ -63,14 +63,15 @@ The manifest is the root metadata for a bucket:
 
 ```rust
 struct Manifest {
-    id: Uuid,                           // Global unique identifier
-    name: String,                       // Friendly display name
-    shares: BTreeMap<String, Share>,    // Access control (pubkey -> Share)
-    entry: Link,                        // Pointer to root node
-    pins: Link,                         // Pinned content hashes
-    previous: Option<Link>,             // Link to previous version
-    height: u64,                        // Version chain height
-    published_secret: Option<Secret>,   // Plaintext secret when published
+    id: Uuid,                               // Global unique identifier
+    name: String,                           // Friendly display name
+    shares: BTreeMap<String, Share>,        // Access control (pubkey -> Share)
+    relays: Vec<Relay>,                // Relay peers (ciphertext-pin only)
+    entry: Link,                            // Pointer to root node
+    pins: Link,                             // Pinned content hashes
+    previous: Option<Link>,                 // Link to previous version
+    height: u64,                            // Version chain height
+    published_set: Vec<PublicEntry>,        // Per-file/folder publication entries
 }
 ```
 
@@ -80,48 +81,44 @@ Each modification creates a new manifest with a `previous` link, forming an immu
 
 ## Access Control
 
-### PrincipalRole
+### Membership (Shares)
 
-Every principal (user) in a bucket has a role:
-
-```rust
-enum PrincipalRole {
-    Owner,   // Full read/write access
-    Mirror,  // Read-only after publication
-}
-```
-
-### Share
-
-A `Share` represents a principal's access to a bucket:
+Every bucket member has a `Share`:
 
 ```rust
 struct Share {
-    principal: Principal,       // Identity (pubkey) and role
-    share: Option<SecretShare>, // Encrypted key (owners only)
+    principal: Principal,       // Identity (pubkey) + role (always Owner)
+    share: Option<SecretShare>, // Bucket secret encrypted to their pubkey
+    dialable: bool,            // true = device peer; false = web-key (browser-only)
 }
 ```
 
-**Owners** always have a `SecretShare` - the bucket secret encrypted to their public key.
+All members are owners with full read/write access. The `dialable` flag distinguishes device keys (reachable iroh peers) from web keys (browser-resident, sign-only identities that write via the Relay endpoint).
 
-**Mirrors** never have individual shares - they use `published_secret` from the manifest after publication.
+### Relay Peers
 
-### Publishing
+Relay peers pin ciphertext without decryption capability. Listed in `manifest.relays: Vec<Relay>`. They are NOT members — they hold no `Share` and cannot decrypt bucket content. Their role is to serve published files to the gateway and provide durability.
 
-Publishing makes a bucket readable by mirrors:
+### Per-File / Per-Folder Publication
+
+Individual files or folders are published by copying their per-node secret into the manifest's `published_set`:
 
 ```rust
-fn publish(&mut self, secret: &Secret) {
-    self.published_secret = Some(secret.clone());
+struct PublicEntry {
+    target: Link,                  // Content-addressed link to the published node
+    secret: Secret,                // The node's decryption key (plaintext)
+    display_path: Option<String>,  // URL path the gateway serves this under
+    mode: PublicMode,              // File or Folder
 }
 ```
 
-- **Before publish**: Only owners can decrypt (via their `SecretShare`)
-- **After publish**: Anyone with the manifest can decrypt (via `published_secret`)
-- **Persistent**: Publish status persists across saves — subsequent `save()` calls preserve the published state
-- **Revocable**: Owners can explicitly unpublish via `Mount::unpublish()`, which clears the public secret
+- `publish_file(path)` / `publish_folder(path)` — add an entry
+- `unpublish_file(path)` / `unpublish_folder(path)` — remove the entry
+- `rotate_file(path)` / `rotate_folder(path)` — generate a fresh secret and re-encrypt (real revocation)
+- **Auto-republish on commit**: every owner commit re-resolves entries against the new head, pruning dangling paths (renames/moves/deletes)
+- **Folder mode**: the gateway can recursively walk descendants using child secrets found in the decrypted dir body
 
-This enables mirrors to sync encrypted blobs before publication, then decrypt once published.
+The gateway (`zim-hub`) reads `published_set` and serves only those nodes. It never holds the bucket's owner secret.
 
 ---
 

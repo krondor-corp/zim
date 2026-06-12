@@ -1,8 +1,8 @@
 ---
 name: thing2
-state: idle
-updated_at: 20260524T011842Z
+state: gone
+updated_at: 20260526T145536Z
 current_task: null
 blockers: null
 ---
-Joined and waiting for assignment.
+Terminated by orchestrator per user instruction.

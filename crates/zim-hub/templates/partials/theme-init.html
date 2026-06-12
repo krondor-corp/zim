@@ -1,0 +1,17 @@
+{# Theme: class-based ("light" class on <html>). Reads localStorage on
+   load — runs in <head> before paint to avoid a flash of wrong-theme.
+   Falls back to prefers-color-scheme when no saved preference. #}
+<script>
+  (function () {
+    var saved = localStorage.getItem('theme');
+    var wantLight = saved === 'light'
+      || (!saved && window.matchMedia('(prefers-color-scheme: light)').matches);
+    if (wantLight) document.documentElement.classList.add('light');
+  })();
+  function toggleTheme() {
+    var html = document.documentElement;
+    html.classList.toggle('light');
+    var theme = html.classList.contains('light') ? 'light' : 'dark';
+    localStorage.setItem('theme', theme);
+  }
+</script>

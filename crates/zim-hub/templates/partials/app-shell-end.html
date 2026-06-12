@@ -1,0 +1,27 @@
+    </div>
+  </main>
+
+</div>
+
+{# Pin toggle persistence — class-based, no localStorage means the
+   sidebar starts collapsed and hover-expands. Pinning sticks it open. #}
+<script>
+  (function () {
+    var sidebar = document.getElementById('sidebar');
+    if (!sidebar) return;
+    var pinned = localStorage.getItem('sidebar-pinned') === '1';
+    function apply() {
+      sidebar.classList.toggle('sidebar--collapsed', !pinned);
+      sidebar.classList.toggle('sidebar--pinned', pinned);
+    }
+    apply();
+    var pinBtn = document.getElementById('sidebar-pin');
+    if (pinBtn) {
+      pinBtn.addEventListener('click', function () {
+        pinned = !pinned;
+        localStorage.setItem('sidebar-pinned', pinned ? '1' : '0');
+        apply();
+      });
+    }
+  })();
+</script>

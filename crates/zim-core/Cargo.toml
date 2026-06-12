@@ -1,0 +1,86 @@
+[package]
+name = "zim-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Zim core: shared primitives, filesystem, storage, content-addressing, iroh abstraction layer"
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+name = "zim_core"
+path = "src/lib.rs"
+
+[dependencies]
+zim-crypto = { path = "../zim-crypto", version = "0.1.0" }
+zim-did = { path = "../zim-did", version = "0.1.0" }
+
+# Core
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+async-trait = "0.1"
+tokio = { workspace = true }
+futures = { workspace = true }
+parking_lot = { workspace = true }
+flume = "0.11"
+
+# Serialization
+serde = { workspace = true }
+serde_with = { workspace = true }
+serde_ipld_dagcbor = { workspace = true }
+bincode = { workspace = true }
+bytes = { workspace = true }
+
+# Time / logging
+chrono = { workspace = true }
+tracing = { workspace = true }
+
+# iroh / blobs
+iroh = { workspace = true }
+iroh-blobs = { workspace = true }
+
+# Content addressing / IPLD
+cid = { workspace = true }
+ipld-core = { workspace = true }
+multihash = "0.19"
+
+# Randomness (genesis nonce)
+getrandom = { version = "0.2", features = ["js"] }
+
+# Hashing
+sha2 = "0.10"
+blake3 = "1.5"
+hex = "0.4"
+
+# Mime
+mime = "0.3.17"
+mime_guess = "2.0"
+mime_serde_shim = "0.2.2"
+
+# UUID
+uuid = { workspace = true }
+
+# irpc (same version as iroh-blobs)
+irpc = { version = "0.9.0", features = ["rpc", "stream", "derive"], default-features = false }
+
+# bao-tree for BAO content types
+bao-tree = { version = "0.15.1", features = ["experimental-mixed", "serde"], default-features = false }
+
+# range-collections
+range-collections = { version = "0.4.6", features = ["serde"] }
+
+# n0-future for Stream trait
+n0-future = "0.2.0"
+
+# ref-cast
+ref-cast = "1.0"
+
+# derive_more
+derive_more = { version = "2.0", features = ["from"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+serde_json = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

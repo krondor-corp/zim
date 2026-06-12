@@ -1,231 +1,74 @@
-# Identity & Key Custody
+# Identity and key management
 
-How Zim handles viewer identity for the `zim-hub` read-only mirror gateway: who a viewer is, how their key material gets onto the hub, and how it stays out of the hub server's hands.
+Zim's identity model follows a **vault-not-custodian** pattern: the hub stores encrypted blobs of viewer private keys, but never holds the plaintext. Unlock happens client-side in the browser via zim-wasm.
 
-Source design: T-001 proposal (thing5) in `.coord/tasks/done/T-001.md`. This doc states the shipped architecture; sub-tasks T-001a/b/c/d implement it.
+## Architecture
 
-## Headline: hub is a vault, not a custodian
+### Viewer identity
 
-`zim-hub` stores **encrypted blobs of per-viewer private keys**, indexed by Google identity. Unlock happens **client-side in the browser** (via `zim-wasm` + Argon2id). Plaintext viewer keys never exist server-side.
+Each viewer has an Ed25519 key pair. The key pair is created in the browser (zim-wasm) and the private key is immediately encrypted before leaving WASM linear memory:
 
-The trust property that follows:
+1. **Key derivation**: Argon2id (m_cost=19456 KiB, t_cost=2, p_cost=1) derives a 32-byte KEK from the viewer's chosen password + a random 16-byte salt.
+2. **Encryption**: ChaCha20-Poly1305 (same AEAD as bucket content encryption) wraps the Ed25519 secret key bytes with the KEK. 12-byte nonce prepended per `zim_crypto::Secret` wire format.
+3. **Storage**: the encrypted blob, salt, KDF params (JSON), and the public key (hex) are stored in the hub's `identity_keys` SQLite table, keyed by Google `sub` claim.
 
-- A fully compromised hub server (root + DB + TLS) leaks ciphertext + Google identities. It does not leak any viewer's private key.
-- The hub operator cannot impersonate viewers in the protocol — viewer keys never leave the browser as plaintext.
-- Pair with [T-006 + T-016](./security.md): hub-as-mirror-peer never holds any **bucket** secret. T-001 adds: hub-as-key-vault never holds any **viewer** secret either.
+The hub server can be fully compromised without leaking viewer secrets — the attacker gets ciphertext + Google identities but needs each user's password to decrypt.
 
-The single load-bearing trust assumption is **the JS+WASM bundle the hub serves**. The threat model section below explains the mitigation (SRI + CSP).
+### Hub peer identity
 
-## Two-layer identity
+The hub's embedded peer has its own iroh `PrivateKey` at `data_dir/peer.key.pem`, generated on first start. This is the hub's network identity (operator-side), unrelated to viewer keys. The bucket owner adds this key to `manifest.mirrors` to authorize the hub as a Mirror peer.
 
-| Layer | What it identifies | Lifetime | Storage |
-|---|---|---|---|
-| **Hub-peer identity** | The hub's own iroh peer key (network identity) | One per hub deployment | `data_dir/peer.key.pem` — operator-side, plaintext |
-| **Viewer identity** | Per-viewer ed25519 keypair (bucket-membership identity) | One per viewer per hub | Encrypted blob in hub's SQLite; plaintext only in browser memory |
+### Device model (T-017)
 
-Hub-peer identity is the same shape as any `zim-peer` deployment — it's how the hub joins iroh DHT. Bucket owners authorise it via `zim mirror add <hub-pk>` (per T-016c) so the hub can sync as a Mirror peer-type (per T-016 Decision 1).
+Each physical device (browser tab, CLI, mobile) gets its own Ed25519 key pair:
 
-Viewer identity is new. It is the subject of the rest of this doc.
+- **Web device**: key pair in hub-side encrypted vault (Argon2id + ChaCha20 as above).
+- **CLI / native device**: key pair generated on-device, private key never leaves. Hub stores only the public key + metadata.
 
-## Enrolment flow (first-time viewer)
+The `Share::dialable` field distinguishes network-reachable keys (`dialable: true`, native devices) from browser-resident keys (`dialable: false`, web devices). The sync dial loop skips non-dialable shares.
 
-```
-viewer browser                  zim-hub                     bucket owner peer
-      |                            |                                |
-      |  GET /                     |                                |
-      |--------------------------->|                                |
-      |  302 → Google OAuth        |                                |
-      |<---------------------------|                                |
-      |                                                             |
-      |  ... Google PKCE flow ...                                   |
-      |                                                             |
-      |  GET /callback?code=...    |                                |
-      |--------------------------->|                                |
-      |                            | verify id_token, extract `sub` |
-      |                            | lookup identity_keys by `sub`  |
-      |                            | NOT FOUND → render /enrol      |
-      |  enrolment page            |                                |
-      |<---------------------------|                                |
-      |                                                             |
-      |  zim_wasm.generateKey() → (pk, sk in WASM memory)           |
-      |  prompt: new password                                       |
-      |  zim_wasm.encryptKeyBlob(password)                          |
-      |    → Argon2id(password, salt) = KEK                         |
-      |    → ChaCha20-Poly1305(KEK, sk) = encrypted_blob            |
-      |    → returns (encrypted_blob, salt, kdf_params, pk)         |
-      |                                                             |
-      |  POST /api/v0/identity/enrol                                |
-      |    body: encrypted_blob, salt, kdf_params, pk               |
-      |--------------------------->|                                |
-      |                            | INSERT identity_keys           |
-      |  200 + display pk          |                                |
-      |<---------------------------|                                |
-      |                                                             |
-      |   ... viewer sends pk to owner out-of-band ...              |
-      |                                                             |
-      |                                            zim viewer authorize <pk> --bucket <id>
-      |                                            (T-001c CLI on owner peer)
-      |                                                             |
-      |                                            appends manifest entry,
-      |                                            seals bucket Secret share for pk
-      |                                                             |
-      |  next login: zim_wasm.unlockKeyBlob → SecretShare decryption works
-```
+## Trust model
 
-Key properties of this flow:
-
-- Browser is the only party that ever sees `sk` (the viewer's ed25519 secret key) in plaintext.
-- Password is the only party that ever sees the password.
-- The hub sees: Google `sub`, Google `email`, `pk`, `encrypted_blob`, `salt`, `kdf_params`. Enough to recognise returning viewers; not enough to decrypt anything.
-
-## Login flow (returning viewer)
-
-```
-viewer browser                  zim-hub
-      |  GET /                            |
-      |---------------------------------->|
-      |  (cookie? — yes/no)               |
-      |  ... OAuth if needed ...          |
-      |  resolve `sub`                    |
-      |  lookup identity_keys → FOUND     |
-      |  /unlock page                     |
-      |<----------------------------------|
-      |                                   |
-      |  GET /api/v0/identity/blob        |
-      |---------------------------------->|
-      |  {encrypted_blob, salt,           |
-      |   kdf_params}                     |
-      |<----------------------------------|
-      |                                   |
-      |  password prompt                  |
-      |  zim_wasm.unlockKeyBlob(blob, salt, password, kdf_params)
-      |    Argon2id(password, salt) = KEK
-      |    ChaCha20-Poly1305.decrypt(KEK, blob) → sk in WASM mem
-      |    on AEAD-tag failure: re-render with "wrong password"
-      |                                   |
-      |  unlocked — decryptBlob() now works on any bucket blob whose
-      |  SecretShare was sealed for this viewer's pk.
-```
-
-## Local credential state (hub-side schema)
-
-```sql
-CREATE TABLE identity_keys (
-    google_sub      TEXT    PRIMARY KEY,
-    google_email    TEXT    NOT NULL,
-    public_key      TEXT    NOT NULL,
-    encrypted_blob  BLOB    NOT NULL,
-    salt            BLOB    NOT NULL,
-    kdf_params      TEXT    NOT NULL,
-    created_at      INTEGER NOT NULL,
-    last_used_at    INTEGER NOT NULL,
-    UNIQUE(public_key)
-);
-
-CREATE INDEX idx_identity_keys_public_key ON identity_keys(public_key);
-```
-
-Implementation lives in `crates/zim-hub/migrations/` and `crates/zim-hub/src/identity.rs`.
-
-| Column | Notes |
+| Adversary | Mitigation |
 |---|---|
-| `google_sub` | Google `sub` claim from the `id_token`. Stable per-account opaque string. The PK. |
-| `google_email` | Denormalised from the `id_token` for display + owner-side recognition. Treat as best-effort, not security-bearing — Google can change it. |
-| `public_key` | Hex-encoded ed25519 pubkey (32 bytes → 64 hex). UNIQUE — the same pubkey can't be enrolled under two Google accounts on the same hub. |
-| `encrypted_blob` | ChaCha20-Poly1305 ciphertext of the ed25519 secret. Uses `zim_crypto::Secret`'s wire format (nonce prepended). |
-| `salt` | 16 bytes, random per blob, browser-generated via WebCrypto. Public — stored alongside ciphertext. |
-| `kdf_params` | JSON: `{m_cost, t_cost, p_cost, alg: "argon2id", version: 19}`. JSON not a fixed schema so we can upgrade Argon2 parameters without a migration — next password change re-encrypts under new params. |
-| `created_at` / `last_used_at` | Unix seconds. `last_used_at` refreshed on each successful unlock; gives the owner a "who's active" signal via the audit endpoint. |
+| Compromised hub server | Cannot decrypt viewer keys without per-user passwords. Cannot impersonate viewers in protocol (key never leaves browser). **Critical residual**: attacker can swap the served JS/WASM bundle to phish passwords. Mitigated by SRI hashes on script tags + CSP `script-src 'self'`. |
+| Compromised Google account | Attacker can log into zim-hub as victim but still needs the unlock password (second factor). |
+| Hub operator | Same as compromised server — cannot decrypt without passwords; can phish via swapped JS. SRI + CSP mitigate. |
+| Brute force on stolen blob | Argon2id with 19 MB memory cost. Recommend ≥16-char passwords. |
 
-**Notably NOT stored on the hub:**
+**The single load-bearing trust assumption**: the viewer trusts the JS+WASM bundle served by the hub. Mitigation: SRI hashes baked into HTML templates, CSP `script-src 'self'`, vendored/version-pinned JS bundles.
 
-- Google `id_token` past the OAuth callback (only `sub` + `email` extracted).
-- `access_token` / `refresh_token` — auth is one-shot at session start; we don't need ongoing Google access.
-- Password (ever — Argon2-derived KEK is transient in WASM linear memory).
-- Plaintext ed25519 secret (ever, server-side).
+## Key flows
 
-## Session cookie
+### Enrolment (first time)
 
-Signed cookie via `tower-cookies`. Payload: `{sub, exp: now + 24h}`.
+1. Google OAuth2 PKCE → hub gets `id_token`, extracts `sub` + `email`.
+2. Hub establishes signed-cookie session.
+3. zim-wasm `generateKey()` → Ed25519 key pair in WASM memory.
+4. Viewer chooses password → zim-wasm `encryptKeyBlob(password)` → `{encrypted_blob, salt, public_key}`.
+5. Browser POSTs to hub `/api/v0/identity/enrol`.
+6. Viewer sends public key to bucket owner out-of-band.
+7. Owner runs `zim bucket viewer authorize <bucket> <pubkey>` (or `--web-key` for browser keys).
 
-Signing key: 32 random bytes, persisted at `data_dir/session.key` (0600). Auto-generated on first start.
+### Login (returning)
 
-Refreshed on each authenticated request; rolling 24-hour expiry.
+1. Google OAuth (or existing session).
+2. Hub serves encrypted blob → browser GETs `/api/v0/identity/blob`.
+3. zim-wasm `unlockKeyBlob(blob, salt, password)` → Argon2id-derives KEK → ChaCha20-decrypts → Ed25519 secret in `SESSION_KEY` thread-local.
+4. `decryptBlob` calls work for sealed envelopes targeted at this viewer.
 
-## Key unlock crypto
+### Deauthorization
 
-| Step | Algorithm | Crate | Notes |
-|---|---|---|---|
-| Password → 32-byte KEK | **Argon2id** | `argon2 = "0.5"` | Pure Rust, WASM-clean. Initial params: `m_cost = 19456 KiB (~19 MB), t_cost = 2, p_cost = 1`. OWASP-recommended (2024); also Bitwarden's defaults. Stored in `kdf_params`. |
-| Blob encryption | **ChaCha20-Poly1305** | `chacha20poly1305 = "0.10"` (via `zim-crypto`) | Reuses `zim_crypto::Secret` wire format: 12-byte nonce + ciphertext + 16-byte AEAD tag. The KEK is wrapped in a `Secret` and `Secret::encrypt` does the rest — no new crypto code in `zim-crypto`. |
-| Salt | 16 random bytes via WebCrypto / `getrandom` (`wasm_js` cfg). One per blob, public, stored alongside ciphertext. | | |
+Owner runs `zim bucket viewer deauthorise <bucket> <pubkey>`. Share removed from manifest. **Known gap (T-001c-followup)**: per-node secrets are not yet re-keyed; cached blobs remain decryptable by the deauthorized viewer until secret rotation ships.
 
-Pseudo-Rust in `zim-wasm`:
+## Relevant code
 
-```rust
-let argon2 = Argon2::new(
-    argon2::Algorithm::Argon2id,
-    argon2::Version::V0x13,
-    argon2::Params::new(19456, 2, 1, Some(32)).unwrap(),
-);
-let mut kek = [0u8; 32];
-argon2.hash_password_into(password.as_bytes(), &salt, &mut kek).unwrap();
-let kek_as_secret = Secret::from_slice(&kek)?;
-let plaintext_secret_key = kek_as_secret.decrypt(&encrypted_blob)?;
-```
-
-The "Secret" name is slightly overloaded — it's a per-blob symmetric key in bucket context, and a per-user-derived KEK in identity-vault context. The wire format is the same, which is the property we want.
-
-## Threat model
-
-| Adversary | Capability | Mitigation | Residual risk |
-|---|---|---|---|
-| **Network observer** (CDN, ISP, hostile WiFi) | TLS metadata only. | TLS 1.3 mandatory; HSTS header set. | Metadata observability is inherent. |
-| **Compromised hub server** (full root) | Read DB → encrypted blobs + Google identities. Read TLS keys → MITM future sessions. | Cannot decrypt blobs without per-user passwords. Cannot impersonate viewers — viewer-key never leaves browser. | **The hard one.** Attacker can replace the served JS/WASM with a phishing variant that exfiltrates passwords on unlock. Mitigated by SRI + CSP (see below). |
-| **Compromised Google account** | Phisher gets victim's Google session → can log into the hub as victim. | Phisher then sees the encrypted blob — but needs the unlock password. Password is a second factor. | If victim uses the same password for Google and for hub unlock: single-credential compromise. Docs say "use a distinct unlock password." |
-| **Hub operator** (legitimate owner, malicious intent) | Can see DB + can swap served JS. | Same as compromised server — cannot decrypt without passwords; can phish via swapped JS. | SRI + CSP as below. Operator-side viewer audit: viewer's own pubkey at `/account` must match the pubkey owner sees via `zim viewer list-pending`; mismatch = swapped key. |
-| **Bucket owner** (legitimate, but owner-key compromised) | Can decrypt all bucket content. | Out of scope. Owner compromise = full bucket compromise by design. | T-001 doesn't change the owner-side threat model. |
-| **Brute force against stolen blob** | Argon2id with 19 MB memory cost — GPU/ASIC attacks 100–1000× more expensive than scrypt/bcrypt. | Recommend ≥16-char passwords. Rate-limit unlock attempts at `/api/v0/identity/blob` (effective server-side; client-side rate-limit is cheap to bypass). | Weak passwords are weak. |
-| **Compromised viewer browser** (extension, keylogger) | Reads in-memory key. | Out of scope — fully-owned browser = game over. | Document: "use a clean browser profile for sensitive buckets." |
-
-### The load-bearing trust assumption: SRI + CSP
-
-**The viewer trusts the JS+WASM bundle served by zim-hub.** A compromised hub can swap the bundle for a phishing variant that exfiltrates the password during `unlockKeyBlob`.
-
-Mitigations baked into the templates:
-
-- **SRI hashes** on `<script>` tags for `zim_wasm.js` and `datastar.min.js`. Bundle hashes are computed at vendor-bump time and baked into `crates/zim-hub/templates/layouts/base.html`. A swapped bundle fails the browser's integrity check.
-- **CSP** header `script-src 'self'` — no third-party JS, no inline scripts, no eval.
-- **HSTS** — forces HTTPS so the SRI check happens over an authenticated channel.
-
-These are implementation requirements for T-001a, not optional. The threat model assumes them.
-
-Future hardening: separate the JS bundle delivery from hub-rendered HTML so JS changes require a deliberate vendor-bump commit. Already the case for `datastar.min.js`; same pattern for `zim_wasm.js` via the wasm-pack output under `crates/zim-hub/static/vendor/`.
-
-## Explicit non-goals
-
-- **Password recovery.** Lost password = lost key. The owner must `zim viewer deauthorise <old-pk>` and the viewer re-enrols with a new keypair. Documented as a hard property. Escrow / social recovery were rejected: they'd require a custodian (defeats the design) or extra ceremony that doesn't fit the "deploy one binary, sign in via Google" pitch.
-- **Multi-IdP.** Google only for v1. Adding Apple / GitHub / Microsoft is a follow-up — parameterise the OAuth provider, no design change.
-- **Hardware-key unlock (WebAuthn / FIDO2).** Interesting future direction. Would replace the password-derived KEK with a hardware-attested KEK. Out of v1 scope.
-- **Federated hubs sharing identity stores.** Each hub is its own vault.
-- **Auto-approval of viewers by Google identity alone.** Even with strong identity verification, the bucket owner is the one who controls the bucket. Owner approval is out-of-band (T-001c CLI).
-
-## Code touchpoints
-
-| Concern | Implementation |
+| Concern | Location |
 |---|---|
-| OAuth + session + identity store | `crates/zim-hub/src/auth/` (T-001a) |
-| Datastar pages: login, enrol, unlock, account | `crates/zim-hub/src/http/html/auth/` (T-001a) |
-| HTTP API: enrol, blob, rekey, rotate, pending, logout | `crates/zim-hub/src/http/api/v0/identity/` (T-001a) |
-| SQLite migration | `crates/zim-hub/migrations/20260524051831_create_identity_keys.up.sql` |
-| Identity-store queries | `crates/zim-hub/src/identity.rs` |
-| Browser-side crypto: `generateKey` / `encryptKeyBlob` / `unlockKeyBlob` | `crates/zim-wasm/src/lib.rs` (T-001b) |
-| Owner CLI: `zim viewer list-pending / authorize / deauthorise` | `crates/zim-peer/src/cli/ops/viewer/` (T-001c) |
-| Wiki / end-user guide | `wiki/_docs/viewer-enrolment.md` (T-001d) |
-
-## Related concepts
-
-- [Security](./security.md) — bucket-level threat model and protocol invariants.
-- [Cryptography](./cryptography.md) — primitives (`Secret`, `Share`, ChaCha20-Poly1305, X25519, BLAKE3).
-- [Data Model](./data-model.md) — `Manifest.shares`, per-blob `SecretShare`.
-- [Synchronization](./synchronization.md) — mirror peer-type in the sync protocol.
+| Key types | `crates/zim-crypto/src/keys/{private,public}.rs` |
+| Secret encryption | `crates/zim-crypto/src/secret.rs` (ChaCha20-Poly1305) |
+| Secret sharing (ECDH) | `crates/zim-crypto/src/secret_share.rs` |
+| Share + dialable flag | `crates/zim-core/src/fs/manifest.rs` (`Share`, `Share::new_web_viewer`) |
+| Viewer CLI | `crates/zim-peer/src/cli/ops/bucket/viewer/` |
+| Hub identity store | `crates/zim-hub/src/identity/` (T-001a) |
+| WASM key exports | `crates/zim-wasm/src/lib.rs` (T-001b) |

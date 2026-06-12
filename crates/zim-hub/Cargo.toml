@@ -1,5 +1,7 @@
-# Zim hub: read-only web mirror gateway (axum + askama + Datastar).
-# Embeds an in-process peer Service — no external zim-peer daemon required.
+# Zim hub: dumb-blob-store + DID/escrow rendezvous for browser-resident
+# verification methods. Phase 1 (this commit): revival to compile-clean
+# against the current zim crate surface. No auth, no escrow, no DID
+# hosting yet — those land in later phases (see docs/research/hub-revival.md).
 [package]
 name = "zim-hub"
 version = "0.1.0"
@@ -7,10 +9,15 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Zim read-only web mirror gateway: server-rendered Askama + Datastar over a single-user workspace, with an embedded peer Service."
+description = "Zim read-only web mirror gateway: ciphertext + log mirror with browser-side decryption via zim-wasm."
 keywords.workspace = true
 categories.workspace = true
 readme = "README.md"
+build = "build.rs"
+
+[build-dependencies]
+sha2 = "0.10"
+base64 = "0.22"
 
 [lib]
 name = "zim_hub"
@@ -21,17 +28,18 @@ name = "zim-hub"
 path = "src/main.rs"
 
 [dependencies]
-# workspace crates — in-process peer Service surface
+# workspace — in-process peer Service surface
+zim = { path = "../zim", version = "0.1.0" }
+zim-core = { path = "../zim-core", version = "0.1.0" }
+zim-did = { path = "../zim-did", version = "0.1.0" }
 zim-runtime = { path = "../zim-runtime", version = "0.1.0" }
-zim-peer = { path = "../zim-peer", version = "0.1.0", default-features = false }
-zim-protocol = { path = "../zim-protocol", version = "0.1.0" }
-zim-fs = { path = "../zim-fs", version = "0.1.0" }
-zim-store = { path = "../zim-store", version = "0.1.0" }
+zim-peer = { path = "../zim-peer", version = "0.1.0" }
+zim-crypto = { path = "../zim-crypto", version = "0.1.0" }
 
 # web + service
 axum = { workspace = true }
 tower = { workspace = true }
-tower-http = { workspace = true, features = ["cors", "trace"] }
+tower-http = { workspace = true, features = ["cors", "trace", "set-header"] }
 http = { workspace = true }
 
 # templates + static
@@ -44,21 +52,25 @@ mime_guess = { workspace = true }
 tokio = { workspace = true }
 async-trait = "0.1"
 futures = { workspace = true }
+bytes = { workspace = true }
+
+# storage — sqlx so the hub can swap to Postgres without rewriting
+# queries. SQLite is the default in dev / single-node deployments;
+# Postgres lands behind a feature flag when the first multi-node hub
+# does. We use runtime `sqlx::query` (not the compile-time-checked
+# `query!` macro) so neither DATABASE_URL nor a build-time DB is
+# required.
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "sqlite",
+    "macros",
+    "migrate",
+] }
 
 # observability
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-appender = "0.2"
-
-# identity / auth (T-001a)
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "time", "macros", "uuid", "migrate"] }
-oauth2 = "5"
-tower-cookies = "0.10"
-jsonwebtoken = "9"
-argon2 = "0.5"
-
-# time / utility
-time = { workspace = true, features = ["serde", "formatting"] }
 
 # core
 anyhow = { workspace = true }
@@ -66,3 +78,19 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
+base64 = "0.22"
+
+# Google OAuth login (single-owner gate). Hand-rolled flow against
+# Google's `/o/oauth2/v2/auth` + `/oauth2.googleapis.com/token`, with
+# the session represented as an HS256 JWT cookie. ID-token signature
+# isn't separately verified — the token arrives over TLS direct from
+# Google's token endpoint and we audience+issuer-check the claims.
+reqwest = { workspace = true }
+jsonwebtoken = "9"
+urlencoding = "2"
+chrono = { workspace = true }
+rand = "0.8"
+toml = "0.8"
+struct-patch = { version = "0.8", features = ["status"] }
+url = { workspace = true }
+hex = "0.4"

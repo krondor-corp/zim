@@ -1,19 +1,4 @@
-mod bucket;
-mod index;
-mod static_files;
-
-use axum::routing::get;
-use axum::Router;
-
-use crate::state::AppState;
-
-pub fn router(state: AppState) -> Router<AppState> {
-    Router::new()
-        .route("/", get(index::handler))
-        .route("/static/*path", get(static_files::handler))
-        .nest("/b", bucket::router(state.clone()))
-        .with_state(state)
-}
-
-// First action handler that returns a fragment vs. full page will add an
-// `is_datastar(headers)` helper here, checking the `Datastar-Request` header.
+pub mod index;
+pub mod peers;
+pub mod static_files;
+pub mod vault;

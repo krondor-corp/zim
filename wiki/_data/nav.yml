@@ -8,6 +8,12 @@
     - cli
     - mounting
 
+- title: Account
+  items:
+    - viewer-enrolment
+    - devices
+    - security
+
 - title: Development
   items:
     - local-development

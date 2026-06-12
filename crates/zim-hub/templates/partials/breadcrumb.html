@@ -1,9 +1,0 @@
-<nav class="breadcrumb" aria-label="breadcrumb">
-  {% for (label, href) in breadcrumb %}
-    {% match href %}
-      {% when Some with (h) %}<a href="{{ h }}">{{ label }}</a>
-      {% when None %}<span class="current">{{ label }}</span>
-    {% endmatch %}
-    {% if !loop.last %}<span class="sep">/</span>{% endif %}
-  {% endfor %}
-</nav>

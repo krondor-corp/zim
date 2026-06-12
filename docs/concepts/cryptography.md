@@ -6,7 +6,7 @@ This document describes the cryptographic primitives and protocols used in Zim f
 
 Each peer has an **Ed25519 keypair** as their identity.
 
-**Location**: `crates/common/src/crypto/keys.rs`
+**Location**: `crates/zim-crypto/src/keys.rs`
 
 ```rust
 pub struct SecretKey(ed25519_dalek::SigningKey);  // 32 bytes
@@ -30,7 +30,7 @@ let public_key = secret_key.public_key();
 
 Buckets are shared between peers using **ECDH + AES Key Wrap**.
 
-**Location**: `crates/common/src/crypto/share.rs`
+**Location**: `crates/zim-crypto/src/share.rs`
 
 ### Protocol
 
@@ -89,7 +89,7 @@ pub enum PrincipalRole {
 
 Files and nodes are encrypted with **ChaCha20-Poly1305 AEAD**.
 
-**Location**: `crates/common/src/crypto/secret.rs`
+**Location**: `crates/zim-crypto/src/secret.rs`
 
 ```rust
 pub struct Secret([u8; 32]);  // 256-bit key

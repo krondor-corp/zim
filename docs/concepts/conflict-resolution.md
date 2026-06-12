@@ -6,7 +6,7 @@ This document describes Zim's pluggable conflict resolution system for handling 
 
 When two peers edit the same file path concurrently (without seeing each other's changes), a conflict occurs. Zim provides a pluggable resolution system that lets applications choose how to handle these conflicts.
 
-**Location**: `crates/common/src/mount/conflict.rs`
+**Location**: `crates/zim-core/src/fs/conflict.rs`
 
 ## Conflict Detection
 

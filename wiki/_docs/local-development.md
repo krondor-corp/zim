@@ -18,7 +18,7 @@ cd zim
 cargo build --workspace
 ```
 
-The first build pulls dependencies and compiles all crates (`zim-crypto`, `zim-store`, `zim-fs`, `zim-protocol`, `zim-peer`, `zim-hub`, `zim-wasm`). Subsequent builds are incremental.
+The first build pulls dependencies and compiles all crates (`zim-crypto`, `zim-core`, `zim-core`, `zim-protocol`, `zim-peer`, `zim-hub`, `zim-wasm`). Subsequent builds are incremental.
 
 ## Run the web hub (`make hub`)
 
@@ -132,7 +132,7 @@ For testing sync between peers, `make dev` spawns a two-node tmux environment wi
 make dev
 ```
 
-Use this when you're working on `zim-protocol` / `zim-fs` / sync behaviour. It's not needed for hub UI work.
+Use this when you're working on `zim-protocol` / `zim-core` / sync behaviour. It's not needed for hub UI work.
 
 ## Verifying changes
 

@@ -1,14 +1,22 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/zim",
+    "crates/zim-core",
     "crates/zim-crypto",
-    "crates/zim-store",
-    "crates/zim-fs",
-    "crates/zim-protocol",
+    "crates/zim-did",
+    "crates/zim-hub",
     "crates/zim-runtime",
     "crates/zim-peer",
-    "crates/zim-hub",
     "crates/zim-wasm",
+]
+
+# Shelved (broken from upstream type changes, kept on disk for
+# reference): crates/_zim-protocol, crates/_zim-peer.
+# Rebuild atop zim-core / zim-peer when ready.
+exclude = [
+    "crates/_zim-protocol",
+    "crates/_zim-peer",
 ]
 
 [workspace.package]

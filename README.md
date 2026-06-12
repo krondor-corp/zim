@@ -39,12 +39,12 @@ zim bucket ls my-bucket
 | Crate | Description |
 |-------|-------------|
 | [`zim-crypto`](crates/zim-crypto/) | Ed25519/X25519 keys, ChaCha20-Poly1305, secret sharing |
-| [`zim-store`](crates/zim-store/) | Content-addressed blob storage (SQLite + S3/MinIO/local) |
-| [`zim-fs`](crates/zim-fs/) | Filesystem: manifest, nodes, CRDT path ops, conflict resolution |
+| [`zim-core`](crates/zim-core/) | Core: filesystem, content store, linked data, iroh abstraction |
 | [`zim-protocol`](crates/zim-protocol/) | Wire protocol: peer messaging, sync jobs, append-only bucket log |
+| [`zim-runtime`](crates/zim-runtime/) | Service trait + ShutdownHandle (shared lifecycle) |
 | [`zim-peer`](crates/zim-peer/) | System daemon binary (`zim`) + HTTP API + FUSE + database |
-| [`zim-hub`](crates/zim-hub/) | Read-only web mirror gateway |
-| [`zim-wasm`](crates/zim-wasm/) | Browser-side WASM client for the hub |
+| [`zim-hub`](crates/zim-hub/) | Web gateway with embedded peer, Askama + Datastar, Google OAuth identity vault |
+| [`zim-wasm`](crates/zim-wasm/) | Browser-side WASM client (client-side decryption) |
 
 See [docs/CRATES.md](docs/CRATES.md) for the dependency graph and module conventions.
 

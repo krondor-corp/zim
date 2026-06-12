@@ -30,8 +30,8 @@ pub enum MountError {
     #[error("path already exists: {0}")]
     PathAlreadyExists(String),
 
-    #[error("mirror cannot mount: bucket is not published")]
-    MirrorCannotMount,
+    #[error("share not found for this key")]
+    ShareNotFound,
 
     #[error("crypto error: {0}")]
     Crypto(#[from] CryptoError),
@@ -51,12 +51,8 @@ pub async fn load(link: &Link, secret_key: &SecretKey, blobs: &BlobsStore) -> Re
     let share = manifest.get_share(&secret_key.public())
         .ok_or(MountError::ShareNotFound)?;
 
-    if share.is_mirror() && !share.can_decrypt() {
-        return Err(MountError::MirrorCannotMount);
-    }
-
     let secret = share.share()
-        .ok_or(MountError::MirrorCannotMount)?
+        .ok_or(MountError::ShareNotFound)?
         .recover(secret_key)?;
 
     // ...
@@ -65,7 +61,7 @@ pub async fn load(link: &Link, secret_key: &SecretKey, blobs: &BlobsStore) -> Re
 
 ### Library vs Application Errors
 
-- **Library code** (`zim-fs`): Use `thiserror`, be specific
+- **Library code** (`zim-core`): Use `thiserror`, be specific
 - **Application code** (`Zim`): Can use `anyhow` for top-level errors
 
 ---
@@ -102,9 +98,9 @@ Use `#[tokio::test]` for async tests:
 
 ```rust
 #[tokio::test]
-async fn test_mirror_can_mount_published_bucket() {
+async fn test_owner_can_open_bucket() {
     let blobs = BlobsStore::fs(&temp_path.join("blobs.db"), &temp_path.join("objects"), None).await.unwrap();
-    let mount = Mount::init(id, name, &key, &blobs).await.unwrap();
+    let fs = Fs::init(id, name, &key, &blobs).await.unwrap();
     // ...
 }
 ```
@@ -224,14 +220,15 @@ impl Share {
         }
     }
 
-    /// Create a mirror share (no secret until published).
-    pub fn new_mirror(public_key: PublicKey) -> Self {
+    /// Create a web-viewer share (non-dialable, browser-only key).
+    pub fn new_web_viewer(share: SecretShare, public_key: PublicKey) -> Self {
         Self {
             principal: Principal {
-                role: PrincipalRole::Mirror,
+                role: PrincipalRole::Owner,
                 identity: public_key,
             },
-            share: None,
+            share: Some(share),
+            dialable: false,
         }
     }
 
@@ -245,16 +242,8 @@ impl Share {
         self.share.as_ref()
     }
 
-    pub fn role(&self) -> &PrincipalRole {
-        &self.principal.role
-    }
-
-    pub fn is_mirror(&self) -> bool {
-        self.principal.role == PrincipalRole::Mirror
-    }
-
-    pub fn is_owner(&self) -> bool {
-        self.principal.role == PrincipalRole::Owner
+    pub fn dialable(&self) -> bool {
+        self.dialable
     }
 
     pub fn can_decrypt(&self) -> bool {
@@ -273,7 +262,7 @@ impl Share {
 
 Use `is_*` and `can_*` naming for boolean queries (these go in the getters section):
 
-- `is_*` - checks state or type (`is_mirror`, `is_published`, `is_empty`)
+- `is_*` - checks state or type (`is_dir`, `is_data`, `is_empty`)
 - `can_*` - checks capability (`can_decrypt`, `can_write`)
 - `has_*` - checks presence (`has_share`, `has_previous`)
 
@@ -289,11 +278,12 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_share_new_mirror() {
+    fn test_share_new_web_viewer() {
         let key = SecretKey::generate();
-        let share = Share::new_mirror(key.public());
-        assert!(share.is_mirror());
-        assert!(!share.can_decrypt());
+        let share_data = SecretShare::default();
+        let share = Share::new_web_viewer(share_data, key.public());
+        assert!(!share.dialable());
+        assert!(share.can_decrypt());
     }
 }
 ```
@@ -303,12 +293,12 @@ mod test {
 For tests that need multiple modules or external resources:
 
 ```rust
-// crates/common/tests/mount_tests.rs
-use common::crypto::{Secret, SecretKey};
-use common::mount::{Mount, MountError, PrincipalRole};
+// crates/zim-core/tests/fs_tests.rs
+use zim_crypto::SecretKey;
+use zim_fs::{Fs, FsError};
 
 #[tokio::test]
-async fn test_mirror_cannot_mount_unpublished_bucket() {
+async fn test_non_member_cannot_open_bucket() {
     // Setup, test, assertions...
 }
 ```

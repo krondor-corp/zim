@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>zim &mdash; pair device</title>
+  <link rel="icon" type="image/svg+xml" href="/static/zim-logo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  {% include "partials/theme-init.html" %}
+</head>
+<body>
+{% include "partials/app-shell-start.html" %}
+
+<span class="page-eyebrow">pair a device</span>
+<h1>Authorize this device</h1>
+<p class="page-lead">
+  A daemon running <code>zim login</code> has asked to register with this hub. Verify the code matches what's shown in the daemon's terminal.
+</p>
+
+{% match state %}
+  {% when PairState::NeedsCode %}
+    <form method="get" action="/auth/device" class="card" style="max-width:560px;">
+      <div class="field">
+        <label for="code">Code from the daemon</label>
+        <input id="code" name="code" type="text" autocomplete="off" required pattern="[A-Z2-9]{4}-[A-Z2-9]{4}" placeholder="ABCD-EFGH" style="text-transform:uppercase;font-family:var(--font-mono);">
+      </div>
+      <div>
+        <button type="submit" class="btn btn-primary">Continue</button>
+      </div>
+    </form>
+
+  {% when PairState::Pending with { label, pubkey } %}
+    <div class="card" style="max-width:640px;">
+      <h3>Pair this device?</h3>
+      <p style="font-size:0.875rem;color:hsl(var(--muted-foreground));margin:0.25rem 0 0.75rem;">
+        Label: <strong>{% if label.is_empty() %}(no label){% else %}{{ label }}{% endif %}</strong>
+      </p>
+      <p style="font-size:0.875rem;margin:0 0 0.5rem;">
+        Code: <code style="font-size:1.1rem;letter-spacing:0.1em;font-weight:600;">{{ code }}</code>
+      </p>
+      <p style="font-size:0.75rem;margin:0 0 0.75rem;color:hsl(var(--muted-foreground));">
+        Identity key (verify this matches what's in the daemon's terminal):
+      </p>
+      <p style="margin:0 0 0.75rem;">
+        <code style="font-size:0.75rem;font-family:var(--font-mono);word-break:break-all;line-height:1.4;">{{ pubkey }}</code>
+      </p>
+      <form method="post" action="/auth/device/approve" class="inline-form">
+        <input type="hidden" name="code" value="{{ code }}">
+        <button type="submit" class="btn btn-primary">Approve</button>
+      </form>
+      <a href="/auth/device" class="hero-link" style="margin-left:0.5rem;font-size:0.825rem;padding:0.35rem 0.85rem;">Cancel</a>
+    </div>
+
+  {% when PairState::Invalid with { msg } %}
+    <p class="error" style="max-width:560px;">{{ msg }}</p>
+    <p><a href="/auth/device" class="hero-link">Try another code</a></p>
+
+  {% when PairState::Approved %}
+    <div class="card" style="max-width:560px;">
+      <h3>Approved &mdash; check your terminal</h3>
+      <p style="font-size:0.875rem;color:hsl(var(--muted-foreground));margin:0.5rem 0 0;">
+        The daemon should pick this up on its next poll (within ~5s) and finish enrolling. You can close this tab.
+      </p>
+    </div>
+{% endmatch %}
+
+{% include "partials/app-shell-end.html" %}
+</body>
+</html>

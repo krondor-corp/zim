@@ -2,71 +2,73 @@
 
 Central hub for project documentation. AI agents should read this first.
 
-> User-facing documentation lives in [`wiki/`](../wiki/) (Jekyll, modeled on the [krondor-corp/generic](https://github.com/krondor-corp/generic) template). The files here cover contributor and agent process — patterns, conventions, CI gates.
+> User-facing documentation lives in [`wiki/`](../wiki/) (Jekyll). The files here cover contributor and agent process — patterns, conventions, architecture, reference.
 
 ## Quick Start
 
-```bash
-# Build and verify
-cargo build
-cargo test
-cargo clippy -- -D warnings
-cargo fmt -- --check
+See [getting-started.md](./getting-started.md).
 
-# Run the CLI
-cargo run --bin zim -- --help
+## Structure
 
-# Start 2-node dev environment (requires tmux)
-make dev
+```
+docs/
+├── getting-started.md       # Build, run, orient
+├── concepts/                # What and why: data model, crypto, sync, access, identity
+├── architecture/            # How it's built: project layout, FUSE, runtime
+├── reference/               # Lookup: HTTP API, CLI, debugging, dev environment
+├── deployment/              # Ship: release process, infra (future)
+├── PATTERNS.md              # Coding conventions
+├── CONTRIBUTING.md          # Contribution workflow
+├── SUCCESS_CRITERIA.md      # CI gates
+├── CRATES.md                # Crate layout and dependency graph
+└── ISSUES.md                # Issue/ticket conventions
 ```
 
-## Documentation
+## Concepts
+
+| Document | Purpose |
+|----------|---------|
+| [concepts/overview.md](./concepts/overview.md) | Architecture overview, data model, access control |
+| [concepts/data-model.md](./concepts/data-model.md) | Bucket, manifest, nodes, links |
+| [concepts/cryptography.md](./concepts/cryptography.md) | Ed25519, X25519, ChaCha20-Poly1305 |
+| [concepts/synchronization.md](./concepts/synchronization.md) | Peer sync protocol |
+| [concepts/security.md](./concepts/security.md) | Threat model, trust boundaries |
+| [concepts/access-model.md](./concepts/access-model.md) | Shares, mirrors, publication, relay |
+| [concepts/identity.md](./concepts/identity.md) | Web-key vault, Google auth, Argon2id |
+| [concepts/conflict-resolution.md](./concepts/conflict-resolution.md) | CRDT path ops, merge strategies |
+
+## Architecture
+
+| Document | Purpose |
+|----------|---------|
+| [architecture/project-layout.md](./architecture/project-layout.md) | Crate structure, module map |
+| [architecture/fuse.md](./architecture/fuse.md) | FUSE filesystem integration |
+
+## Reference
+
+| Document | Purpose |
+|----------|---------|
+| [reference/api.md](./reference/api.md) | HTTP API endpoints |
+| [reference/cli.md](./reference/cli.md) | CLI commands (Op pattern) |
+| [reference/debugging.md](./reference/debugging.md) | Log inspection, API testing |
+| [reference/development.md](./reference/development.md) | Dev environment, tmux, 2-node setup |
+
+## Deployment
+
+| Document | Purpose |
+|----------|---------|
+| [deployment/release.md](./deployment/release.md) | Release process, cargo-smart-release, CI |
+
+## Process
 
 | Document | Purpose |
 |----------|---------|
 | [PATTERNS.md](./PATTERNS.md) | Coding conventions and patterns |
-| [CONTRIBUTING.md](./CONTRIBUTING.md) | How to contribute (agents + humans) |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | How to contribute |
 | [SUCCESS_CRITERIA.md](./SUCCESS_CRITERIA.md) | CI checks that must pass |
-
-### Detailed Guides
-
-| Document | Purpose |
-|----------|---------|
-| [PROJECT_LAYOUT.md](./PROJECT_LAYOUT.md) | Crate structure, modules, key files |
-| [CLI.md](./CLI.md) | Op pattern, formatting boundary, command_enum! |
-| [DEVELOPMENT.md](./DEVELOPMENT.md) | Dev environment, tmux setup, debugging |
-| [DEBUG.md](./DEBUG.md) | Debugging workflow, log inspection, API testing |
-| [API.md](./API.md) | HTTP API reference |
-| [INSTALL.md](./INSTALL.md) | Installation and setup guide |
-| [RELEASE.md](./RELEASE.md) | Release process and automation |
+| [CRATES.md](./CRATES.md) | Crate layout, naming, dependencies |
 | [ISSUES.md](./ISSUES.md) | Issue and ticket conventions |
-| [concepts/](./concepts/) | Architecture: overview, data model, crypto, sync, security |
 
 ## For AI Agents
 
-You are an autonomous coding agent working on a focused task.
-
-### Workflow
-
-1. **Understand** — Read the task description and relevant docs
-2. **Explore** — Search the codebase to understand context
-3. **Plan** — Break down work into small steps
-4. **Implement** — Follow existing patterns in [PATTERNS.md](./PATTERNS.md)
-5. **Verify** — Run checks from `SUCCESS_CRITERIA.md`
-6. **Commit** — Clear, atomic commits using conventional commit format
-
-### Guidelines
-
-- Follow existing code patterns and conventions
-- Make atomic commits (one logical change per commit)
-- Add tests for new functionality — tests must read like stories (named actors, scenario names)
-- Update documentation if behavior changes
-- If blocked, commit what you have and note the blocker
-- CLI commands use the Op pattern — never print from execute(), return typed data
-- Use `thiserror` for error types, `?` for propagation, `#[from]` for conversion
-- Use `tokio` for all async, `#[tokio::test]` for async tests
-
-### When Complete
-
-Your work will be reviewed and merged by the parent session.
-Ensure all checks pass before finishing.
+You are an autonomous coding agent working on a focused task. Read [getting-started.md](./getting-started.md) and [PATTERNS.md](./PATTERNS.md) first, then the relevant concept/reference page for your task.

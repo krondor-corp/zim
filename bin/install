@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+#
+# Install `zim` into ~/.cargo/bin so you can run it from anywhere.
+#
+# Usage:
+#   ./bin/install                   release build via `cargo install`
+#   ./bin/install --dev             symlink ~/.cargo/bin/zim to the debug build
+#                                   (fast iteration: edit code, cargo build,
+#                                    re-run `zim` immediately — no reinstall)
+#   ./bin/install --offline         pass --offline + --locked to cargo install
+#
+# After install:
+#   zim --help              # see all commands
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[0;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
+TARGET="$CARGO_BIN/zim"
+
+mode="release"
+# Always lock to Cargo.lock for `cargo install` — without this, the
+# resolver re-picks deps and can land on broken pre-release versions
+# (notably ed25519-dalek 3.0.0-pre.1 vs ed25519 3.0.0-rc.4 mismatch).
+# `cargo build` already uses Cargo.lock; `cargo install` doesn't.
+extra_flags=("--locked")
+for arg in "$@"; do
+    case "$arg" in
+        --dev)      mode="dev" ;;
+        --offline)  extra_flags+=("--offline") ;;
+        -h|--help)
+            sed -n '2,15p' "$0" | sed 's|^# \?||'
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Unknown flag: $arg${NC}"
+            exit 1
+            ;;
+    esac
+done
+
+mkdir -p "$CARGO_BIN"
+
+cd "$PROJECT_ROOT"
+
+if [[ "$mode" == "dev" ]]; then
+    echo -e "${BLUE}Building zim (debug)…${NC}"
+    cargo build -p zim
+    local_bin="$PROJECT_ROOT/target/debug/zim"
+    if [[ ! -x "$local_bin" ]]; then
+        echo -e "${RED}Build did not produce $local_bin${NC}"
+        exit 1
+    fi
+    # Replace whatever's at $TARGET (file, symlink, or nothing) with a
+    # symlink pointing at the freshly-built debug binary.
+    rm -f "$TARGET"
+    ln -s "$local_bin" "$TARGET"
+    echo -e "${GREEN}Installed (dev symlink):${NC} $TARGET -> $local_bin"
+    echo
+    echo "Iterate with: cargo build -p zim   (then re-run \`zim …\`)"
+else
+    echo -e "${BLUE}Installing zim (release) via cargo install…${NC}"
+    cargo install --path crates/zim --bin zim --force "${extra_flags[@]}"
+    echo
+    echo -e "${GREEN}Installed:${NC} $TARGET"
+fi
+
+# Sanity-check that ~/.cargo/bin is on PATH; nudge if not.
+case ":$PATH:" in
+    *":$CARGO_BIN:"*) ;;
+    *)
+        echo
+        echo -e "${YELLOW}Warning:${NC} $CARGO_BIN is not on \$PATH."
+        echo "Add it: export PATH=\"$CARGO_BIN:\$PATH\""
+        ;;
+esac
+
+echo
+echo "Run \`zim --help\` to see all commands."

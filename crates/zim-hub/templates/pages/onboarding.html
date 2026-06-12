@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>zim &mdash; welcome</title>
+  <link rel="icon" type="image/svg+xml" href="/static/zim-logo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  {% include "partials/theme-init.html" %}
+</head>
+<body>
+{% include "partials/app-shell-start.html" %}
+
+<span class="page-eyebrow">welcome</span>
+<h1>Set up this browser</h1>
+<p class="page-lead">
+  Every account needs a browser-resident <strong>web key</strong> &mdash; it's the controlling identity that can authorize other devices to join your vaults. Mint it once here; it lives in this browser, wrapped by a passphrase you pick.
+</p>
+
+<a class="card" href="/app/devices/setup-this-browser" style="max-width:560px;text-decoration:none;">
+  <h3>Mint a web key</h3>
+  <span class="card-meta">WebCrypto Ed25519 &middot; PBKDF2 + AES-GCM-256 wrap &middot; escrow PUT</span>
+  <p style="font-size:0.85rem;color:hsl(var(--muted-foreground));margin:0.5rem 0 0;">
+    The keypair never leaves this tab. The hub stores only the wrapped (ciphertext) form; recovery from another browser needs only the same passphrase.
+  </p>
+  <span style="font-size:0.8rem;color:hsl(var(--primary));margin-top:0.5rem;">Start setup &rarr;</span>
+</a>
+
+<h2>What about daemons?</h2>
+<p style="font-size:0.9rem;color:hsl(var(--muted-foreground));max-width:640px;">
+  Daemons enroll separately via <code>zim login --hub</code> &mdash; that's how the daemon proves possession of its on-disk identity key. They can already sync vaults peer-to-peer without the hub; enrolling on the hub lets the web key add them to share lists going forward.
+</p>
+
+<p style="font-size:0.8rem;color:hsl(var(--muted-foreground));margin-top:2rem;">
+  Signed in as <strong>{{ user_email }}</strong> &middot; hub id <code class="dim">{{ user_id }}</code>
+</p>
+
+{% include "partials/app-shell-end.html" %}
+</body>
+</html>

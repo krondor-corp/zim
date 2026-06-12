@@ -1,32 +1,44 @@
-{% extends "layouts/base.html" %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>zim &mdash; workspace</title>
+  <link rel="icon" type="image/svg+xml" href="/static/zim-logo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  {% include "partials/theme-init.html" %}
+</head>
+<body>
+{% include "partials/app-shell-start.html" %}
 
-{% block title %}zim-hub{% endblock %}
+<span class="page-eyebrow">workspace</span>
+<h1>Your vaults</h1>
+<p class="page-lead">Every vault you own that's mirrored to this hub. Click one to walk its tree.</p>
 
-{% block content %}
-<section class="hero">
-  <h1>zim-hub</h1>
-  <p class="lead">Read-only web mirror over a single-user Zim workspace.</p>
-</section>
+{% if vaults.is_empty() %}
+  <div class="section-empty">
+    No vaults mirrored yet. Add another device on the <a href="/app/devices">devices</a> page,
+    then run <code>zim vault &lt;name&gt; relays add hub</code> on the daemon side.
+  </div>
+{% else %}
+  <div class="card-grid">
+    {% for v in vaults %}
+      <a class="card" href="/app/v/{{ v.id }}/tree/">
+        <h3>{{ v.name }}</h3>
+        <span class="card-meta">{{ v.id }}</span>
+        {% match v.error %}
+          {% when Some with (msg) %}
+            <span class="card-error">{{ msg }}</span>
+          {% when None %}
+        {% endmatch %}
+      </a>
+    {% endfor %}
+  </div>
+{% endif %}
 
-<section class="buckets">
-  <h2>Buckets</h2>
-
-  {% if buckets.is_empty() %}
-    <div class="status-card">
-      <p class="muted">No buckets in the embedded peer's data store yet.</p>
-      <p class="muted">Add data via the <code>zim</code> CLI, or run <code>make dev</code> to point at a multi-peer dev environment.</p>
-    </div>
-  {% else %}
-    <ul class="bucket-list">
-      {% for b in buckets %}
-        <li class="bucket-row">
-          <a class="bucket-name" href="/b/{{ b.bucket_id }}/tree">{{ b.name }}</a>
-          <span class="bucket-meta">
-            <span class="bucket-id"><code>{{ b.bucket_id }}</code></span>
-          </span>
-        </li>
-      {% endfor %}
-    </ul>
-  {% endif %}
-</section>
-{% endblock %}
+{% include "partials/app-shell-end.html" %}
+</body>
+</html>

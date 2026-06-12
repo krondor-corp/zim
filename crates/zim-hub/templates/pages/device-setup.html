@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>zim &mdash; set up this browser</title>
+  <link rel="icon" type="image/svg+xml" href="/static/zim-logo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  {% include "partials/theme-init.html" %}
+</head>
+<body>
+{% include "partials/app-shell-start.html" %}
+
+<span class="page-eyebrow">device setup</span>
+<h1>Register this browser</h1>
+<p class="page-lead">
+  This page generates an ed25519 keypair locally, wraps the private key with your passphrase, and pushes the wrapped blob to the hub's escrow store. The unwrapped key stays in this browser (IndexedDB); recovery from another browser requires only the same passphrase.
+</p>
+
+<form id="browser-device-form" class="card" style="max-width:560px;gap:0.85rem;"
+      data-hub-host="{{ hub_host }}"
+      data-user-id="{{ user_id }}">
+
+  <div class="field">
+    <label for="field-label">Label for this browser</label>
+    <input id="field-label" name="label" type="text" autocomplete="off" placeholder="laptop, work-chrome, &hellip;">
+  </div>
+
+  <div class="field">
+    <label for="field-passphrase">Passphrase</label>
+    <input id="field-passphrase" name="passphrase" type="password" autocomplete="new-password" required minlength="8" placeholder="at least 8 chars">
+  </div>
+
+  <div class="field">
+    <label for="field-confirm">Confirm passphrase</label>
+    <input id="field-confirm" name="confirm" type="password" autocomplete="new-password" required minlength="8">
+  </div>
+
+  <div>
+    <button id="submit-btn" type="submit" class="btn btn-primary">Generate &amp; register</button>
+  </div>
+
+  <p id="status" style="display:none;font-size:0.85rem;color:hsl(var(--muted-foreground));margin:0;"></p>
+  <p id="error" class="error" style="display:none;margin:0;"></p>
+</form>
+
+<h2>What happens here</h2>
+<div class="workflow-steps">
+  <div class="workflow-step">
+    <span class="step-cmd">keygen</span>
+    <div class="step-body">
+      <strong>WebCrypto Ed25519</strong>
+      <p>Chrome 113+, Safari 17+, Firefox 130+.</p>
+    </div>
+  </div>
+  <div class="workflow-step">
+    <span class="step-cmd">PBKDF2</span>
+    <div class="step-body">
+      <strong>Derive AES-GCM key from passphrase</strong>
+      <p>SHA-256, 100 000 iterations, random 16-byte salt.</p>
+    </div>
+  </div>
+  <div class="workflow-step">
+    <span class="step-cmd">AES-GCM</span>
+    <div class="step-body">
+      <strong>Wrap the private key JWK</strong>
+      <p>Random 12-byte IV. Wrong passphrase fails the AEAD check loudly.</p>
+    </div>
+  </div>
+  <div class="workflow-step">
+    <span class="step-cmd">escrow</span>
+    <div class="step-body">
+      <strong>PUT <code>/api/v0/escrow</code></strong>
+      <p><code>did:web:{{ hub_host }}:u:{{ user_id }}#browser-&lt;rand&gt;</code> &mdash; hub gates writes on the <code>u:</code> segment.</p>
+    </div>
+  </div>
+  <div class="workflow-step">
+    <span class="step-cmd">register</span>
+    <div class="step-body">
+      <strong>POST <code>/app/devices/add</code></strong>
+      <p>The pubkey joins the regular <code>user_peers</code> table; vault access works the same as for daemons.</p>
+    </div>
+  </div>
+</div>
+
+<p style="margin-top:1.5rem;"><a href="/app/devices" class="hero-link">&larr; Back to devices</a></p>
+
+<script src="/static/device-setup.js" defer></script>
+{% include "partials/app-shell-end.html" %}
+</body>
+</html>

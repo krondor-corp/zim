@@ -11,7 +11,7 @@
       <div class="hero-content">
         <span class="hero-eyebrow">End-to-end encrypted peer-to-peer storage</span>
         <h1 class="hero-title">Zim</h1>
-        <p class="hero-tagline">Local-first encrypted buckets that sync directly between your devices. ChaCha20-Poly1305 for content, X25519 secret sharing for access control, iroh-blobs for transport. No servers required.</p>
+        <p class="hero-tagline">Your files, encrypted and synced directly between your devices. No cloud accounts, no servers in the middle, no one else can read your data.</p>
         <div class="hero-install" id="hero-install">
           <code>curl -fsSL https://raw.githubusercontent.com/zim/zim/main/install.sh | sh</code>
           <button class="copy-btn copy-btn-visible" onclick="navigator.clipboard.writeText('curl -fsSL https://raw.githubusercontent.com/zim/zim/main/install.sh | sh').then(function(){var b=document.querySelector('#hero-install .copy-btn');b.textContent='copied';setTimeout(function(){b.textContent='copy'},1500)})">copy</button>
@@ -22,7 +22,7 @@
         </div>
       </div>
       <div class="hero-logo">
-        <img src="{{ '/assets/images/favicon.svg' | relative_url }}" alt="Zim logo">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="128" height="128" aria-label="Zim logo"><rect x="0" y="0" width="10" height="10" rx="2" fill="currentColor" opacity="0.55"/><rect x="13" y="0" width="10" height="10" rx="2" fill="currentColor" opacity="0.55"/><rect x="26" y="0" width="10" height="10" rx="2" fill="currentColor"/><rect x="0" y="13" width="10" height="10" rx="2" fill="currentColor" opacity="0.15"/><rect x="13" y="13" width="10" height="10" rx="2" fill="currentColor"/><rect x="26" y="13" width="10" height="10" rx="2" fill="currentColor" opacity="0.15"/><rect x="0" y="26" width="10" height="10" rx="2" fill="currentColor"/><rect x="13" y="26" width="10" height="10" rx="2" fill="currentColor" opacity="0.55"/><rect x="26" y="26" width="10" height="10" rx="2" fill="currentColor" opacity="0.55"/></svg>
       </div>
     </section>
 
@@ -41,41 +41,6 @@
         <div class="feature">
           <h3>Sync</h3>
           <p>Content-addressed blobs replicate over iroh's QUIC transport. Local-first: every operation works offline and converges when peers reconnect.</p>
-        </div>
-      </div>
-    </section>
-
-    <section class="commands-preview">
-      <h2 class="section-heading">Workflow</h2>
-      <p class="section-description">From install to sharing a bucket in four commands.</p>
-      <div class="workflow-steps">
-        <div class="workflow-step">
-          <span class="step-cmd">zim init</span>
-          <div>
-            <strong>Initialize identity</strong>
-            <p>Generates this device's Ed25519 keypair and local state.</p>
-          </div>
-        </div>
-        <div class="workflow-step">
-          <span class="step-cmd">zim daemon</span>
-          <div>
-            <strong>Start the daemon</strong>
-            <p>Runs the local sync daemon and HTTP API.</p>
-          </div>
-        </div>
-        <div class="workflow-step">
-          <span class="step-cmd">zim bucket create</span>
-          <div>
-            <strong>Create a bucket</strong>
-            <p>Generates the bucket secret, encrypts a share to your key, and writes the initial manifest.</p>
-          </div>
-        </div>
-        <div class="workflow-step">
-          <span class="step-cmd">zim bucket add</span>
-          <div>
-            <strong>Add files</strong>
-            <p>Encrypts and stores files as content-addressed blobs; the manifest chain advances by one version.</p>
-          </div>
         </div>
       </div>
     </section>

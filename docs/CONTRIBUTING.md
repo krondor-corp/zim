@@ -98,7 +98,7 @@ impl TestScenario {
 
 #### Example: Good integration test
 
-See `crates/common/tests/conflict_resolution.rs` for the canonical example of readable tests.
+See `crates/zim-core/tests/conflict_resolution.rs` for the canonical example of readable tests.
 
 ### File Naming Conventions
 
@@ -117,15 +117,15 @@ See `crates/common/tests/conflict_resolution.rs` for the canonical example of re
 **Examples:**
 ```rust
 // Good - descriptive
-pub async fn add_owner(&mut self, peer: PublicKey) -> Result<(), MountError>
-pub async fn add_mirror(&mut self, peer: PublicKey)
-pub fn is_published(&self) -> bool
-pub struct MirrorCannotMount;
+pub async fn add_owner(&mut self, peer: PublicKey) -> Result<(), FsError>
+pub fn publish_file(&mut self, path: &Path) -> Result<(), FsError>
+pub fn dialable(&self) -> bool
+pub struct ShareNotFound;
 
 // Bad - too short or ambiguous
 pub async fn add(&mut self, p: PublicKey)
-pub fn published(&self) -> bool
-pub struct MirrorError;
+pub fn pub_f(&mut self, p: &Path)
+pub struct NotFound;
 ```
 
 ### Before Submitting

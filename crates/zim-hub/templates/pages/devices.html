@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>zim &mdash; devices</title>
+  <link rel="icon" type="image/svg+xml" href="/static/zim-logo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  {% include "partials/theme-init.html" %}
+</head>
+<body>
+{% include "partials/app-shell-start.html" %}
+
+<span class="page-eyebrow">devices</span>
+<h1>Your devices</h1>
+<p class="page-lead">
+  Devices that can read your vaults. Browser keys are minted in-tab and wrapped in escrow; daemon keys are enrolled via <code>zim login</code> from the daemon's machine. Both prove possession at enrollment.
+</p>
+
+{% match flash %}
+  {% when Some with (msg) %}
+    <p class="error">{{ msg }}</p>
+  {% when None %}
+{% endmatch %}
+
+<h2>Add a device</h2>
+<div class="card-grid">
+  <a class="card" href="/app/devices/setup-this-browser" style="text-decoration:none;">
+    <h3>This browser</h3>
+    <span class="card-meta">in-browser ed25519 + passphrase wrap</span>
+    <p style="font-size:0.85rem;color:hsl(var(--muted-foreground));margin:0.25rem 0 0;">
+      Generate a keypair in this tab, wrap with a passphrase, push to escrow.
+    </p>
+  </a>
+  <div class="card" style="border-style:dashed;">
+    <h3>A daemon</h3>
+    <span class="card-meta">via <code>zim login --hub</code> (coming soon)</span>
+    <p style="font-size:0.85rem;color:hsl(var(--muted-foreground));margin:0.25rem 0 0;">
+      Daemons authenticate via OAuth and sign a challenge with their on-disk identity key.
+    </p>
+  </div>
+</div>
+
+<h2>Registered</h2>
+{% if devices.is_empty() %}
+  <div class="section-empty">No devices yet.</div>
+{% else %}
+  <table>
+    <thead>
+      <tr><th>label</th><th>kind</th><th>pubkey</th><th>added</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for d in devices %}
+        <tr>
+          <td>{{ d.label }}</td>
+          <td><span class="role role-{{ d.kind }}">{{ d.kind }}</span></td>
+          <td><code class="dim">{{ d.pubkey_hex }}</code></td>
+          <td>{{ d.created_at }}</td>
+          <td>
+            <form method="post" action="/app/devices/{{ d.pubkey_hex }}/delete" class="inline-form">
+              <button type="submit" class="btn btn-danger">Remove</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endif %}
+
+{% include "partials/app-shell-end.html" %}
+</body>
+</html>

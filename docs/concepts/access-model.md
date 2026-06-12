@@ -12,7 +12,7 @@ There is no `PrincipalRole` enum. The owner/mirror distinction is encoded as **t
 pub struct Manifest {
     // ...
     pub shares:  Vec<Share>,        // owners — hold a per-blob `Secret` envelope
-    pub mirrors: Vec<PublicKey>,    // mirror peer keys — pin ciphertext only
+    pub relays: Vec<Relay>,    // mirror peer keys — pin ciphertext only
     // ...
 }
 ```
@@ -20,7 +20,7 @@ pub struct Manifest {
 | Field | Capability | Holds plaintext? |
 |---|---|---|
 | `manifest.shares` | Read + write the bucket. Authorised by the existing owners (signed manifest append). | Yes — each `Share` includes a `SecretShare` envelope sealed for the share's pubkey. |
-| `manifest.mirrors` | Pin and serve ciphertext blobs. Cannot decrypt. | No — mirrors never see a `Secret`. |
+| `manifest.relays` | Pin and serve ciphertext blobs. Cannot decrypt. | No — relays never see a `Secret`. |
 
 Authorisation is **possession of a working `SecretShare`**. The mirror entry grants nothing decryption-related; it only declares "this peer is allowed to fetch ciphertext from us and we'll fetch ciphertext from it."
 
@@ -34,7 +34,7 @@ Refs: T-006, T-006a, T-016 (closed); the proposal in `tasks/done/T-016.md ## Not
 pub struct Manifest {
     // ...
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub published_set: Vec<PublicEntry>,
+    pub published: Published  // BTreeMap<AbsPath, Leaf>,
     // ...
 }
 
@@ -46,10 +46,10 @@ pub struct PublicEntry {
 }
 ```
 
-- **Owners publish** specific files or folders by appending to `published_set`. Each entry carries the plaintext `Secret` for that target.
-- **Auto-republish-on-commit** keeps published_set entries fresh as the tree changes (target hash refreshed, display_path updated on renames, deletions pruned).
+- **Owners publish** specific files or folders by adding entries to `manifest.published`. Each entry carries the plaintext `Secret` for that target.
+- **Auto-republish-on-commit** keeps published entries fresh as the tree changes (target hash refreshed, display_path updated on renames, deletions pruned).
 - **Rotate ops** (`rotate_file`, `rotate_folder`) generate fresh `Secret`s — actual read revocation, not just access-list pruning.
-- **Future**: a sibling `published_versions: Vec<PublicVersion>` field for whole-bucket-version publication is *not v1* but the schema is additive-safe (the `serde(default, skip_serializing_if = "Vec::is_empty")` on `published_set` confirms the wire format tolerates new optional fields).
+- **Future**: a sibling `published_versions: Vec<PublicVersion>` field for whole-bucket-version publication is *not v1* but the schema is additive-safe (the `serde(default, skip_serializing_if = "Vec::is_empty")` on `published` confirms the wire format tolerates new optional fields).
 
 Anonymous URL reads use the public branch of the envelope tagged-union; signed-in user reads use the sealed branch via the user's web-key.
 
@@ -90,12 +90,12 @@ The hub plays **two coordinated roles** in the protocol:
 
 | Role | Mechanism | What it does |
 |---|---|---|
-| **Mirror peer** | The hub's own operator-side iroh key, registered in each bucket's `manifest.mirrors` | Pins ciphertext. Participates in the normal iroh sync mesh. Never holds bucket secrets. |
+| **Mirror peer** | The hub's own operator-side iroh key, registered in each bucket's `manifest.relays` | Pins ciphertext. Participates in the normal iroh sync mesh. Never holds bucket secrets. |
 | **Relay** | The hub's HTTP API | Accepts signed manifest updates from browser sessions (`POST /api/v0/buckets/{id}/append`), validates the signature against the appending web-key, persists locally, and broadcasts to dialable peers via the normal iroh sync path. HTTP-in + iroh-out. No new wire verbs. |
 
 The Relay role exists because web-keys can't dial. Without it, a browser-resident user could sign a manifest append but couldn't deliver it to the bucket's other peers. The hub bridges HTTP and iroh for those members.
 
-A bucket can have multiple hubs (each in its own `mirrors` entry, each running independent Mirror+Relay). Owners with native peers don't need a hub at all; the hub is only required for browser-resident members.
+A bucket can have multiple hubs (each in its own `relays` entry, each running independent Mirror+Relay). Owners with native peers don't need a hub at all; the hub is only required for browser-resident members.
 
 Refs: `broadcast/20260524T182033Z-thing2-relay-role-dialable-shares-protocol-design.md` (protocol-precise version).
 
@@ -116,9 +116,9 @@ The flag affects the sync layer (dial filtering) only. Authorisation (whether a 
 
 ## Public bucket-version URLs (deferred)
 
-v1 publication unit = file/folder via `PublicEntry`. Whole-bucket-version publication (GitHub-Pages-style — pin a manifest hash, expose its entire tree at a URL) is a future feature.
+v1 publication unit = file/folder via the `Published` map. Whole-bucket-version publication (GitHub-Pages-style — pin a manifest hash, expose its entire tree at a URL) is a future feature.
 
-Design constraint preserved: the manifest schema's `published_set` field uses `#[serde(default, skip_serializing_if = "Vec::is_empty")]`, so a sibling `published_versions: Vec<PublicVersion>` field can be added later without a wire-format break.
+Design constraint preserved: the manifest schema's `published` field uses `#[serde(default, skip_serializing_if = "Vec::is_empty")]`, so a sibling `published_versions: Vec<PublicVersion>` field can be added later without a wire-format break.
 
 Refs: `broadcast/20260524T170810Z-thing2-multitenant-hub-framing.md` ("deferred-future-feature" section).
 
@@ -138,5 +138,5 @@ The wiki write-up of these lands when T-001a M4 ships (the unlock UX is the ship
 - [Identity & Key Custody](./identity.md) — vault-not-custodian pattern, Argon2id+ChaCha20, threat model.
 - [Security](./security.md) — bucket-level threat model and protocol invariants.
 - [Cryptography](./cryptography.md) — `Secret`, `Share`, ChaCha20-Poly1305, X25519, BLAKE3.
-- [Data Model](./data-model.md) — `Manifest.shares`, per-blob `SecretShare`, `published_set`.
+- [Data Model](./data-model.md) — `Manifest.shares`, `Relay`, `Published`.
 - [Synchronization](./synchronization.md) — iroh sync mesh, mirror peer-type, append-only bucket log.

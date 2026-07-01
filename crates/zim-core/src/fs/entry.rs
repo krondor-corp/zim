@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use iroh_blobs::Hash;
+use crate::linked_data::Hash;
 use mime::Mime;
 use serde::{Deserialize, Serialize};
 

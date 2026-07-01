@@ -31,21 +31,25 @@
 //! same identity key — there's no long-lived bearer token to leak
 //! or rotate.
 
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use zim_crypto::PublicKey;
 
 use crate::database::models::{DeviceCodeGrant, PeerKind, UserPeer};
+use crate::http::auth::RequireUser;
 use crate::state::AppState;
 
 pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/device-code/start", post(device_code_start))
         .route("/device-code/poll", post(device_code_poll))
+        // Browser approval — consumed by the SPA `/device` page.
+        .route("/device-code/:code", get(device_code_info))
+        .route("/device-code/:code/approve", post(device_code_approve))
         .with_state(state)
 }
 
@@ -85,7 +89,7 @@ async fn device_code_start(State(state): State<AppState>, Json(body): Json<Start
     match DeviceCodeGrant::create(body.pubkey.trim(), label, &state.db).await {
         Ok(grant) => {
             let base = state.auth.host_name.trim_end_matches('/');
-            let url = format!("{base}/auth/device?code={}", grant.code());
+            let url = format!("{base}/device?code={}", grant.code());
             Json(StartResponse {
                 code: grant.code().to_string(),
                 verification_url: url,
@@ -188,20 +192,9 @@ async fn device_code_poll(State(state): State<AppState>, Json(body): Json<PollBo
         }
     }
 
-    let display_label = if grant.label().is_empty() {
-        "daemon".to_string()
-    } else {
-        grant.label().to_string()
-    };
-    match UserPeer::create(
-        user_id,
-        &pubkey,
-        &display_label,
-        PeerKind::Daemon,
-        &state.db,
-    )
-    .await
-    {
+    let label = grant.label().trim();
+    let label = (!label.is_empty()).then_some(label);
+    match UserPeer::create(user_id, &pubkey, label, PeerKind::Daemon, &state.db).await {
         Ok(_) => {}
         Err(sqlx::Error::Database(e)) if e.message().contains("UNIQUE constraint failed") => {
             // Pubkey is claimed by a different user. Don't leak who.
@@ -236,4 +229,90 @@ fn decode_signature(s: &str) -> Option<[u8; 64]> {
     let mut out = [0u8; 64];
     hex::decode_to_slice(s, &mut out).ok()?;
     Some(out)
+}
+
+// ─── Browser approval (SPA `/device` page) ────────────────────────────
+
+#[derive(Debug, Serialize)]
+struct GrantInfo {
+    /// "pending" | "approved" | "expired" | "not_found"
+    status: &'static str,
+    label: String,
+    pubkey: String,
+}
+
+/// `GET /api/v0/auth/device-code/:code` — the grant a user is about to
+/// approve. RequireUser so only a signed-in human can read it.
+async fn device_code_info(
+    State(state): State<AppState>,
+    RequireUser(_user): RequireUser,
+    Path(code): Path<String>,
+) -> Response {
+    match DeviceCodeGrant::find(code.trim(), &state.db).await {
+        Ok(Some(g)) => {
+            let status = if g.is_expired() {
+                "expired"
+            } else if g.is_approved() {
+                "approved"
+            } else {
+                "pending"
+            };
+            Json(GrantInfo {
+                status,
+                label: g.label().to_string(),
+                pubkey: g.pubkey_hex().to_string(),
+            })
+            .into_response()
+        }
+        Ok(None) => Json(GrantInfo {
+            status: "not_found",
+            label: String::new(),
+            pubkey: String::new(),
+        })
+        .into_response(),
+        Err(e) => {
+            tracing::error!("device-code info: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, "lookup failed").into_response()
+        }
+    }
+}
+
+/// `POST /api/v0/auth/device-code/:code/approve` — stamp `user_id` +
+/// `approved_at`; the daemon's next signed poll enrolls itself.
+async fn device_code_approve(
+    State(state): State<AppState>,
+    RequireUser(user): RequireUser,
+    Path(code): Path<String>,
+) -> Response {
+    let code = code.trim();
+    let grant = match DeviceCodeGrant::find(code, &state.db).await {
+        Ok(Some(g)) => g,
+        Ok(None) => return (StatusCode::NOT_FOUND, "code not found").into_response(),
+        Err(e) => {
+            tracing::error!("device-code approve lookup: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "lookup failed").into_response();
+        }
+    };
+    if grant.is_expired() {
+        return (StatusCode::GONE, "code expired").into_response();
+    }
+    if grant.is_approved() {
+        return StatusCode::NO_CONTENT.into_response();
+    }
+    match DeviceCodeGrant::approve(code, user.id(), &state.db).await {
+        Ok(true) => {
+            tracing::info!(
+                user = user.email(),
+                label = grant.label(),
+                pubkey = grant.pubkey_hex(),
+                "device-code approved"
+            );
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Ok(false) => (StatusCode::CONFLICT, "code consumed or expired").into_response(),
+        Err(e) => {
+            tracing::error!("device-code approve: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, "approval failed").into_response()
+        }
+    }
 }

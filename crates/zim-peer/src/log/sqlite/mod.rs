@@ -4,9 +4,10 @@ use async_trait::async_trait;
 
 use zim_core::linked_data::Link;
 
-mod database;
+mod models;
 
-use database::{Database, DatabaseError, LogEntry};
+use crate::db::{Database, DatabaseError};
+use models::LogEntry;
 use zim_core::vault::{VaultId, VaultLog, VaultLogError};
 
 #[derive(Debug, Clone)]
@@ -94,7 +95,7 @@ impl VaultLog for SqliteVaultLog {
 #[cfg(test)]
 mod tests {
     fn test_vault_id(byte: u8) -> zim_core::vault::VaultId {
-        zim_core::vault::VaultId::from_hash(zim_core::linked_data::Hash::new([byte; 32]))
+        zim_core::vault::VaultId::from_hash(zim_core::linked_data::Hash::new(&[byte; 32]))
     }
 
     use super::*;

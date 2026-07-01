@@ -14,11 +14,13 @@
 //! The `command_enum!` macro at the crate root is exported from
 //! [`cli::op`] for `main.rs` to wire up the top-level `Command` enum.
 
+pub mod accept;
 pub mod cli;
 pub mod context;
 pub mod http_server;
-pub mod hub_jwt;
-pub mod peers;
+#[cfg(feature = "fuse")]
+pub mod mount;
+pub mod reconcile;
 pub mod service_config;
 pub mod service_state;
 pub mod version;
@@ -31,7 +33,7 @@ use crate::cli::ops;
 
 crate::command_enum! {
     (Init,    ops::Init),
-    (Login,   ops::Login),
+    cfg(feature = "hub"): #[command(subcommand)] (Hub, ops::Hub),
     #[command(subcommand)] (Daemon,  ops::Daemon),
     (Id,      ops::Id),
     (Health,  ops::Health),
@@ -39,4 +41,11 @@ crate::command_enum! {
     #[command(subcommand)] (Peers,   ops::Peers),
     #[command(subcommand)] (Vaults,  ops::Vaults),
     (Vault,   ops::Vault),
+    #[command(subcommand)] (Mount,   ops::Mount),
+    // Debug-only: wipes the (debug-nested) data dir. Absent from
+    // release builds. The macro's optional `#[cfg(...)]` slot gates the
+    // variant + its OpOutput/OpError/dispatch arms together. A
+    // release-only command would mirror this with
+    // `#[cfg(not(debug_assertions))]`.
+    cfg(debug_assertions): (Clean, ops::Clean),
 }

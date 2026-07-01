@@ -51,19 +51,28 @@ impl Display for NoOutput {
 /// Usage:
 /// ```ignore
 /// command_enum! {
-///     (Daemon,  ops::Daemon),
 ///     (Init,    ops::Init),
-///     (Vault,   ops::Vault),
+///     #[command(subcommand)] (Daemon, ops::Daemon),  // clap attrs → Command variant
+///     cfg(debug_assertions): (Clean, ops::Clean),    // gate the whole entry per build profile
 ///     ...
 /// }
 /// ```
+///
+/// An optional leading `cfg(<predicate>):` gates the entry — the
+/// generated `Command` variant, its `OpOutput`/`OpError` variants, and
+/// both dispatch arms share the `#[cfg(<predicate>)]`, so the command
+/// is wholly present or wholly absent. (A bare `cfg(...):` prefix
+/// rather than `#[cfg(...)]` keeps it unambiguous from the clap `#[…]`
+/// attrs that follow.) Use `cfg(debug_assertions):` for dev-only
+/// commands, `cfg(not(debug_assertions)):` for release-only ones.
 #[macro_export]
 macro_rules! command_enum {
-    ($($(#[$attr:meta])* ($variant:ident, $type:ty)),* $(,)?) => {
+    ($($(cfg($cfg:meta):)? $(#[$attr:meta])* ($variant:ident, $type:ty)),* $(,)?) => {
         #[derive(clap::Subcommand, Debug, Clone)]
         #[allow(clippy::large_enum_variant)]
         pub enum Command {
             $(
+                $(#[cfg($cfg)])?
                 $(#[$attr])*
                 $variant($type),
             )*
@@ -73,12 +82,16 @@ macro_rules! command_enum {
         #[serde(untagged)]
         #[allow(clippy::large_enum_variant)]
         pub enum OpOutput {
-            $($variant(<$type as $crate::cli::op::Op>::Output),)*
+            $(
+                $(#[cfg($cfg)])?
+                $variant(<$type as $crate::cli::op::Op>::Output),
+            )*
         }
 
         #[derive(Debug, thiserror::Error)]
         pub enum OpError {
             $(
+                $(#[cfg($cfg)])?
                 #[error(transparent)]
                 $variant(<$type as $crate::cli::op::Op>::Error),
             )*
@@ -97,6 +110,7 @@ macro_rules! command_enum {
             async fn run(&self, _ctx: ()) -> Result<Self::Output, Self::Error> {
                 match self {
                     $(
+                        $(#[cfg($cfg)])?
                         Command::$variant(op) => {
                             let ctx = op.build_context().await.map_err(OpError::$variant)?;
                             op.run(ctx)
@@ -113,6 +127,7 @@ macro_rules! command_enum {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 match self {
                     $(
+                        $(#[cfg($cfg)])?
                         OpOutput::$variant(output) => write!(f, "{}", output),
                     )*
                 }

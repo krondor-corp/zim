@@ -14,7 +14,6 @@
 //! the user row is looked up fresh on every gated request so role
 //! changes take effect immediately.
 
-pub mod device;
 pub mod google;
 pub mod jwt;
 pub mod logout;
@@ -34,13 +33,14 @@ use crate::state::AppState;
 
 pub const LOGIN_PATH: &str = "/auth/google/login";
 pub const PENDING_PATH: &str = "/auth/pending";
-pub const ONBOARDING_PATH: &str = "/app/onboarding";
+/// Where to send an authenticated-but-not-onboarded HTML client: the SPA
+/// root, which shows the web-key gate.
+pub const ONBOARDING_PATH: &str = "/";
 pub const SESSION_COOKIE: &str = "session";
 
 pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .nest("/google", google::router())
-        .nest("/device", device::router(state.clone()))
         .route("/logout", post(logout::handler))
         .route("/pending", axum::routing::get(pending_page))
         .with_state(state)
@@ -123,24 +123,26 @@ impl FromRequestParts<AppState> for RequireOnboardedUser {
                 StatusCode::FORBIDDEN.into_response()
             });
         }
-        // Admin bypass: an admin without devices can still walk into
-        // /_admin to manage other users. Otherwise the very first
-        // admin gets stuck on the onboarding wall with no way to
-        // promote anyone else.
-        if !user.is_admin() {
-            match UserPeer::user_has_web_key(user.id(), &state.db).await {
-                Ok(true) => {}
-                Ok(false) => {
-                    return Err(if wants_html(parts) {
-                        Redirect::to(ONBOARDING_PATH).into_response()
-                    } else {
-                        StatusCode::FORBIDDEN.into_response()
-                    });
-                }
-                Err(e) => {
-                    tracing::error!("device-count lookup failed: {e}");
-                    return Err(StatusCode::INTERNAL_SERVER_ERROR.into_response());
-                }
+        // Web-key gate — applies to EVERYONE, admins included. You can't
+        // use the workspace (create/open vaults needs a browser key) until
+        // you've minted one, so a keyless user is bounced to onboarding.
+        //
+        // Admins are NOT locked out of the panel by this: `/_admin` routes
+        // gate on `RequireAdmin` (a separate extractor that never checks
+        // for a web key), so the first admin can still manage users before
+        // setting up their own browser key.
+        match UserPeer::user_has_web_key(user.id(), &state.db).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(if wants_html(parts) {
+                    Redirect::to(ONBOARDING_PATH).into_response()
+                } else {
+                    StatusCode::FORBIDDEN.into_response()
+                });
+            }
+            Err(e) => {
+                tracing::error!("web-key lookup failed: {e}");
+                return Err(StatusCode::INTERNAL_SERVER_ERROR.into_response());
             }
         }
         Ok(RequireOnboardedUser(user))
@@ -196,43 +198,74 @@ async fn resolve_user(parts: &Parts, state: &AppState) -> Option<User> {
 
 /// Verify a self-signed Ed25519 JWT against the `user_peers` table.
 ///
-/// Sequence:
+/// Two kid formats are supported:
 ///
-/// 1. Parse the JWT (alg=EdDSA, `kid` = 64-char pubkey hex).
-/// 2. Look up the pubkey in `user_peers` to find its owner. If the
-///    pubkey isn't enrolled, the JWT is invalid no matter how good
-///    the signature is.
-/// 3. Verify the signature over `header.payload` against the
-///    pubkey.
-/// 4. Check `iat`/`exp`/`aud` claims.
-/// 5. Touch `user_peers.last_seen_at` (best-effort).
+/// - **64-char hex pubkey** (daemon-enrolled): extract pubkey from
+///   `kid`, verify signature, look up peer by pubkey.
+/// - **JWK thumbprint** (browser-enrolled): look up peer by
+///   thumbprint, then verify signature with the stored pubkey.
+///
+/// In both cases the signature is verified before the peer is trusted.
 async fn resolve_user_by_jwt(token: &str, state: &AppState) -> Option<User> {
-    let verified = match jwt::verify(token, &state.auth.host_name) {
-        Ok(v) => v,
+    let kid = match jwt::peek_kid(token) {
+        Ok(k) => k,
         Err(e) => {
-            tracing::debug!("jwt verify: {e}");
+            tracing::debug!("jwt peek_kid: {e}");
             return None;
         }
     };
-    let peer = match UserPeer::find_by_pubkey(&verified.pubkey, &state.db).await {
-        Ok(Some(p)) => p,
-        Ok(None) => {
-            tracing::debug!(
-                pubkey = %verified.pubkey.to_hex(),
-                "jwt signed by unenrolled pubkey"
-            );
-            return None;
+
+    let peer = match kid {
+        jwt::Kid::Pubkey(pk) => {
+            // Daemon path: kid IS the pubkey, verify then look up.
+            if let Err(e) = jwt::verify(token, &state.auth.host_name) {
+                tracing::debug!("jwt verify (pubkey path): {e}");
+                return None;
+            }
+            match UserPeer::find_by_pubkey(&pk, &state.db).await {
+                Ok(Some(p)) => p,
+                Ok(None) => {
+                    tracing::debug!(pubkey = %pk.to_hex(), "jwt signed by unenrolled pubkey");
+                    return None;
+                }
+                Err(e) => {
+                    tracing::error!("user_peers lookup by pubkey: {e}");
+                    return None;
+                }
+            }
         }
-        Err(e) => {
-            tracing::error!("user_peers lookup: {e}");
-            return None;
+        jwt::Kid::Thumbprint(ref t) => {
+            // Browser path: look up by thumbprint first, then verify.
+            let peer = match UserPeer::find_by_thumbprint(t, &state.db).await {
+                Ok(Some(p)) => p,
+                Ok(None) => {
+                    tracing::debug!(thumbprint = %t, "jwt kid not a registered thumbprint");
+                    return None;
+                }
+                Err(e) => {
+                    tracing::error!("user_peers lookup by thumbprint: {e}");
+                    return None;
+                }
+            };
+            let pk = match peer.peer_pubkey() {
+                Some(pk) => pk,
+                None => {
+                    tracing::error!("user_peers row has invalid pubkey hex");
+                    return None;
+                }
+            };
+            if let Err(e) = jwt::verify_with_pubkey(token, &state.auth.host_name, &pk) {
+                tracing::debug!("jwt verify (thumbprint path): {e}");
+                return None;
+            }
+            peer
         }
     };
-    let user = User::find_by_id(peer.user_id(), &state.db)
+
+    User::find_by_id(peer.user_id(), &state.db)
         .await
         .ok()
-        .flatten()?;
-    Some(user)
+        .flatten()
 }
 
 fn bearer_token(parts: &Parts) -> Option<String> {

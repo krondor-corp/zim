@@ -1,12 +1,17 @@
 ---
-description: Run end-to-end dev environment tests
+description: Run end-to-end dev environment tests (local p2p sync + web↔local sync)
 allowed-tools:
   - Bash(./bin/dev)
   - Bash(./bin/dev *)
+  - Bash(./bin/fuse-e2e)
+  - Bash(./bin/fuse-e2e *)
+  - Bash(./bin/minio *)
   - Bash(curl *)
-  - Bash(docker exec jax-minio *)
+  - Bash(docker exec zim-minio *)
+  - Bash(podman exec zim-minio *)
   - Bash(tmux capture-pane *)
   - Bash(tmux has-session *)
+  - Bash(tmux list-windows *)
   - Bash(sleep *)
   - Bash(echo *)
   - Read
@@ -14,101 +19,117 @@ allowed-tools:
   - Glob
 ---
 
-Run end-to-end tests of the dev environment to verify fixtures and cross-node sync.
+Run end-to-end tests of the dev environment: peer-to-peer sync between local
+daemons, and (with the hub) web↔local sync. See `docs/reference/development.md`
+for the full `bin/dev` reference.
 
-Read `docs/DEBUG.md` for dev environment commands and debugging.
+Dev nodes are **`alice`** and **`bob`** (from `bin/dev_/nodes.toml`), each a
+`zim` daemon with its own `$ZIM_HOME` under `data/<nick>/`. The dev binary is
+`target/debug/zim`, built once with `--features hub` (and `fuse` when opted in).
 
-**Expected end state is documented in `bin/dev_/fixtures.toml`** - see the "EXPECTED END STATE" comment at the end of that file for what to verify.
+## IMPORTANT: sync timing & settling
 
-## IMPORTANT: Sync Timing
+P2P sync is **eventually consistent** — give it time:
 
-**Be patient with sync.** P2P discovery and sync takes time in local dev:
-- Wait **at least 60 seconds** after fixtures before checking cross-node sync
-- "No addressing information available" errors are **transient** - they resolve as peers discover each other
-- If app node shows empty bucket list, wait longer (up to 2 minutes)
-- These are NOT errors, just discovery in progress
+- After `seed`, p2p discovery takes a few seconds; the seed step already waits
+  for dialability, but cross-node reads may lag a moment. Re-check, don't panic.
+- "No addressing information available" is **transient** (discovery in progress),
+  not a failure.
+- For web↔local: the daemons' address books are **settled by `zim hub peers
+  sync`** (which `./bin/dev hub enroll` runs for you), NOT instantly at login.
+  Until a daemon has synced the account roster, it won't recognise the web key /
+  sibling devices. If web↔local sync looks stuck, re-run `hub peers sync` (or
+  `./bin/dev hub enroll`) and wait.
 
-## E2E Test Flow
+## Track A — local p2p sync (no docker/hub)
 
-1. `./bin/dev kill --force && ./bin/dev clean` - Clean start
-2. `./bin/dev run --background` - Start nodes
-3. Wait for health: `./bin/dev api full health`
-4. **FUSE detection**: `./bin/dev fuse-check` — reports whether FUSE tests will run
-5. Verify fixtures on full node: `./bin/dev api full list` and `./bin/dev api full ls <id> /docs`
-6. **Wait 60 seconds for sync**: `sleep 60`
-7. Check cross-node sync on app: `./bin/dev api app list`
-8. Check S3 gateway: `curl -s http://localhost:9093/gw/<bucket_id>/docs/readme.md?download=true`
-8b. Check CSV→HTML rendering: `curl -s http://localhost:9093/gw/<bucket_id>/docs/links.csv` — should return an HTML table with `<a href=` links pointing to `/gw/<bucket_id>/docs/...` paths
-8c. Check CSV raw mode: `curl -s "http://localhost:9093/gw/<bucket_id>/docs/links.csv?viewer=false"` — should return rewritten CSV with absolute gateway URLs
-9. Verify blobs in MinIO: `docker exec jax-minio mc ls local/jax-blobs/data/ | head -5`
-10. Check for **real** errors: `./bin/dev logs grep ERROR` - ignore "No addressing information" (transient)
+Fastest signal that core sync works.
 
-## FUSE Filesystem Tests
+1. Clean start: `./bin/dev kill --force && ./bin/dev clean`
+2. Start daemons: `./bin/dev run -b`
+3. Wait for health: `./bin/dev status` (both `alice`/`bob` should be `up`), or
+   poll `curl -sf http://127.0.0.1:17172/_status/livez`.
+4. Seed vaults + shares: `./bin/dev seed`
+   (alice creates `demo` + `notes`, drops content, shares `demo` with bob.)
+5. Verify cross-node sync (give it a few seconds; retry if lagging):
+   - `./bin/dev cli bob vaults list` → should include `demo`
+   - `./bin/dev cli bob vault demo cat /readme.md` → alice's content
+6. Round-trip the other way:
+   - `echo "hi from bob" | ./bin/dev cli bob vault demo add /b.md`
+   - `./bin/dev cli alice vault demo cat /b.md`
+7. Check for real errors: `./bin/dev logs alice` / `./bin/dev logs bob`
+   (ignore transient "No addressing information").
 
-FUSE tests run automatically as part of the fixture system (mount → mount_verify → unmount) when FUSE is available. Use `./bin/dev fuse-check` to determine availability before interpreting fixture results.
+## Track B — full stack: web↔local sync (needs docker + confit)
 
-**FUSE availability depends on two things:**
-1. Platform support: `/dev/fuse` on Linux, `/Library/Filesystems/macfuse.fs` on macOS
-2. Daemon built with fuse feature: check `_status/version` endpoint for `build_features`
+8. One-shot bring-up: `./bin/dev --hub`
+   (daemons → hub up [minio + real OAuth via confit] → seed → `hub enroll`,
+   which writes each node's `hub-session.json` and runs `zim hub peers sync`.)
+   Equivalently, step-by-step: `./bin/dev run -b`, `./bin/dev hub up`,
+   `./bin/dev seed`, `./bin/dev hub enroll`.
+9. Confirm enrollment settled: `./bin/dev cli alice hub peers ls` — the account
+   roster should list the daemons (and the web key once minted), marked
+   `✓ in book`.
+10. Browser (manual): open `http://127.0.0.1:8080`, sign in as the seed user
+    (`$ZIM_DEV_SEED_EMAIL`, default `al@krondor.org`), finish onboarding to mint
+    the web key, open the vault tree. You should see the seeded vaults.
+11. **web → local:** create/edit a file in the browser tree, then
+    `./bin/dev cli alice vault <id> cat /<file>` — the hub announces the new head
+    to shareholder daemons over iroh; they pull it.
+12. **local → web:** `echo hi | ./bin/dev cli alice vault demo add /from-alice.md`,
+    then refresh the web tree. (If it doesn't appear, re-run
+    `./bin/dev cli alice hub peers sync` and wait — the roster settles sync.)
+13. Verify blobs landed in minio: `./bin/minio status`, and
+    `docker exec zim-minio mc ls local/zim-blobs/ | head` (or `podman exec` — the
+    runtime `bin/minio` picked; container is `zim-minio`, bucket `zim-blobs`).
 
-**Reporting rules:**
-- If FUSE is **not available**, report "FUSE tests skipped (not available on this machine)" — this is **NOT a failure**
-- If FUSE **is available** but tests fail, this **IS a failure** and must be reported
-- The test plan in the PR must explicitly state whether FUSE tests ran or were skipped
+## FUSE filesystem tests
 
-FUSE operations are expressed as declarative fixture types in `fixtures.toml`:
-- `fuse_ls` — list a directory
-- `fuse_read` — read a file (optionally verify content)
-- `fuse_write` — write a file (create or overwrite)
-- `fuse_mv` — move/rename a file within mount
-- `fuse_mv_in` — move a file from outside into mount
-- `fuse_mv_out` — move a file from mount to outside
-- `fuse_rm` — delete a file
+FUSE is opt-in. Two ways to exercise it:
 
-Each is a separate `[[fixture]]` entry, making it easy to add new test cases.
+- **Standalone harness (preferred):** `./bin/fuse-e2e` boots a `--features fuse`
+  daemon, mounts a vault, and cross-checks every filesystem op (write/read/mkdir/
+  rm/mv) against the vault via `zim vault … cat/ls`. `--sync` also runs the
+  2-node sync flow; `--keep` leaves the mount up for inspection.
+- **In the dev env:** `./bin/dev run -b --fuse` builds the daemons with mount
+  support, then `zim mount add <vault> <mountpoint>` via the CLI.
 
-## Report Format
+**Availability** needs both (a) the platform lib — `/Library/Filesystems/macfuse.fs`
+on macOS, `/dev/fuse` + libfuse on Linux — and (b) a daemon built with `--features
+fuse`. If FUSE isn't available, report "FUSE tests skipped (not available)" —
+that is **not** a failure. If it IS available but a mount op fails, that **is** a
+failure.
+
+## Report format
 
 ```
 ## E2E Test Results
 
-### Node Health
-- full: [OK/FAIL]
-- app: [OK/FAIL]
-- gw: [OK/FAIL]
+### Daemon health
+- alice: [up/down]
+- bob:   [up/down]
 
-### Fixtures (on full node)
-- Bucket created: [yes/no]
-- Files uploaded: [yes/no]
-- Move operation: [yes/no]
+### Local p2p sync (Track A)
+- Seed applied (demo/notes created + shared): [yes/no]
+- bob sees `demo`: [yes/no]
+- bob reads alice's /readme.md: [yes/no]
+- bob→alice round-trip (/b.md): [pass/fail]
 
-### Cross-Node Sync (after 60s wait)
-- App sees bucket: [yes/no]
-- App can read files: [yes/no]
-- Gateway (S3) sees bucket: [yes/no]
-- Gateway (S3) can read files: [yes/no]
+### Web↔local sync (Track B — if run)
+- Hub up (http://127.0.0.1:8080): [yes/no/skipped]
+- Enrollment settled (`hub peers ls` shows roster ✓): [yes/no]
+- Web signed in + web key minted: [yes/no/manual]
+- web→local (browser edit visible via `cli … cat`): [pass/fail/skipped]
+- local→web (daemon add visible in tree): [pass/fail/skipped]
+- Blobs in minio (zim-blobs): [yes/no]
 
-### Gateway Content Transforms
-- CSV→HTML rendering: [pass/fail] (links.csv returns HTML table with clickable links)
-- CSV raw rewrite: [pass/fail] (links.csv?viewer=false returns CSV with absolute gateway URLs)
-
-### S3 Storage
-- Blobs in MinIO: [yes/no]
-
-### FUSE Filesystem (if available)
-- FUSE detected: [yes/no/skipped — not available on this machine]
-- Mount created: [yes/no/skipped]
-- Directory listing: [pass/fail/skipped]
-- File read: [pass/fail/skipped]
-- File write: [pass/fail/skipped]
-- File rename (create → mv): [pass/fail/skipped]
-- File overwrite: [pass/fail/skipped]
-- File delete: [pass/fail/skipped]
-- Unmount clean: [yes/no/skipped]
+### FUSE (if available)
+- FUSE available: [yes/no/skipped — not available]
+- `./bin/fuse-e2e`: [pass/fail/skipped]
 
 ### Errors
-[List REAL errors only - NOT "No addressing information available" which is transient]
+[Real errors only — NOT transient "No addressing information available"]
 
 ### Summary
-[PASS/FAIL] - [description]
+[PASS/FAIL] — [description]
 ```

@@ -20,29 +20,43 @@ MINIO_IMAGE_NAME=minio/minio:latest
 MINIO_BUCKET_NAME="${PROJECT_NAME}-blobs"
 
 # Pick a container runtime. `ZIM_CONTAINER_RUNTIME` forces one;
-# otherwise prefer whichever actually responds (`<runtime> ps`
-# succeeding means the binary exists AND its daemon/machine is up —
-# a docker CLI with a stopped daemon shouldn't shadow a running
-# podman). Fall back to whichever binary merely exists so the
-# error message in check_runtime names something sensible.
+# otherwise we prefer **podman** (its CoreOS VM runs chrony and doesn't
+# suffer Docker Desktop's post-sleep clock drift, which makes minio's
+# S3 signatures fail with RequestTimeTooSkewed). We pick whichever
+# actually responds first (`<runtime> ps` succeeding means the binary
+# exists AND its daemon/machine is up — a stopped podman shouldn't
+# shadow a running docker). Fall back to whichever binary merely exists
+# so the error message in check_runtime names something sensible.
+# Run a command with a time bound so a wedged daemon (e.g. Docker Desktop
+# mid-start, where `docker ps` hangs forever instead of erroring) can't
+# stall the whole script. Uses `timeout`/`gtimeout` when present; degrades
+# to running bare (original behaviour) where neither exists.
+function bounded {
+    local secs="$1"; shift
+    if command -v timeout &>/dev/null; then timeout "$secs" "$@"
+    elif command -v gtimeout &>/dev/null; then gtimeout "$secs" "$@"
+    else "$@"
+    fi
+}
+
 function pick_runtime {
     if [[ -n "${ZIM_CONTAINER_RUNTIME:-}" ]]; then
         echo "$ZIM_CONTAINER_RUNTIME"
         return
     fi
-    for rt in docker podman; do
-        if command -v "$rt" &>/dev/null && "$rt" ps &>/dev/null; then
+    for rt in podman docker; do
+        if command -v "$rt" &>/dev/null && bounded 5 "$rt" ps &>/dev/null; then
             echo "$rt"
             return
         fi
     done
-    for rt in docker podman; do
+    for rt in podman docker; do
         if command -v "$rt" &>/dev/null; then
             echo "$rt"
             return
         fi
     done
-    echo "docker"
+    echo "podman"
 }
 CONTAINER_RUNTIME="$(pick_runtime)"
 
@@ -58,10 +72,10 @@ fi
 
 # Verify the chosen runtime is actually usable
 function check_runtime {
-    if ! $CONTAINER_RUNTIME ps &>/dev/null; then
+    if ! bounded 5 $CONTAINER_RUNTIME ps &>/dev/null; then
         echo -e "${RED}Error: no working container runtime.${NC}"
         echo "  tried: $CONTAINER_RUNTIME (install/start docker or podman," >&2
-        echo "  or force one with ZIM_CONTAINER_RUNTIME=podman)" >&2
+        echo "  or force one with ZIM_CONTAINER_RUNTIME=docker)" >&2
         exit 1
     fi
 }

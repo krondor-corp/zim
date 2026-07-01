@@ -13,16 +13,14 @@ use bytes::Bytes;
 use zim_core::blobs::BlobsProvider;
 use zim_core::fs::AbsPath;
 use zim_crypto::PrivateKey;
-use zim_peer::peers::MemoryPeerStore;
 use zim_peer::{MemoryVaultLog, Vault, VaultLog};
 
 use zim_peer::{Effect, Peer};
 
-async fn make_peer(blobs: BlobsProvider) -> anyhow::Result<Peer<MemoryVaultLog, MemoryPeerStore>> {
+async fn make_peer(blobs: BlobsProvider) -> anyhow::Result<Peer<MemoryVaultLog>> {
     Peer::builder()
         .with_secret(PrivateKey::generate())
         .with_log(MemoryVaultLog::new())
-        .with_peers(MemoryPeerStore::new())
         .with_blobs(blobs)
         .build()
         .await

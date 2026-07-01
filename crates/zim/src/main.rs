@@ -78,17 +78,18 @@ fn init_tracing(log_path: Option<PathBuf>) -> Option<WorkerGuard> {
     use tracing_subscriber::util::SubscriberInitExt;
     use tracing_subscriber::{fmt, EnvFilter, Layer};
 
-    // Default: all our crates at INFO, everything else at WARN.
-    // `zim=info` alone would silence `zim_peer` /
-    // `zim_core` — exactly the modules doing the interesting
-    // background work (pulls, share-offers, announces). Override via
-    // `ZIM_LOG`, e.g. `ZIM_LOG=zim=debug,zim_peer=debug` for chatty
-    // debugging.
-    let filter = || {
-        EnvFilter::try_from_env("ZIM_LOG").unwrap_or_else(|_| {
-            EnvFilter::new("zim=info,zim_peer=info,zim_core=info,zim_crypto=info,warn")
-        })
+    // Default: all our crates at INFO (DEBUG in debug builds),
+    // everything else at WARN. `zim=info` alone would silence
+    // `zim_peer` / `zim_core` — exactly the modules doing the
+    // interesting background work (pulls, share-offers, announces).
+    // Override via `ZIM_LOG`, e.g. `ZIM_LOG=zim=trace,zim_peer=trace`.
+    const DEFAULT_FILTER: &str = if cfg!(debug_assertions) {
+        "zim=debug,zim_peer=debug,zim_core=debug,zim_crypto=debug,warn"
+    } else {
+        "zim=info,zim_peer=info,zim_core=info,zim_crypto=info,warn"
     };
+    let filter =
+        || EnvFilter::try_from_env("ZIM_LOG").unwrap_or_else(|_| EnvFilter::new(DEFAULT_FILTER));
     let stderr_layer = fmt::layer()
         .with_writer(std::io::stderr)
         .with_filter(filter());

@@ -8,6 +8,8 @@
 //! tests.
 
 mod memory;
+mod sqlite;
 pub use memory::MemoryPeerStore;
+pub use sqlite::SqlitePeerStore;
 
 pub use zim_core::peers::{PeerEntry, PeerStore, PeerStoreError};

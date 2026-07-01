@@ -10,6 +10,7 @@ This directory contains detailed documentation about Zim's architecture and desi
 | [Data Model](./data-model.md) | Buckets, Manifests, Nodes, Pins, and Bucket Log |
 | [Cryptography](./cryptography.md) | Identity, key sharing, and content encryption |
 | [Synchronization](./synchronization.md) | Peer structure and sync protocol |
+| [Acceptance and Sharing](./acceptance-and-sharing.md) | `AcceptPolicy` hook, recipient routing, share population |
 | [Conflict Resolution](./conflict-resolution.md) | Pluggable conflict handling for concurrent edits |
 | [Security](./security.md) | Threat model, best practices, and implementation details |
 

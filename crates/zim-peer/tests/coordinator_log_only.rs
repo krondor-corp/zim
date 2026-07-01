@@ -11,20 +11,30 @@ use zim_crypto::PublicKey;
 use zim_core::blobs::BlobsProvider;
 use zim_core::linked_data::{Hash, Link, LD_RAW_CODEC};
 use zim_core::vault::{Head, VaultId};
-use zim_peer::peers::MemoryPeerStore;
-use zim_peer::{MemoryVaultLog, VaultLog};
+use zim_peer::{AcceptAll, AcceptPolicy, IncomingSync, MemoryVaultLog, VaultLog};
 
 use zim_peer::coordinator::{MemoryPeerSender, SentMessage};
-use zim_peer::messages::{AncestorReply, AncestorRequest, HeadRequest, ProbeRequest, ShareOffered};
-use zim_peer::peers::PeerStore;
+use zim_peer::messages::{AncestorReply, AncestorRequest, HeadAdvanced, HeadRequest, ProbeRequest};
 use zim_peer::{Effect, SyncCoordinator};
 
+/// Test policy that rejects every push — stands in for "sender not
+/// allowed". The address-book-aware policy lives in the daemon.
+#[derive(Debug)]
+struct RejectAll;
+
+#[async_trait::async_trait]
+impl AcceptPolicy for RejectAll {
+    async fn accept_sync(&self, _sync: &IncomingSync) -> bool {
+        false
+    }
+}
+
 fn link(byte: u8) -> Link {
-    Link::new(LD_RAW_CODEC, Hash::new([byte; 32]))
+    Link::new(LD_RAW_CODEC, Hash::new(&[byte; 32]))
 }
 
 fn test_vault_id(byte: u8) -> zim_core::vault::VaultId {
-    zim_core::vault::VaultId::from_hash(zim_core::linked_data::Hash::new([byte; 32]))
+    zim_core::vault::VaultId::from_hash(zim_core::linked_data::Hash::new(&[byte; 32]))
 }
 
 async fn populate(log: &MemoryVaultLog, id: VaultId, heights: &[u8]) {
@@ -38,16 +48,18 @@ async fn populate(log: &MemoryVaultLog, id: VaultId, heights: &[u8]) {
     }
 }
 
-async fn make_coordinator() -> (
-    Arc<SyncCoordinator<MemoryVaultLog, MemoryPeerStore>>,
-    Arc<MemoryPeerSender>,
-) {
+async fn make_coordinator() -> (Arc<SyncCoordinator<MemoryVaultLog>>, Arc<MemoryPeerSender>) {
+    make_coordinator_with(Arc::new(AcceptAll)).await
+}
+
+async fn make_coordinator_with(
+    accept: Arc<dyn AcceptPolicy>,
+) -> (Arc<SyncCoordinator<MemoryVaultLog>>, Arc<MemoryPeerSender>) {
     // BlobsProvider::memory() is async + cheap. Endpoint construction
     // is the expensive bit; the log-only handlers never touch it, so
     // we can supply a real one and only pay the bind cost once.
     let blobs = BlobsProvider::memory().await.unwrap();
     let log = MemoryVaultLog::new();
-    let peers = MemoryPeerStore::new();
     let secret = zim_crypto::PrivateKey::generate();
     let iroh_secret = zim_core::iroh::to_iroh_secret_key(&secret);
     let endpoint = zim_core::iroh::Endpoint::builder()
@@ -57,7 +69,7 @@ async fn make_coordinator() -> (
         .unwrap();
     let sender = Arc::new(MemoryPeerSender::default());
     let (coord, _effect_rx) =
-        SyncCoordinator::new(blobs, log, peers, endpoint, secret, sender.clone(), 16);
+        SyncCoordinator::new(blobs, log, accept, endpoint, secret, sender.clone(), 16);
     (coord, sender)
 }
 
@@ -203,7 +215,8 @@ async fn announce_head_effect_dispatches_via_peer_sender() {
         .execute(Effect::AnnounceHead {
             peer_id,
             vault_id,
-            head: Head::new(link(42), 42),
+            head: Box::new(Head::new(link(42), 42)),
+            recipient: peer_id,
         })
         .await
         .unwrap();
@@ -214,22 +227,23 @@ async fn announce_head_effect_dispatches_via_peer_sender() {
 }
 
 #[tokio::test]
-async fn share_offered_from_unknown_peer_is_dropped() {
-    // Spam gate: a `ShareOffered` for a brand-new vault from a peer
-    // not in our peer book must be a no-op. We can't verify the
-    // bootstrap *didn't* run by checking blobs (the test doesn't have
-    // the matching ciphertext anyway), so we assert via the side
-    // effect: the log still doesn't know the vault id afterward.
-    let (coord, _sender) = make_coordinator().await;
+async fn head_advanced_rejected_by_policy_is_dropped() {
+    // Acceptance hook: a `HeadAdvanced` the policy rejects must be a
+    // no-op. We can't verify the bootstrap *didn't* run by checking
+    // blobs (the test doesn't have the matching ciphertext anyway), so
+    // we assert via the side effect: the log still doesn't know the
+    // vault id afterward.
+    let (coord, _sender) = make_coordinator_with(Arc::new(RejectAll)).await;
     let stranger: PublicKey = zim_crypto::PrivateKey::generate().public();
     let vault_id = test_vault_id(9);
 
     let _: zim_peer::Ack = coord
-        .handle_share_offered(
+        .handle_head_advanced(
             stranger,
-            ShareOffered {
+            HeadAdvanced {
                 vault_id,
                 head: Head::new(link(7), 0),
+                recipient: stranger,
             },
         )
         .await;
@@ -238,30 +252,23 @@ async fn share_offered_from_unknown_peer_is_dropped() {
 }
 
 #[tokio::test]
-async fn share_offered_from_known_peer_attempts_bootstrap() {
-    // Known peer: the gate lets the call through. The bootstrap then
-    // fails at "download head manifest blob" because our test
-    // `MemoryPeerSender` has no blobs — but the gate has already
-    // done its job. After the refactor `handle_share_offered`
-    // returns `Ack` (errors are logged, not surfaced) — observe the
-    // failure via the post-condition: vault id stays unknown in our
-    // log.
-    let (coord, _sender) = make_coordinator().await;
-    let friend_sk = zim_crypto::PrivateKey::generate();
-    let friend: PublicKey = friend_sk.public();
-    coord
-        .peers()
-        .upsert("friend", zim_did::Identity::Key(friend), None)
-        .await
-        .unwrap();
+async fn head_advanced_accepted_by_policy_attempts_bootstrap() {
+    // Accepted: the hook lets the call through and enqueues a background
+    // `PullFromPeer`. This test drops the effect receiver, so nothing
+    // drains it — the pull never runs and the vault stays unknown. We're
+    // asserting the hook *accepted* (returned `Ack` without dropping),
+    // in contrast to the rejected case above.
+    let (coord, _sender) = make_coordinator().await; // AcceptAll
+    let friend: PublicKey = zim_crypto::PrivateKey::generate().public();
 
     let fresh_id = test_vault_id(10);
     let _: zim_peer::Ack = coord
-        .handle_share_offered(
+        .handle_head_advanced(
             friend,
-            ShareOffered {
+            HeadAdvanced {
                 vault_id: fresh_id,
                 head: Head::new(link(7), 0),
+                recipient: friend,
             },
         )
         .await;

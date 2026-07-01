@@ -9,6 +9,11 @@
 #                                    re-run `zim` immediately — no reinstall)
 #   ./bin/install --offline         pass --offline + --locked to cargo install
 #
+# Debug builds (--dev) are isolated: they default their data dir to
+# ~/.config/zim/debug (vs ~/.config/zim for release), log at DEBUG, and
+# expose `zim clean` to wipe that dir. So a dev binary never clobbers a
+# release install's state.
+#
 # After install:
 #   zim --help              # see all commands
 
@@ -65,7 +70,9 @@ if [[ "$mode" == "dev" ]]; then
     ln -s "$local_bin" "$TARGET"
     echo -e "${GREEN}Installed (dev symlink):${NC} $TARGET -> $local_bin"
     echo
-    echo "Iterate with: cargo build -p zim   (then re-run \`zim …\`)"
+    echo "Debug profile: data dir defaults to ~/.config/zim/debug, DEBUG logs."
+    echo "Wipe it with:  zim clean        (dry run; add --yes to delete)"
+    echo "Iterate with:  cargo build -p zim   (then re-run \`zim …\`)"
 else
     echo -e "${BLUE}Installing zim (release) via cargo install…${NC}"
     cargo install --path crates/zim --bin zim --force "${extra_flags[@]}"

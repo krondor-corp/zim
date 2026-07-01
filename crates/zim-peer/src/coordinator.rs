@@ -30,17 +30,17 @@ use zim_crypto::{PrivateKey, PublicKey};
 
 use zim_core::blobs::{BlobStore, BlobsProvider};
 use zim_core::fs::{Manifest, MergeResult};
-use zim_core::iroh::{Downloader, Endpoint, Hash, Shuffled};
+use zim_core::iroh::{Downloader, Endpoint, Shuffled};
 use zim_core::linked_data::Link;
 use zim_core::vault::{Head, VaultId, VaultLog};
 
+use crate::accept::{AcceptPolicy, IncomingSync};
 use crate::chain;
 use crate::effect::Effect;
 use crate::messages::{
     Ack, AncestorReply, AncestorRequest, HeadAdvanced, HeadReply, HeadRequest, PingRequest,
-    PongReply, ProbeReply, ProbeRequest, ShareOffered,
+    PongReply, ProbeReply, ProbeRequest,
 };
-use crate::peers::PeerStore;
 use crate::wire_protocol::PeerSender;
 use crate::Vault;
 
@@ -64,13 +64,18 @@ impl Default for DaemonInfo {
     }
 }
 
-/// The coordinator. Generic over `L: VaultLog` and `P: PeerStore`.
-pub struct SyncCoordinator<L: VaultLog + 'static, P: PeerStore + 'static> {
+/// The coordinator. Generic over `L: VaultLog`. Inbound acceptance is a
+/// trait object ([`AcceptPolicy`]) supplied by the binary — the protocol
+/// owns no address book.
+pub struct SyncCoordinator<L: VaultLog + 'static> {
     blobs: BlobsProvider,
     log: L,
-    peers: P,
     endpoint: Endpoint,
     secret: PrivateKey,
+    /// Decides whether to accept an inbound push. The daemon supplies a
+    /// contacts-backed policy, the hub a `user_peers`-backed one, tests
+    /// the permissive [`AcceptAll`](crate::AcceptAll).
+    accept: Arc<dyn AcceptPolicy>,
     peer_sender: Arc<dyn PeerSender>,
     /// Outbound queue for background effects. Cloned on every
     /// `submit` so the channel survives even if the runner exits.
@@ -78,11 +83,10 @@ pub struct SyncCoordinator<L: VaultLog + 'static, P: PeerStore + 'static> {
     info: DaemonInfo,
 }
 
-impl<L, P> SyncCoordinator<L, P>
+impl<L> SyncCoordinator<L>
 where
     L: VaultLog + Clone + 'static,
     L::Error: std::error::Error + Send + Sync + 'static,
-    P: PeerStore + 'static,
 {
     /// Build a coordinator. Returns `(coordinator, effect_rx)`. The
     /// caller should spawn [`run_effects`] with the receiver to start
@@ -91,7 +95,7 @@ where
     pub fn new(
         blobs: BlobsProvider,
         log: L,
-        peers: P,
+        accept: Arc<dyn AcceptPolicy>,
         endpoint: Endpoint,
         secret: PrivateKey,
         peer_sender: Arc<dyn PeerSender>,
@@ -100,7 +104,7 @@ where
         Self::new_with_info(
             blobs,
             log,
-            peers,
+            accept,
             endpoint,
             secret,
             peer_sender,
@@ -116,7 +120,7 @@ where
     pub fn new_with_info(
         blobs: BlobsProvider,
         log: L,
-        peers: P,
+        accept: Arc<dyn AcceptPolicy>,
         endpoint: Endpoint,
         secret: PrivateKey,
         peer_sender: Arc<dyn PeerSender>,
@@ -127,9 +131,9 @@ where
         let coord = Arc::new(Self {
             blobs,
             log,
-            peers,
             endpoint,
             secret,
+            accept,
             peer_sender,
             effect_tx,
             info,
@@ -139,10 +143,6 @@ where
 
     pub fn log(&self) -> &L {
         &self.log
-    }
-
-    pub fn peers(&self) -> &P {
-        &self.peers
     }
 
     pub fn blobs(&self) -> &BlobsProvider {
@@ -211,11 +211,36 @@ where
         }
     }
 
-    /// One-way push handler: enqueue a follow-up pull and return
-    /// `Ack`. The actual sync happens on the background runner;
-    /// failures to enqueue are logged but not surfaced to the sender
-    /// (their copy of the head is no longer load-bearing).
+    /// One-way push handler — the *sole* notify path. Turns a head
+    /// advance into a follow-up `PullFromPeer`, which fast-forwards a
+    /// vault we know or bootstraps one we don't.
+    ///
+    /// Every push is run past the [`AcceptPolicy`]; a `false` drops it
+    /// silently. The policy gets `known_vault` so it can fast-path
+    /// already-mirrored vaults if it wants — but it runs on *every*
+    /// push, so a first-time share to a new `recipient` on an existing
+    /// vault is still seen. The wire layer always sees an `Ack`; the
+    /// sender gates nothing on it.
     pub async fn handle_head_advanced(&self, sender: PublicKey, req: HeadAdvanced) -> Ack {
+        let known_vault = self.log.exists(req.vault_id).await.unwrap_or(false);
+        let accepted = self
+            .accept
+            .accept_sync(&IncomingSync {
+                sender,
+                recipient: req.recipient,
+                vault_id: req.vault_id,
+                known_vault,
+            })
+            .await;
+        if !accepted {
+            tracing::info!(
+                sender = %sender.to_hex(),
+                recipient = %req.recipient.to_hex(),
+                vault_id = %req.vault_id,
+                "HeadAdvanced dropped by accept policy"
+            );
+            return Ack;
+        }
         if let Err(e) = self
             .submit(Effect::PullFromPeer {
                 vault_id: req.vault_id,
@@ -226,84 +251,6 @@ where
             tracing::warn!("failed to enqueue PullFromPeer: {e}");
         }
         Ack
-    }
-
-    /// Bootstrap a vault we've never seen, from a [`ShareOffered`]
-    /// push another peer just sent us. Walks the manifest chain back
-    /// to genesis (populating the log), then registers the vault in
-    /// the coordinator so it appears in `list_vaults`.
-    ///
-    /// **Synchronous v1.** Read availability waits for the chain walk
-    /// to complete — alice unreachable mid-walk leaves the vault
-    /// missing on bob's side until she comes back. Tracked under
-    /// `docs/research/optimistic-share-acceptance.md`.
-    ///
-    /// Errors are logged here; the wire layer always sees an `Ack`
-    /// because the sender doesn't gate anything on success. (Alice
-    /// has already forgotten the offer by the time her Ack flushes.)
-    pub async fn handle_share_offered(&self, sender: PublicKey, req: ShareOffered) -> Ack {
-        if let Err(e) = self.share_offered_inner(sender, req).await {
-            tracing::warn!("share_offered bootstrap failed: {e}");
-        }
-        Ack
-    }
-
-    async fn share_offered_inner(
-        &self,
-        sender: PublicKey,
-        req: ShareOffered,
-    ) -> anyhow::Result<()> {
-        let ShareOffered { vault_id, head } = req;
-
-        // If we already know this vault, treat the offer as a hint
-        // about a possibly-newer head: queue a normal pull from the
-        // sender and return. No re-bootstrap needed. We accept hints
-        // from any peer — they're cheap and the sender must have
-        // already passed the chain-validity check at our last sync.
-        if self.log.exists(vault_id).await.unwrap_or(false) {
-            return self
-                .submit(Effect::PullFromPeer {
-                    vault_id,
-                    peer_id: sender,
-                })
-                .await;
-        }
-
-        // Fresh vault: spam gate. A cold bootstrap walks the chain
-        // back to genesis and persists every manifest blob — too
-        // expensive to do on demand for anyone on the wire. Drop the
-        // offer unless we've explicitly added the sender to our peer
-        // book. The sender still gets an Ack from the wire layer; we
-        // just silently refuse to bootstrap.
-        match self.peers.knows(&sender).await {
-            Ok(true) => {}
-            Ok(false) => {
-                tracing::info!(
-                    sender = %sender.to_hex(),
-                    vault_id = %vault_id,
-                    "ShareOffered from unknown peer dropped (not in peer book)"
-                );
-                return Ok(());
-            }
-            Err(e) => {
-                tracing::warn!(
-                    sender = %sender.to_hex(),
-                    "peer book lookup failed, dropping ShareOffered: {e}"
-                );
-                return Ok(());
-            }
-        }
-
-        // Fresh vault from a known peer: walk the chain back to
-        // genesis, fetching each manifest blob from the sender and
-        // appending it into the log. Once that returns, the log is
-        // populated and the vault is openable through the normal
-        // `open_vault` path. No working copy needed for the walk —
-        // manifests are signed plaintext.
-        self.apply_chain(vault_id, head, None, vec![sender])
-            .await
-            .map_err(|e| anyhow::anyhow!("apply_chain bootstrap for {vault_id}: {e}"))?;
-        Ok(())
     }
 
     /// Reply to `Ping`. Renders identity from our own keypair and
@@ -373,21 +320,18 @@ where
                 peer_id,
                 vault_id,
                 head,
+                recipient,
             } => {
                 let _: Ack = self
                     .peer_sender
-                    .send_head_advanced(peer_id, HeadAdvanced { vault_id, head })
-                    .await?;
-                Ok(())
-            }
-            Effect::OfferShare {
-                peer_id,
-                vault_id,
-                head,
-            } => {
-                let _: Ack = self
-                    .peer_sender
-                    .send_share_offered(peer_id, ShareOffered { vault_id, head })
+                    .send_head_advanced(
+                        peer_id,
+                        HeadAdvanced {
+                            vault_id,
+                            head: *head,
+                            recipient,
+                        },
+                    )
                     .await?;
                 Ok(())
             }
@@ -432,9 +376,9 @@ where
         // already in the log (the shareholder happy path), `Vault::open`
         // does the work; on `ShareNotFound` we're a relay (hub) and
         // delegate to the log-only `relay_pull`. If the vault is
-        // *not* in the log yet (first-time bootstrap from a
-        // `ShareOffered` push), download the head manifest blob and
-        // open against it directly.
+        // *not* in the log yet (first-time bootstrap from an
+        // address-book peer's `HeadAdvanced`), download the head
+        // manifest blob and open against it directly.
         let open_result = if self.log.exists(vault_id).await? {
             Vault::open(vault_id, self.blobs.clone(), self.log.clone(), &self.secret).await
         } else {
@@ -579,7 +523,11 @@ where
 
         for (manifest, link) in &manifests {
             self.append_manifest(vault_id, manifest, link).await?;
-            self.download_pins(manifest).await?;
+            // `peer_ids` is the source we pulled the chain from (the
+            // announcer — a relay/hub mirrors every blob). Pass it as an
+            // extra provider so content is fetchable even when the
+            // manifest's own shareholders are all browsers/offline.
+            self.download_pins(manifest, &peer_ids).await?;
         }
 
         Ok(())
@@ -634,7 +582,11 @@ where
         Ok(())
     }
 
-    async fn download_hash(&self, hash: Hash, peer_ids: &[PublicKey]) -> anyhow::Result<()> {
+    async fn download_hash(
+        &self,
+        hash: zim_core::linked_data::Hash,
+        peer_ids: &[PublicKey],
+    ) -> anyhow::Result<()> {
         if self.blobs.stat(&hash).await.unwrap_or(false) {
             return Ok(());
         }
@@ -645,7 +597,10 @@ where
                 .map(zim_core::iroh::to_iroh_public_key)
                 .collect(),
         );
-        downloader.download(hash, discovery).await?;
+        // `Downloader` speaks iroh hashes; convert at the boundary (the
+        // codebase convention — see `blobs::provider`).
+        let iroh_hash = zim_core::iroh::Hash::from(hash);
+        downloader.download(iroh_hash, discovery).await?;
         Ok(())
     }
 
@@ -709,19 +664,55 @@ where
         Ok(manifests)
     }
 
-    async fn download_pins(&self, manifest: &Manifest) -> anyhow::Result<()> {
-        let peer_ids: Vec<PublicKey> = manifest
+    async fn download_pins(
+        &self,
+        manifest: &Manifest,
+        source_peers: &[PublicKey],
+    ) -> anyhow::Result<()> {
+        // Providers are share **reach** targets, not recipients. A browser
+        // share's recipient has no iroh endpoint; its `via` host (the hub)
+        // is what mirrors the blobs. Using `reach()` folds the relay in and
+        // leaves dead/undialable recipients to be skipped by the downloader.
+        // `source_peers` (whoever we pulled the chain from) is added too —
+        // a relay that mirrors the vault holds every blob but may not be a
+        // shareholder, so it wouldn't appear via `reach()` alone.
+        let mut peer_ids: Vec<PublicKey> = manifest
             .shares()
             .iter()
-            .filter_map(|(_, share)| share.identity().pubkey().copied())
+            .filter_map(|(_, share)| share.reach().copied())
+            .chain(source_peers.iter().copied())
             .collect();
+        peer_ids.sort();
+        peer_ids.dedup();
+
+        tracing::debug!(
+            height = manifest.height(),
+            pins = manifest.pins().iter().count(),
+            providers = peer_ids.len(),
+            sources = source_peers.len(),
+            "download_pins: fetching content blobs"
+        );
 
         if peer_ids.is_empty() {
             return Ok(());
         }
 
+        // One unavailable pin must not abort the rest — an offline or dead
+        // shareholder shouldn't starve the whole vault. Log + continue; the
+        // working copy materialises whatever it could fetch, and a later
+        // pull retries the gaps.
+        let mut failed = 0usize;
         for hash in manifest.pins().iter() {
-            self.download_hash(*hash, &peer_ids).await?;
+            if let Err(e) = self.download_hash(*hash, &peer_ids).await {
+                tracing::warn!(hash = %hash, "download_pins: pin unavailable, skipping: {e}");
+                failed += 1;
+            }
+        }
+        if failed > 0 {
+            tracing::warn!(
+                failed,
+                "download_pins: some pins unavailable (will retry on next pull)"
+            );
         }
 
         Ok(())
@@ -739,14 +730,13 @@ where
 /// interface (consume effects from a channel); the implementation
 /// changes behind the trait. See the comment in `Cargo.toml` for the
 /// scope of that swap.
-pub async fn run_effects<L, P>(
-    coord: Arc<SyncCoordinator<L, P>>,
+pub async fn run_effects<L>(
+    coord: Arc<SyncCoordinator<L>>,
     mut rx: mpsc::Receiver<Effect>,
     mut shutdown_rx: tokio::sync::watch::Receiver<()>,
 ) where
     L: VaultLog + Clone + 'static,
     L::Error: std::error::Error + Send + Sync + 'static,
-    P: PeerStore + 'static,
 {
     loop {
         tokio::select! {
@@ -787,7 +777,6 @@ pub enum SentMessage {
     Probe(PublicKey, ProbeRequest),
     Ancestor(PublicKey, AncestorRequest),
     HeadAdvanced(PublicKey, HeadAdvanced),
-    ShareOffered(PublicKey, ShareOffered),
     Ping(PublicKey, PingRequest),
 }
 
@@ -840,17 +829,6 @@ impl PeerSender for MemoryPeerSender {
             .write()
             .await
             .push(SentMessage::HeadAdvanced(peer_id, req));
-        Ok(Ack)
-    }
-    async fn send_share_offered(
-        &self,
-        peer_id: PublicKey,
-        req: ShareOffered,
-    ) -> anyhow::Result<Ack> {
-        self.sent
-            .write()
-            .await
-            .push(SentMessage::ShareOffered(peer_id, req));
         Ok(Ack)
     }
     async fn send_ping(&self, peer_id: PublicKey, req: PingRequest) -> anyhow::Result<PongReply> {

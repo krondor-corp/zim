@@ -13,8 +13,8 @@
 
 use zim_core::blobs::{BlobStore, BlobsProvider};
 use zim_core::fs::Manifest;
-use zim_core::iroh::{Downloader, Endpoint, Hash, Shuffled};
-use zim_core::linked_data::Link;
+use zim_core::iroh::{Downloader, Endpoint, Shuffled};
+use zim_core::linked_data::{Hash, Link};
 use zim_core::vault::{Head, VaultId, VaultLog};
 use zim_crypto::PublicKey;
 
@@ -148,6 +148,8 @@ async fn download_hash(
             .map(zim_core::iroh::to_iroh_public_key)
             .collect(),
     );
-    downloader.download(hash, discovery).await?;
+    downloader
+        .download(iroh_blobs::Hash::from(hash), discovery)
+        .await?;
     Ok(())
 }

@@ -24,11 +24,20 @@ pub struct AppConfig {
     pub log_level: String,
 }
 
+/// Default `log_level` baked into a fresh `config.toml`. Debug builds
+/// default to `debug` so a locally-installed dev binary is chatty out
+/// of the box; release stays at `info`.
+const DEFAULT_LOG_LEVEL: &str = if cfg!(debug_assertions) {
+    "debug"
+} else {
+    "info"
+};
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             api_port: DEFAULT_API_PORT,
-            log_level: "info".to_string(),
+            log_level: DEFAULT_LOG_LEVEL.to_string(),
         }
     }
 }

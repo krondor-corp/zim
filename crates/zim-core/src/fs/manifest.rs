@@ -9,8 +9,9 @@
 //!   a declared id would be forgeable, while ancestry is not (see
 //!   `zim_core::vault::VaultId`). Genesis carries a random `nonce`
 //!   so identical-content vaults can't collide on the derived id.
-//! - **Access control** — [`Shares`] map (peer → encrypted vault secret)
-//!   and [`Relay`] list (peers authorized to mirror published content).
+//! - **Access control** — [`Shares`] map (peer → encrypted vault secret).
+//!   A hosted client's share carries a `via` host, folding the old
+//!   separate relay list into the share itself.
 //! - **Content pointers** — [`Link`] to the root dir body, [`Pins`] of
 //!   blobs that live outside this manifest, inline
 //!   [`Metadata`](super::content_store::Metadata) pack of dir bodies,
@@ -38,7 +39,7 @@ use super::content_store::Metadata;
 use super::entry::Entry;
 use super::pins::Pins;
 use super::published::Published;
-use super::share::{Relay, Share};
+use super::share::Share;
 
 /// Version type for manifest bookkeeping (kept as a string alias).
 pub type Version = String;
@@ -138,10 +139,10 @@ pub struct Manifest {
     height: u64,
     /// Software version for compatibility checking.
     version: Version,
-    /// Map of peer public keys (hex) to their shares.
+    /// Map of peer public keys (hex) to their shares. A hosted client's
+    /// share carries a `via` host — relays are folded in here, not a
+    /// separate list.
     shares: Shares,
-    #[serde(default, skip_serializing_if = "Vec::is_empty", alias = "mirrors")]
-    relays: Vec<Relay>,
     /// Link to the root [`Dir`](Dir) of the file tree.
     root: Link,
     /// Pinned content hashes (inline).
@@ -183,10 +184,9 @@ impl Manifest {
             name,
             shares: {
                 let mut s = Shares::new();
-                s.insert(owner, Share::new(share, Identity::Key(owner)));
+                s.insert(owner, Share::new(share, Identity::Key(owner), None));
                 s
             },
-            relays: Vec::new(),
             root,
             pins: Pins::default(),
             previous: Link::default(),
@@ -311,37 +311,17 @@ impl Manifest {
         self.shares.insert(pubkey, share);
     }
 
-    pub fn relays(&self) -> &[Relay] {
-        &self.relays
-    }
-
-    pub fn add_relay(&mut self, relay: Relay) {
-        if !self.relays.contains(&relay) {
-            self.relays.push(relay);
-        }
-    }
-
-    pub fn remove_relay(&mut self, public_key: &PublicKey) -> bool {
-        if let Some(idx) = self
-            .relays
-            .iter()
-            .position(|r| r.identity().pubkey() == Some(public_key))
-        {
-            self.relays.remove(idx);
-            true
-        } else {
-            false
-        }
-    }
-
     pub fn has_share(&self, public_key: &PublicKey) -> bool {
         self.shares.contains_key(public_key)
     }
 
-    pub fn is_relay(&self, public_key: &PublicKey) -> bool {
-        self.relays
+    /// True if `public_key` is the `via` host of any share — i.e. this
+    /// peer relays/mirrors this vault on a hosted client's behalf. The
+    /// hub uses this to decide whether it should mirror a vault.
+    pub fn is_via(&self, public_key: &PublicKey) -> bool {
+        self.shares
             .iter()
-            .any(|r| r.identity().pubkey() == Some(public_key))
+            .any(|(_, s)| s.via().and_then(|v| v.pubkey()) == Some(public_key))
     }
 
     pub fn metadata(&self) -> &Metadata {
@@ -429,7 +409,7 @@ mod tests {
         use serde_ipld_dagcbor::codec::DagCborCodec;
 
         let public_key = zim_crypto::PrivateKey::generate().public();
-        let share = Share::new(SecretShare::default(), Identity::Key(public_key));
+        let share = Share::new(SecretShare::default(), Identity::Key(public_key), None);
 
         let encoded = DagCborCodec::encode_to_vec(&share).unwrap();
         let decoded: Share = DagCborCodec::decode_from_slice(&encoded).unwrap();

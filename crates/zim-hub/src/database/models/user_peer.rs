@@ -44,17 +44,22 @@ impl PeerKind {
 pub struct UserPeer {
     peer_pubkey: String,
     user_id: DbUuid,
-    label: String,
+    /// Human label. `None` for a web key (the account's single master
+    /// identity needs no name); daemons set one to tell devices apart.
+    label: Option<String>,
     /// 'web' | 'daemon'. Stored as text — see [`PeerKind`].
     kind: String,
     created_at: String,
+    /// RFC 7638 JWK thumbprint — `None` for rows enrolled before the
+    /// thumbprint migration. These peers use the pubkey-hex JWT path.
+    peer_thumbprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct UserPeerListItem {
     peer_pubkey: String,
     user_id: DbUuid,
-    label: String,
+    label: Option<String>,
     kind: String,
     created_at: String,
 }
@@ -69,8 +74,8 @@ impl UserPeerListItem {
     pub fn user_id(&self) -> Uuid {
         self.user_id.into()
     }
-    pub fn label(&self) -> &str {
-        &self.label
+    pub fn label(&self) -> Option<&str> {
+        self.label.as_deref()
     }
     pub fn kind(&self) -> &str {
         &self.kind
@@ -90,14 +95,17 @@ impl UserPeer {
     pub fn user_id(&self) -> Uuid {
         self.user_id.into()
     }
-    pub fn label(&self) -> &str {
-        &self.label
+    pub fn label(&self) -> Option<&str> {
+        self.label.as_deref()
     }
     pub fn kind(&self) -> &str {
         &self.kind
     }
     pub fn created_at(&self) -> &str {
         &self.created_at
+    }
+    pub fn peer_thumbprint(&self) -> Option<&str> {
+        self.peer_thumbprint.as_deref()
     }
 
     /// Register `pubkey` as belonging to `user_id` with the given
@@ -109,14 +117,15 @@ impl UserPeer {
     pub async fn create(
         user_id: Uuid,
         pubkey: &PublicKey,
-        label: &str,
+        label: Option<&str>,
         kind: PeerKind,
         db: &Database,
     ) -> Result<Self, sqlx::Error> {
+        let thumbprint = pubkey.jwk_thumbprint();
         sqlx::query_as::<_, UserPeer>(
             r#"
-            INSERT INTO user_peers (peer_pubkey, user_id, label, kind)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO user_peers (peer_pubkey, user_id, label, kind, peer_thumbprint)
+            VALUES (?, ?, ?, ?, ?)
             RETURNING *
             "#,
         )
@@ -124,8 +133,21 @@ impl UserPeer {
         .bind(DbUuid::from(user_id))
         .bind(label)
         .bind(kind.as_str())
+        .bind(thumbprint)
         .fetch_one(&**db)
         .await
+    }
+
+    /// Look up a peer by its JWK thumbprint. Used by the browser JWT
+    /// bearer path (`kid` = thumbprint, not pubkey hex).
+    pub async fn find_by_thumbprint(
+        thumbprint: &str,
+        db: &Database,
+    ) -> Result<Option<Self>, sqlx::Error> {
+        sqlx::query_as::<_, UserPeer>("SELECT * FROM user_peers WHERE peer_thumbprint = ?")
+            .bind(thumbprint)
+            .fetch_optional(&**db)
+            .await
     }
 
     pub async fn delete_for_user(

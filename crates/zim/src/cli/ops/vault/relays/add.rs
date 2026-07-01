@@ -1,4 +1,4 @@
-//! `zim vault <target> relays add <peer>` — authorize a relay.
+//! `zim vault <target> relays add <recipient> <via>` — authorize a relay.
 
 use std::fmt;
 
@@ -15,13 +15,16 @@ use crate::http_server::api::v0::vault::relay::RelayRequest;
 pub struct Add {
     #[arg(skip)]
     pub target: String,
-    /// Peer nick or hex pubkey.
-    pub peer: String,
+    /// Peer nick or DID for the ephemeral recipient (e.g. browser session key).
+    pub recipient: String,
+    /// Peer nick or DID for the always-on via peer (e.g. the hub).
+    pub via: String,
 }
 
 #[derive(Debug, serde::Serialize)]
 pub struct AddOutput {
-    pub peer: String,
+    pub recipient: String,
+    pub via: String,
     pub height: u64,
 }
 
@@ -45,10 +48,19 @@ impl Op for Add {
 
     async fn run(&self, ctx: ApiContext) -> Result<Self::Output, Self::Error> {
         let vault_id = ctx.client.resolve_vault(&self.target).await?;
-        let peer = ctx.client.resolve_peer(&self.peer).await?;
-        let r = ctx.client.call(RelayRequest { vault_id, peer }).await?;
+        let recipient = ctx.client.resolve_peer(&self.recipient).await?;
+        let via = ctx.client.resolve_peer(&self.via).await?;
+        let r = ctx
+            .client
+            .call(RelayRequest {
+                vault_id,
+                recipient,
+                via,
+            })
+            .await?;
         Ok(AddOutput {
-            peer: r.peer,
+            recipient: r.recipient,
+            via: r.via,
             height: r.height,
         })
     }
@@ -58,8 +70,9 @@ impl fmt::Display for AddOutput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{} → height {}",
-            ui::success("relay added", &self.peer),
+            "{} via {} → height {}",
+            ui::success("relay added", &self.recipient),
+            ui::dim(&self.via),
             ui::num(self.height.to_string())
         )
     }

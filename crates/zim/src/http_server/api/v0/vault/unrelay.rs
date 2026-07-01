@@ -16,12 +16,13 @@ use zim_peer::VaultLookupError;
 pub struct UnrelayRequest {
     #[serde(skip)]
     pub vault_id: zim_core::vault::VaultId,
-    pub peer: String,
+    /// DID URL of the recipient whose relay entry to remove.
+    pub recipient: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnrelayResponse {
-    pub peer: String,
+    pub recipient: String,
     pub link: Link,
     pub height: u64,
 }
@@ -31,12 +32,13 @@ pub async fn handler(
     VaultHandle { mut vault, .. }: VaultHandle,
     Json(req): Json<UnrelayRequest>,
 ) -> Result<impl IntoResponse, UnrelayError> {
-    let identity = Identity::parse(&req.peer).map_err(|e| UnrelayError::BadPeer(e.to_string()))?;
-    let peer = zim_did::resolve_pubkey(&identity, state.peer().resolver().as_ref())
+    let identity =
+        Identity::parse(&req.recipient).map_err(|e| UnrelayError::BadPeer(e.to_string()))?;
+    let recipient_pk = zim_did::resolve_pubkey(&identity, state.resolver().as_ref())
         .await
         .map_err(|e| UnrelayError::BadPeer(e.to_string()))?;
     vault
-        .remove_relay(peer)
+        .remove_relay(recipient_pk)
         .map_err(|e| UnrelayError::Unrelay(e.to_string()))?;
     let link = vault
         .save()
@@ -50,7 +52,7 @@ pub async fn handler(
     Ok((
         http::StatusCode::OK,
         Json(UnrelayResponse {
-            peer: req.peer,
+            recipient: req.recipient,
             link,
             height: head.height,
         }),

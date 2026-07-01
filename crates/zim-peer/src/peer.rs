@@ -34,13 +34,12 @@ use tokio::task::JoinHandle;
 use zim_core::blobs::BlobsProvider;
 use zim_core::iroh::{self, Endpoint, NodeAddr, Router, BLOBS_ALPN};
 use zim_crypto::{PrivateKey, PublicKey};
-use zim_did::{DidResolver, StaticResolver};
 use zim_runtime::Service;
 
+use crate::accept::{AcceptAll, AcceptPolicy};
 use crate::coordinator::{run_effects, SyncCoordinator};
 use crate::effect::Effect;
 use crate::iroh_transport::{IrohPeerSender, SyncProtocol, ALPN};
-use crate::peers::PeerStore;
 use crate::Vault;
 use zim_core::vault::{Head, VaultId, VaultLog};
 
@@ -80,17 +79,12 @@ pub struct VaultListing {
 /// effect runner live until the last clone drops *or* `shutdown` is
 /// invoked explicitly via the [`Service`] machinery.
 #[derive(Clone)]
-pub struct Peer<L: VaultLog, P: PeerStore>(Arc<PeerInner<L, P>>);
+pub struct Peer<L: VaultLog>(Arc<PeerInner<L>>);
 
-struct PeerInner<L: VaultLog, P: PeerStore> {
+struct PeerInner<L: VaultLog> {
     secret: PrivateKey,
     endpoint: Endpoint,
-    coord: Arc<SyncCoordinator<L, P>>,
-    /// DID resolver for `did:web` shareholders/relays on a vault
-    /// manifest. Defaults to a [`StaticResolver`] (empty), which fails
-    /// every `did:web` lookup — fine for pure-`did:key` flows + tests.
-    /// Production peers inject an [`HttpDidResolver`](zim_did::HttpDidResolver).
-    resolver: Arc<dyn DidResolver>,
+    coord: Arc<SyncCoordinator<L>>,
     /// Take-once slots, consumed by [`Peer::shutdown`].
     ///
     /// Both values are *consumed* at shutdown, not just dropped:
@@ -117,13 +111,12 @@ struct PeerInner<L: VaultLog, P: PeerStore> {
     shutdown_tx: watch::Sender<()>,
 }
 
-impl<L, P> Peer<L, P>
+impl<L> Peer<L>
 where
     L: VaultLog + Clone + 'static,
     L::Error: std::error::Error + Send + Sync + 'static,
-    P: PeerStore + 'static,
 {
-    pub fn builder() -> PeerBuilder<L, P> {
+    pub fn builder() -> PeerBuilder<L> {
         PeerBuilder::default()
     }
 
@@ -139,85 +132,48 @@ where
         &self.0.endpoint
     }
 
-    pub fn coord(&self) -> &Arc<SyncCoordinator<L, P>> {
+    pub fn coord(&self) -> &Arc<SyncCoordinator<L>> {
         &self.0.coord
     }
 
-    pub fn resolver(&self) -> &Arc<dyn DidResolver> {
-        &self.0.resolver
-    }
-
-    /// Notify every shareholder + relay of `vault` (other than
-    /// ourselves) that we just advanced to `head`. Fire-and-forget —
-    /// each recipient turns the wire push into a `PullFromPeer`
-    /// effect. Failures are logged, never bubbled. Write handlers
-    /// should call this after `vault.save()`.
+    /// Notify every shareholder of `vault` (other than ourselves) that
+    /// we just advanced to `head`. The sole sync push: each recipient
+    /// turns it into a `PullFromPeer` — bootstrapping the vault if it's
+    /// new (and we're in their address book) or fast-forwarding if not.
+    /// Fire-and-forget; failures are logged, never bubbled. Write
+    /// handlers should call this after `vault.save()`.
     pub async fn announce_head(&self, vault: &Vault<L>, head: Head) {
-        self.announce_head_except(vault, head, None).await
-    }
-
-    /// Variant of [`Self::announce_head`] that skips one named peer —
-    /// the `share` handler uses this to avoid double-pushing to the
-    /// peer it's already bootstrapping via `Effect::OfferShare`.
-    pub async fn announce_head_except(
-        &self,
-        vault: &Vault<L>,
-        head: Head,
-        except: Option<&PublicKey>,
-    ) {
         let self_pk = self.0.secret.public();
         let manifest = vault.manifest();
-        let shares: Vec<PublicKey> = manifest
-            .shares()
-            .iter()
-            .map(|(pk, _)| *pk)
-            .filter(|pk| *pk != self_pk)
-            .filter(|pk| Some(pk) != except)
-            .collect();
-        let relay_identities: Vec<zim_did::Identity> = manifest
-            .relays()
-            .iter()
-            .map(|r| r.identity().clone())
-            .collect();
 
-        tracing::info!(
-            shares = shares.len(),
-            relays = relay_identities.len(),
-            vault_id = %vault.id(),
-            "announce_head: fanning out"
-        );
-
-        let mut targets: Vec<PublicKey> = shares;
-        for identity in relay_identities {
-            match zim_did::resolve_pubkey(&identity, &*self.0.resolver).await {
-                Ok(pk) => {
-                    if pk != self_pk && Some(&pk) != except && !targets.contains(&pk) {
-                        targets.push(pk);
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        identity = %identity,
-                        vault_id = %vault.id(),
-                        "failed to resolve relay DID for AnnounceHead: {e}"
-                    );
-                }
+        // One message per shareholder: dial the `via` host for a hosted
+        // client (pre-resolved at share time, so no network lookup here),
+        // else the client itself — and carry `recipient = client` so a
+        // relay knows whose push this is. We do *not* dedupe by dial
+        // target: two clients behind the same hub are two recipients, so
+        // the hub must hear about each. Drop our own share.
+        for (client, share) in manifest.shares().iter() {
+            // `reach()` = where we dial for this share (the `via` host, else
+            // the client); `client` = who it's for (the recipient).
+            let Some(target) = share.reach().copied() else {
+                continue;
+            };
+            if target == self_pk {
+                continue;
             }
-        }
-
-        for peer_id in targets {
             if let Err(e) = self
                 .0
                 .coord
                 .submit(Effect::AnnounceHead {
-                    peer_id,
+                    peer_id: target,
                     vault_id: vault.id(),
-                    head: head.clone(),
+                    head: Box::new(head.clone()),
+                    recipient: *client,
                 })
                 .await
             {
                 tracing::warn!(
-                    peer = %peer_id.to_hex(),
+                    peer = %target.to_hex(),
                     vault_id = %vault.id(),
                     "failed to enqueue AnnounceHead: {e}"
                 );
@@ -264,8 +220,13 @@ where
                     });
                 }
                 Err(e) => {
+                    // Expected for a relay/hub: it mirrors ciphertext but holds
+                    // no share, so it can't open vaults it stores. The failure
+                    // is returned in `error` for callers that surface it; at
+                    // default level it's just noise (one line per vault, per
+                    // poll), so log it at debug.
                     let msg = e.to_string();
-                    tracing::warn!(vault_id = %id, "list_vaults: open failed: {msg}");
+                    tracing::debug!(vault_id = %id, "list_vaults: open failed: {msg}");
                     out.push(VaultListing {
                         id,
                         name: None,
@@ -333,13 +294,12 @@ where
 /// Most callers should prefer the inherent [`Peer::spawn`] method —
 /// `peer.spawn(rx)` — which avoids typing the clone at the call site.
 #[async_trait]
-impl<L, P> Service for Peer<L, P>
+impl<L> Service for Peer<L>
 where
     L: VaultLog + Clone + 'static,
     L::Error: std::error::Error + Send + Sync + 'static,
-    P: PeerStore + 'static,
 {
-    type State = Peer<L, P>;
+    type State = Peer<L>;
 
     async fn run(peer: Self, mut shutdown_rx: watch::Receiver<()>) {
         let _ = shutdown_rx.changed().await;
@@ -361,37 +321,34 @@ pub enum Discovery {
     Pkarr,
 }
 
-pub struct PeerBuilder<L: VaultLog, P: PeerStore> {
+pub struct PeerBuilder<L: VaultLog> {
     secret: Option<PrivateKey>,
     log: Option<L>,
-    peers: Option<P>,
+    accept: Option<Arc<dyn AcceptPolicy>>,
     blobs: Option<BlobsProvider>,
     discovery: Discovery,
     effect_queue_size: Option<usize>,
     info: Option<crate::coordinator::DaemonInfo>,
-    resolver: Option<Arc<dyn DidResolver>>,
 }
 
-impl<L: VaultLog, P: PeerStore> Default for PeerBuilder<L, P> {
+impl<L: VaultLog> Default for PeerBuilder<L> {
     fn default() -> Self {
         Self {
             secret: None,
             log: None,
-            peers: None,
+            accept: None,
             blobs: None,
             discovery: Discovery::Off,
             effect_queue_size: None,
             info: None,
-            resolver: None,
         }
     }
 }
 
-impl<L, P> PeerBuilder<L, P>
+impl<L> PeerBuilder<L>
 where
     L: VaultLog + Clone + 'static,
     L::Error: std::error::Error + Send + Sync + 'static,
-    P: PeerStore + 'static,
 {
     pub fn with_secret(mut self, secret: PrivateKey) -> Self {
         self.secret = Some(secret);
@@ -403,8 +360,12 @@ where
         self
     }
 
-    pub fn with_peers(mut self, peers: P) -> Self {
-        self.peers = Some(peers);
+    /// Set the inbound [`AcceptPolicy`]. Defaults to
+    /// [`AcceptAll`](crate::AcceptAll) — fine for a single peer or a
+    /// test. The daemon supplies a contacts-backed policy, the hub a
+    /// `user_peers`-backed one.
+    pub fn with_accept_policy(mut self, accept: Arc<dyn AcceptPolicy>) -> Self {
+        self.accept = Some(accept);
         self
     }
 
@@ -432,25 +393,17 @@ where
         self
     }
 
-    /// DID resolver used by [`Peer::announce_head_except`] to expand
-    /// `did:web` relays on a vault manifest. Defaults to an empty
-    /// [`StaticResolver`] — fine for tests / pure-`did:key` flows.
-    /// Daemon + hub pass an `HttpDidResolver`.
-    pub fn with_resolver(mut self, resolver: Arc<dyn DidResolver>) -> Self {
-        self.resolver = Some(resolver);
-        self
-    }
-
     /// Bind the endpoint, build the coordinator, register both
     /// ALPNs, spawn the effect runner. Returns a running [`Peer`].
-    pub async fn build(self) -> anyhow::Result<Peer<L, P>> {
+    pub async fn build(self) -> anyhow::Result<Peer<L>> {
         let secret = self.secret.unwrap_or_else(PrivateKey::generate);
         let log = self
             .log
             .ok_or_else(|| anyhow::anyhow!("PeerBuilder: missing log"))?;
-        let peers = self
-            .peers
-            .ok_or_else(|| anyhow::anyhow!("PeerBuilder: missing peers"))?;
+        // Inbound acceptance: defaults to accept-all (single peer / tests).
+        let accept = self
+            .accept
+            .unwrap_or_else(|| Arc::new(AcceptAll) as Arc<dyn AcceptPolicy>);
         let blobs = self
             .blobs
             .ok_or_else(|| anyhow::anyhow!("PeerBuilder: missing blobs"))?;
@@ -473,7 +426,7 @@ where
         let (coord, effect_rx) = SyncCoordinator::new_with_info(
             blobs.clone(),
             log,
-            peers,
+            accept,
             endpoint.clone(),
             secret.clone(),
             sender,
@@ -492,15 +445,10 @@ where
             .accept(ALPN, SyncProtocol::new(coord.clone()))
             .spawn();
 
-        let resolver = self
-            .resolver
-            .unwrap_or_else(|| Arc::new(StaticResolver::default()));
-
         Ok(Peer(Arc::new(PeerInner {
             secret,
             endpoint,
             coord,
-            resolver,
             router: Mutex::new(Some(router)),
             runner: Mutex::new(Some(runner)),
             shutdown_tx,

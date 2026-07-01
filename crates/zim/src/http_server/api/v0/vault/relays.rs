@@ -21,7 +21,10 @@ pub struct RelaysResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelayInfo {
-    pub peer: String,
+    /// DID of the ephemeral recipient peer.
+    pub recipient: String,
+    /// DID of the always-on via peer.
+    pub via: String,
 }
 
 pub async fn handler(
@@ -31,11 +34,9 @@ pub async fn handler(
     let relays = vault
         .list_relays()
         .iter()
-        .map(|r| RelayInfo {
-            // DID URL for the relay's identity. For `Identity::Key`
-            // this is `did:key:z…`; for `Identity::Web` the DID string
-            // as stored.
-            peer: r.identity().to_string(),
+        .map(|(recipient, via)| RelayInfo {
+            recipient: recipient.to_did().to_string(),
+            via: via.to_did().to_string(),
         })
         .collect();
     Ok((http::StatusCode::OK, Json(RelaysResponse { relays })).into_response())

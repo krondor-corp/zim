@@ -1,0 +1,52 @@
+# Shared HTTP API surface for zim.
+#
+# Holds the `ApiRequest`/`Client` pattern (request owns its own pathing,
+# body, and auth; the client just executes + decodes) plus the typed hub
+# client behind the `hub` feature. Consumers:
+#
+#   - zim (CLI/daemon): the daemon-RPC request types implement `ApiRequest`
+#     from here, so there is ONE trait definition. The `zim hub` commands
+#     use the `hub` client (behind zim's `hub` feature).
+#   - zim-hub (server): mirrors these requests in its axum routes. There is
+#     no compile-time link between the two — the server MUST keep its routes
+#     in sync with the request types here (see each request's doc comment).
+#   - zim-hub/web (wasm SPA): uses the `hub` client too (reqwest's wasm/fetch
+#     backend) instead of hand-rolling gloo-net calls.
+[package]
+name = "zim-api"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Shared HTTP API contract + client for zim (daemon RPC + hub)."
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = ["client"]
+# The reqwest-backed executor: `ApiRequest`, `Client`, `ApiError`, and the
+# request impls / `HubClient`. Off → only the pure (serde) wire types are
+# compiled, so a wasm32 consumer (the web SPA) can share the types without
+# pulling reqwest's native-TLS stack (which doesn't build on wasm).
+client = ["dep:reqwest", "dep:url"]
+# Hub wire types (+ helpers + JWT minting). Add `client` for the live
+# `HubClient`. Types alone need no reqwest.
+hub = ["dep:zim-crypto", "dep:zim-did", "dep:chrono", "dep:base64"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+# client feature only (reqwest's native TLS doesn't build on wasm32)
+reqwest = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
+
+# hub feature only. zim-did with default-features off: we only use the
+# pure `did_key_encode`, NOT the `http-resolver` (reqwest→tokio→mio, which
+# doesn't build on wasm32 — would break the web SPA's types-only dep).
+zim-crypto = { path = "../zim-crypto", version = "0.1.0", optional = true }
+zim-did = { path = "../zim-did", version = "0.1.0", optional = true, default-features = false }
+chrono = { workspace = true, optional = true }
+base64 = { version = "0.22", optional = true }

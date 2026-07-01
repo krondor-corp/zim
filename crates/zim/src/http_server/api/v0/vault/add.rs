@@ -33,9 +33,31 @@ pub struct AddResponse {
 
 pub async fn handler(
     State(state): State<ServiceState>,
-    VaultHandle { mut vault, .. }: VaultHandle,
+    VaultHandle { id, mut vault }: VaultHandle,
     Json(req): Json<AddRequest>,
 ) -> Result<impl IntoResponse, AddError> {
+    // If this vault is mounted, route through the mount's single writer so the
+    // write can't fork the head and is visible through the mountpoint at once.
+    #[cfg(feature = "fuse")]
+    if let Some(res) = state
+        .mounts()
+        .fs_add(id, req.path.clone(), req.bytes.to_vec())
+        .await
+    {
+        let c = res.map_err(|e| AddError::Write(e.to_string()))?;
+        return Ok((
+            http::StatusCode::OK,
+            Json(AddResponse {
+                path: req.path,
+                link: c.link,
+                height: c.height,
+            }),
+        )
+            .into_response());
+    }
+    #[cfg(not(feature = "fuse"))]
+    let _ = id;
+
     let abs = AbsPath::new(&req.path).ok_or_else(|| AddError::BadPath(req.path.clone()))?;
     vault
         .fs()

@@ -33,6 +33,8 @@ NC='\033[0m'
 
 source "$DEV_DIR/config.sh"
 source "$DEV_DIR/nodes.sh"
+source "$DEV_DIR/hub.sh"
+source "$DEV_DIR/seed.sh"
 
 cmd_help() {
     cat <<EOF
@@ -42,17 +44,30 @@ Usage: ./bin/dev <command> [args...]
 
 Commands:
   run [-b|--background]   Start all daemons in tmux (default; attaches)
+      [--fuse]            ...with the \`fuse\` feature so \`zim mount\` works
+      [--hub]            ...then start the hub, seed fixtures, and enroll
+                          the daemons — the whole stack in one command
+                          (\`./bin/dev --hub\` works too). Needs docker.
   clean                   Remove all data under $DATA_DIR
   kill [-f|--force]       Kill the tmux session; -f also frees ports
   status                  Show which daemons are up
+  attach | a              Attach to the tmux session (detach: Ctrl-b d)
   cli <nick> <args...>    Run \`zim\` against a node's daemon
   shell                   Emit \`alice\`/\`bob\`/... shell functions
                           (\`eval "\$(./bin/dev shell)"\` to activate)
-  logs <nick>             Dump that node's tmux pane
+  logs <nick> [-f]        Tail that node's clean daemon.log (-f follows)
+  seed                    Create vaults + shares across daemons so
+                          sync is testable (no hub/docker needed)
+  hub [up|enroll|did|down]
+                          Run zim-hub in a tmux window (real OAuth via
+                          confit + minio; needs docker). \`enroll\` seeds
+                          the hub user + enrolls dev daemons (stands in
+                          for \`zim login\`). \`did\` prints its did:web.
   help                    Show this help
 
 Examples:
   ./bin/dev                            # start dev environment
+  ./bin/dev --hub                      # full stack: daemons + hub + fixtures
   ./bin/dev run --background           # start in background
   ./bin/dev cli alice id               # show alice's pubkey
   ./bin/dev cli alice init             # bootstrap alice's peer state
@@ -69,13 +84,18 @@ EOF
 }
 
 case "${1:-run}" in
+    help|-h|--help) cmd_help ;;
     run)            shift; cmd_run "$@" ;;
     clean)          cmd_clean ;;
     kill)           shift; cmd_kill "$@" ;;
     status)         cmd_status ;;
+    attach|a)       cmd_attach ;;
     cli)            shift; cmd_cli "$@" ;;
     shell)          cmd_shell ;;
     logs)           shift; cmd_logs "$@" ;;
-    help|-h|--help) cmd_help ;;
+    hub)            shift; cmd_hub "$@" ;;
+    seed)           cmd_seed ;;
+    # Bare flags (e.g. `./bin/dev --hub`, `--fuse`, `-b`) → run.
+    -*)             cmd_run "$@" ;;
     *)              echo -e "${RED}Unknown command: $1${NC}"; cmd_help; exit 1 ;;
 esac

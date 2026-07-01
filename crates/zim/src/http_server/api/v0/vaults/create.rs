@@ -37,6 +37,17 @@ pub async fn handler(
     .map_err(|e| CreateError::Init(e.to_string()))?;
     let vault_id = vault.id();
 
+    // Immediately share the new vault with every trusted contact (your
+    // own devices, plus anyone you `peers add --trust`). Best-effort: a
+    // reconcile failure shouldn't fail the create — `zim peers reconcile`
+    // re-fires it.
+    if let Err(e) =
+        crate::reconcile::reconcile_trusted(state.peer(), state.peers(), state.resolver().as_ref())
+            .await
+    {
+        tracing::warn!(%vault_id, "vault create: reconcile failed: {e}");
+    }
+
     Ok((
         http::StatusCode::OK,
         Json(CreateResponse {

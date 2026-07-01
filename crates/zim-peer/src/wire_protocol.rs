@@ -30,7 +30,7 @@
 use crate::iroh_transport::IrohPeerSender;
 use crate::messages::{
     Ack, AncestorReply, AncestorRequest, HeadAdvanced, HeadReply, HeadRequest, PingRequest,
-    PongReply, ProbeReply, ProbeRequest, ShareOffered,
+    PongReply, ProbeReply, ProbeRequest,
 };
 
 // ---------------------------------------------------------------------
@@ -75,15 +75,14 @@ macro_rules! wire_protocol {
             /// Route an incoming [`WireRequest`] into the matching
             /// [`SyncCoordinator`](crate::SyncCoordinator) handler and
             /// wrap the result in [`WireReply`].
-            pub async fn dispatch_request<L, P>(
-                coord: &::std::sync::Arc<$crate::coordinator::SyncCoordinator<L, P>>,
+            pub async fn dispatch_request<L>(
+                coord: &::std::sync::Arc<$crate::coordinator::SyncCoordinator<L>>,
                 sender: ::zim_crypto::PublicKey,
                 req: WireRequest,
             ) -> WireReply
             where
                 L: $crate::VaultLog + Clone + 'static,
                 L::Error: ::std::error::Error + Send + Sync + 'static,
-                P: $crate::peers::PeerStore + 'static,
             {
                 match req {
                     $(
@@ -126,6 +125,5 @@ wire_protocol! {
     Probe        ( ProbeRequest,    ProbeReply,    handle_probe ),
     Ancestor     ( AncestorRequest, AncestorReply, handle_ancestor ),
     HeadAdvanced ( HeadAdvanced,    Ack,           handle_head_advanced ),
-    ShareOffered ( ShareOffered,    Ack,           handle_share_offered ),
     Ping         ( PingRequest,     PongReply,     handle_ping ),
 }

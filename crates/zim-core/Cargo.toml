@@ -13,71 +13,79 @@ categories.workspace = true
 name = "zim_core"
 path = "src/lib.rs"
 
+[features]
+# default = native: pulls in iroh, iroh-blobs, and the full blob-provider stack.
+# WASM targets build with --no-default-features to get just the FS/crypto layer.
+default = ["native"]
+native = [
+    "dep:iroh",
+    "dep:iroh-blobs",
+    "dep:irpc",
+    "dep:bao-tree",
+    "dep:range-collections",
+    "dep:n0-future",
+    "dep:tokio",
+    "dep:parking_lot",
+    "dep:flume",
+]
+
 [dependencies]
 zim-crypto = { path = "../zim-crypto", version = "0.1.0" }
-zim-did = { path = "../zim-did", version = "0.1.0" }
+# Only the `Identity` type is used here — drop the reqwest/tokio HTTP
+# resolver so the wasm FS/crypto layer stays free of native transports.
+# The daemon crates depend on zim-did directly to get the resolver back.
+zim-did = { path = "../zim-did", version = "0.1.0", default-features = false }
+futures = { workspace = true }
 
-# Core
+# Core (always present)
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 async-trait = "0.1"
-tokio = { workspace = true }
-futures = { workspace = true }
-parking_lot = { workspace = true }
-flume = "0.11"
 
-# Serialization
+# Native-only (iroh networking stack)
+tokio = { workspace = true, optional = true }
+parking_lot = { workspace = true, optional = true }
+flume = { version = "0.11", optional = true }
+iroh = { workspace = true, optional = true }
+iroh-blobs = { workspace = true, optional = true }
+irpc = { version = "0.9.0", features = ["rpc", "stream", "derive"], default-features = false, optional = true }
+bao-tree = { version = "0.15.1", features = ["experimental-mixed", "serde"], default-features = false, optional = true }
+range-collections = { version = "0.4.6", features = ["serde"], optional = true }
+n0-future = { version = "0.2.0", optional = true }
+
+# Serialization (always)
 serde = { workspace = true }
 serde_with = { workspace = true }
 serde_ipld_dagcbor = { workspace = true }
 bincode = { workspace = true }
 bytes = { workspace = true }
 
-# Time / logging
+# Time / logging (always)
 chrono = { workspace = true }
 tracing = { workspace = true }
 
-# iroh / blobs
-iroh = { workspace = true }
-iroh-blobs = { workspace = true }
-
-# Content addressing / IPLD
+# Content addressing / IPLD (always)
 cid = { workspace = true }
 ipld-core = { workspace = true }
 multihash = "0.19"
 
-# Randomness (genesis nonce)
+# Randomness (genesis nonce) — wasm_js backend for WASM targets
 getrandom = { version = "0.2", features = ["js"] }
 
-# Hashing
+# Hashing (always)
 sha2 = "0.10"
 blake3 = "1.5"
 hex = "0.4"
 
-# Mime
+# Mime (always — used in fs/entry.rs)
 mime = "0.3.17"
 mime_guess = "2.0"
 mime_serde_shim = "0.2.2"
 
-# UUID
-uuid = { workspace = true }
-
-# irpc (same version as iroh-blobs)
-irpc = { version = "0.9.0", features = ["rpc", "stream", "derive"], default-features = false }
-
-# bao-tree for BAO content types
-bao-tree = { version = "0.15.1", features = ["experimental-mixed", "serde"], default-features = false }
-
-# range-collections
-range-collections = { version = "0.4.6", features = ["serde"] }
-
-# n0-future for Stream trait
-n0-future = "0.2.0"
-
-# ref-cast
+# ref-cast (always)
 ref-cast = "1.0"
 
-# derive_more
+# derive_more (always)
 derive_more = { version = "2.0", features = ["from"] }
 
 [dev-dependencies]

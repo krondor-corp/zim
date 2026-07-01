@@ -30,9 +30,30 @@ pub struct MvResponse {
 
 pub async fn handler(
     State(state): State<ServiceState>,
-    VaultHandle { mut vault, .. }: VaultHandle,
+    VaultHandle { id, mut vault }: VaultHandle,
     Json(req): Json<MvRequest>,
 ) -> Result<impl IntoResponse, MvError> {
+    #[cfg(feature = "fuse")]
+    if let Some(res) = state
+        .mounts()
+        .fs_mv(id, req.from.clone(), req.to.clone())
+        .await
+    {
+        let c = res.map_err(|e| MvError::Mv(e.to_string()))?;
+        return Ok((
+            http::StatusCode::OK,
+            Json(MvResponse {
+                from: req.from,
+                to: req.to,
+                link: c.link,
+                height: c.height,
+            }),
+        )
+            .into_response());
+    }
+    #[cfg(not(feature = "fuse"))]
+    let _ = id;
+
     let from = AbsPath::new(&req.from).ok_or_else(|| MvError::BadPath(req.from.clone()))?;
     let to = AbsPath::new(&req.to).ok_or_else(|| MvError::BadPath(req.to.clone()))?;
     vault

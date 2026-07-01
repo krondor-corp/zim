@@ -5,7 +5,6 @@ use reqwest::{Client, RequestBuilder, Url};
 use serde::{Deserialize, Serialize};
 use zim_core::linked_data::Link;
 use zim_did::Identity;
-use zim_peer::Effect;
 
 use crate::http_server::api::client::ApiRequest;
 use crate::http_server::api::v0::vault::extractor::VaultHandle;
@@ -35,19 +34,19 @@ pub async fn handler(
     Json(req): Json<ShareRequest>,
 ) -> Result<impl IntoResponse, ShareError> {
     let identity = Identity::parse(&req.peer).map_err(|e| ShareError::BadPeer(e.to_string()))?;
-    // Resolve to a concrete iroh pubkey. `Identity::Key` is a no-op;
-    // `Identity::Web` triggers an HTTPS GET against the hub's
-    // `did.json` and picks the first peer-purpose verification
-    // method.
-    let peer = zim_did::resolve_pubkey(&identity, state.peer().resolver().as_ref())
+    // *Share to a DID* — one operation across every shape. `Identity::Key`
+    // yields a single direct reach; `Identity::Web` resolves the document
+    // and yields one reach per verification method (the whole device set),
+    // each sealed to its own client and routed via the host. The storage
+    // layer stays pubkey-shaped — resolution stops at this boundary.
+    let reaches = zim_did::resolve_reaches(&identity, state.resolver().as_ref())
         .await
         .map_err(|e| ShareError::BadPeer(e.to_string()))?;
-    // `vault.add_share` takes the concrete pubkey directly — DID
-    // resolution stops at this boundary, the storage layer is
-    // pubkey-shaped.
-    vault
-        .add_share(peer)
-        .map_err(|e| ShareError::Share(e.to_string()))?;
+    for reach in &reaches {
+        vault
+            .add_reach(reach.clone())
+            .map_err(|e| ShareError::Share(e.to_string()))?;
+    }
     let link = vault
         .save()
         .await
@@ -57,43 +56,12 @@ pub async fn handler(
         .await
         .map_err(|e| ShareError::Save(e.to_string()))?;
 
-    // Tell the new sharee about the vault so it appears on their side.
-    // Fire-and-forget — the share response returns as soon as alice's
-    // local state is committed; the announce flows over iroh in the
-    // background. If the peer is offline they'll miss this offer;
-    // re-running `share` re-fires it (intentional, see
-    // docs/research/optimistic-share-acceptance.md).
-    //
-    // We deliberately do NOT also fire `announce_head` to the new
-    // sharee — they're being bootstrapped via OfferShare, and a
-    // concurrent AnnounceHead → PullFromPeer races with the
-    // bootstrap's `apply_chain` writes (UNIQUE constraint on the
-    // vault log). The peer learns the head as part of OfferShare;
-    // future saves on this peer will get normal AnnounceHead pushes
-    // once they're fully bootstrapped.
-    if let Err(e) = state
-        .peer()
-        .coord()
-        .submit(Effect::OfferShare {
-            peer_id: peer,
-            vault_id: vault.id(),
-            head: head.clone(),
-        })
-        .await
-    {
-        tracing::warn!(
-            peer = req.peer,
-            vault_id = %vault.id(),
-            "failed to enqueue OfferShare: {e}"
-        );
-    }
-    // Announce to every *pre-existing* shareholder (the new sharee
-    // is being handled by OfferShare above; sending them an extra
-    // AnnounceHead races with their bootstrap).
-    state
-        .peer()
-        .announce_head_except(&vault, head.clone(), Some(&peer))
-        .await;
+    // Announce the new head to every shareholder. Each turns it into a
+    // pull: a freshly-added sharee bootstraps the vault (it accepts
+    // because we're in its address book — sharing is mutual by
+    // construction), an existing one fast-forwards. Fire-and-forget; if
+    // a peer is offline it misses this and re-running `share` re-fires.
+    state.peer().announce_head(&vault, head.clone()).await;
 
     Ok((
         http::StatusCode::OK,

@@ -20,6 +20,9 @@ pub struct PeerInfo {
     pub nick: String,
     /// DID URL of the peer.
     pub did: String,
+    /// Whether this contact is trusted (auto-shared into owned vaults).
+    #[serde(default)]
+    pub trusted: bool,
     pub added_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
@@ -29,23 +32,20 @@ pub async fn handler(
     State(state): State<ServiceState>,
     Json(_req): Json<ListRequest>,
 ) -> Result<impl IntoResponse, ListError> {
-    let book =
-        crate::peers::PeerBook::load(state.home()).map_err(|e| ListError::Load(e.to_string()))?;
-    let peers = book
-        .peers
+    use zim_peer::PeerStore;
+    let entries = state
+        .peers()
+        .list()
+        .await
+        .map_err(|e| ListError::Load(e.to_string()))?;
+    let peers = entries
         .into_iter()
-        .filter_map(|(nick, p)| {
-            // Legacy `pubkey`-only rows still resolve to a `did:key`
-            // via Peer::resolve_did. Rows with neither field are
-            // skipped — they're corrupt and surfacing them as
-            // `did: ""` would silently break downstream callers.
-            let did = p.resolve_did()?;
-            Some(PeerInfo {
-                nick,
-                did,
-                added_at: p.added_at,
-                notes: p.notes,
-            })
+        .map(|e| PeerInfo {
+            nick: e.nick,
+            did: e.identity.to_string(),
+            trusted: e.trusted,
+            added_at: e.added_at,
+            notes: e.notes,
         })
         .collect();
     Ok((http::StatusCode::OK, Json(ListResponse { peers })).into_response())
@@ -53,7 +53,7 @@ pub async fn handler(
 
 #[derive(Debug, thiserror::Error)]
 pub enum ListError {
-    #[error("load peer book: {0}")]
+    #[error("load contacts: {0}")]
     Load(String),
 }
 

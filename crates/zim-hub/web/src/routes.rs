@@ -1,0 +1,54 @@
+//! URL routes → pages. Each page is wrapped in its layout here; pages
+//! themselves render only their content.
+
+use yew::prelude::*;
+use yew_router::prelude::*;
+
+use crate::api::Me;
+use crate::layouts::AppShell;
+use crate::pages;
+
+#[derive(Clone, Routable, PartialEq)]
+pub enum Route {
+    #[at("/")]
+    Workspace,
+    #[at("/v/:id")]
+    Vault { id: String },
+    #[at("/settings")]
+    Settings,
+    #[at("/admin")]
+    Admin,
+    #[at("/device")]
+    DevicePair,
+    #[not_found]
+    #[at("/404")]
+    NotFound,
+}
+
+/// Render the page for `route`. `me` is threaded in from the authenticated
+/// `App` so pages don't each re-fetch it.
+pub fn switch(route: Route, me: &Me) -> Html {
+    match route {
+        Route::Workspace => html! {
+            <AppShell email={me.email.clone()}>
+                <pages::workspace::Workspace user_id={me.user_id.clone()} />
+            </AppShell>
+        },
+        Route::Vault { id } => html! {
+            <AppShell email={me.email.clone()}>
+                <pages::vault::VaultTree vault_id={id} />
+            </AppShell>
+        },
+        // Settings is a full-screen layout of its own.
+        Route::Settings => html! { <pages::settings::Settings me={me.clone()} /> },
+        Route::Admin => html! {
+            <AppShell email={me.email.clone()}>
+                <pages::admin::Admin />
+            </AppShell>
+        },
+        // Device pairing has its own bare layout (reached pre-app from a
+        // `zim hub login` link).
+        Route::DevicePair => html! { <pages::device_pair::DevicePair /> },
+        Route::NotFound => html! { <pages::not_found::NotFound /> },
+    }
+}

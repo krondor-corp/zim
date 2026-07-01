@@ -1,0 +1,248 @@
+#!/usr/bin/env bash
+#
+# FUSE mount + sync end-to-end harness.
+#
+# Boots a real `zim` daemon (built `--features fuse`), mounts a vault as a
+# local directory, and drives filesystem operations through the mountpoint —
+# cross-checking each one against the vault itself (via `zim vault … cat/ls`)
+# so we know the mount actually commits to the encrypted vault.
+#
+# Usage:
+#   ./bin/fuse-e2e            FUSE mount correctness (single node)
+#   ./bin/fuse-e2e --sync     also run the 2-node sync flow
+#   ./bin/fuse-e2e --keep     don't tear down on exit (inspect the mount)
+#
+# Requires macFUSE (macOS) or libfuse (Linux).
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/utils"
+
+WORK="$PROJECT_ROOT/data/fuse-e2e"
+ZIM_BIN="$PROJECT_ROOT/target/debug/zim"
+PORT_A=18181
+PORT_B=18182
+HOME_A="$WORK/a"
+HOME_B="$WORK/b"
+MNT_A="$WORK/mnt-a"
+MNT_B="$WORK/mnt-b"
+DAEMON_A_PID=""
+DAEMON_B_PID=""
+
+RUN_SYNC=false
+KEEP=false
+for arg in "$@"; do
+    case "$arg" in
+        --sync) RUN_SYNC=true ;;
+        --keep) KEEP=true ;;
+        *) echo "unknown arg: $arg"; exit 1 ;;
+    esac
+done
+
+# --- lifecycle --------------------------------------------------------------
+
+unmount() {
+    local mnt="$1"
+    mount | grep -q " $mnt " || return 0
+    umount "$mnt" 2>/dev/null || diskutil unmount force "$mnt" >/dev/null 2>&1 || \
+        fusermount -u "$mnt" 2>/dev/null || true
+}
+
+cleanup() {
+    if $KEEP; then
+        print_warning "left running (--keep): mounts under $WORK, daemons pid $DAEMON_A_PID $DAEMON_B_PID"
+        return
+    fi
+    print_header "Teardown"
+    unmount "$MNT_A"
+    unmount "$MNT_B"
+    [[ -n "$DAEMON_A_PID" ]] && kill "$DAEMON_A_PID" 2>/dev/null
+    [[ -n "$DAEMON_B_PID" ]] && kill "$DAEMON_B_PID" 2>/dev/null
+    sleep 1
+    rm -rf "$WORK"
+    echo "cleaned $WORK"
+}
+trap cleanup EXIT
+
+# zim against node A / B (port resolved from the per-home config.toml).
+za() { ZIM_HOME="$HOME_A" "$ZIM_BIN" "$@"; }
+zb() { ZIM_HOME="$HOME_B" "$ZIM_BIN" "$@"; }
+
+seed_config() { # $1=home $2=port
+    mkdir -p "$1"
+    printf 'api_port = %s\nlog_level = "info"\n' "$2" > "$1/config.toml"
+}
+
+start_daemon() { # $1=home $2=port $3=logfile -> echoes pid
+    ZIM_HOME="$1" "$ZIM_BIN" daemon run --port "$2" >"$3" 2>&1 &
+    echo $!
+}
+
+wait_up() { # $1=port
+    for _ in $(seq 1 50); do
+        curl -sf "http://127.0.0.1:$1/_status/livez" >/dev/null 2>&1 && return 0
+        sleep 0.2
+    done
+    return 1
+}
+
+wait_mounted() { # $1=mountpoint
+    for _ in $(seq 1 50); do
+        mount | grep -q " $1 " && return 0
+        sleep 0.2
+    done
+    return 1
+}
+
+# --- assertions -------------------------------------------------------------
+
+# expect_eq <label> <actual> <expected>
+expect_eq() {
+    if [[ "$2" == "$3" ]]; then
+        echo -e "  ${GREEN}✓${NC} $1"
+    else
+        echo -e "  ${RED}✗${NC} $1\n      expected: [$3]\n      actual:   [$2]"
+        ERRORS=$((ERRORS + 1))
+    fi
+}
+
+# expect_contains <label> <haystack> <needle>
+expect_contains() {
+    if grep -qF "$3" <<<"$2"; then
+        echo -e "  ${GREEN}✓${NC} $1"
+    else
+        echo -e "  ${RED}✗${NC} $1 — [$3] not in:\n$2" | sed 's/^/      /'
+        ERRORS=$((ERRORS + 1))
+    fi
+}
+
+# expect_missing <label> <haystack> <needle>
+expect_missing() {
+    if grep -qF "$3" <<<"$2"; then
+        echo -e "  ${RED}✗${NC} $1 — [$3] unexpectedly present"
+        ERRORS=$((ERRORS + 1))
+    else
+        echo -e "  ${GREEN}✓${NC} $1"
+    fi
+}
+
+# A known-gap check: report PASS if it works, but only WARN (don't fail) if not.
+expect_eq_softfail() {
+    if [[ "$2" == "$3" ]]; then
+        echo -e "  ${GREEN}✓${NC} $1"
+    else
+        echo -e "  ${YELLOW}⚠ known gap${NC} $1 (expected [$3], got [$2])"
+    fi
+}
+
+# --- preflight --------------------------------------------------------------
+
+print_header "Preflight"
+if [[ "$(uname -s)" == "Darwin" && ! -d /Library/Filesystems/macfuse.fs ]]; then
+    print_error "macFUSE not installed — get it from https://macfuse.github.io"
+    exit 1
+fi
+echo "building zim --features fuse…"
+if ! (cd "$PROJECT_ROOT" && cargo build -q -p zim --features fuse); then
+    print_error "build failed"
+    exit 1
+fi
+check_result "build"
+
+rm -rf "$WORK"
+seed_config "$HOME_A" "$PORT_A"
+
+# --- node A: boot + vault ---------------------------------------------------
+
+print_header "Node A: boot + create vault"
+DAEMON_A_PID=$(start_daemon "$HOME_A" "$PORT_A" "$WORK/a.log")
+if ! wait_up "$PORT_A"; then
+    print_error "daemon A didn't come up — see $WORK/a.log"
+    tail -20 "$WORK/a.log"
+    exit 1
+fi
+check_result "daemon A up (pid $DAEMON_A_PID)"
+
+za vaults create demo >/dev/null 2>&1
+check_result "vault 'demo' created"
+
+# --- mount + correctness ----------------------------------------------------
+
+print_header "Node A: mount + filesystem correctness"
+mkdir -p "$MNT_A"
+if ! za mount add demo "$MNT_A" >/dev/null 2>&1; then
+    print_error "mount add failed — see $WORK/a.log"
+    tail -20 "$WORK/a.log"
+    exit 1
+fi
+if ! wait_mounted "$MNT_A"; then
+    print_error "mountpoint never appeared in \`mount\`"
+    tail -20 "$WORK/a.log"
+    exit 1
+fi
+check_result "mounted at $MNT_A"
+
+# T1: write through the mount → the vault sees it (mount → vault commit).
+echo "hello fuse" > "$MNT_A/a.txt"
+sync
+expect_eq "write-through: vault cat == mount write" \
+    "$(za vault demo cat /a.txt 2>/dev/null)" "hello fuse"
+
+# T2: read back through the mount.
+expect_eq "read-back through mount" "$(cat "$MNT_A/a.txt" 2>/dev/null)" "hello fuse"
+
+# T3: mkdir through the mount → vault lists it.
+mkdir "$MNT_A/sub"
+expect_contains "mkdir reflected in vault ls" "$(za vault demo ls / 2>/dev/null)" "sub"
+
+# T4: nested write.
+echo "nested" > "$MNT_A/sub/b.txt"
+expect_eq "nested write-through" "$(za vault demo cat /sub/b.txt 2>/dev/null)" "nested"
+
+# T5: rm through the mount.
+rm "$MNT_A/a.txt"
+expect_missing "rm reflected in vault ls" "$(za vault demo ls / 2>/dev/null)" "a.txt"
+
+# T6: mv through the mount.
+mv "$MNT_A/sub/b.txt" "$MNT_A/c.txt"
+expect_eq "mv reflected (new path)" "$(za vault demo cat /c.txt 2>/dev/null)" "nested"
+
+# T7: a CLI/HTTP write to the *mounted* vault must route through the mount's
+# single writer (not re-open + fork) and be visible through the mountpoint.
+printf 'via-cli' | za vault demo add /d.txt >/dev/null 2>&1
+sleep 1
+expect_eq "CLI write visible through mount (API↔FUSE coherence)" \
+    "$(cat "$MNT_A/d.txt" 2>/dev/null)" "via-cli"
+
+# --- sync (opt-in) ----------------------------------------------------------
+
+if $RUN_SYNC; then
+    print_header "Sync: A → B (write via mount, read on B)"
+    seed_config "$HOME_B" "$PORT_B"
+    DAEMON_B_PID=$(start_daemon "$HOME_B" "$PORT_B" "$WORK/b.log")
+    if ! wait_up "$PORT_B"; then
+        print_error "daemon B didn't come up"
+        tail -20 "$WORK/b.log"
+    else
+        check_result "daemon B up (pid $DAEMON_B_PID)"
+        B_PUB="$(zb id 2>/dev/null | tr -d '[:space:]')"
+        echo "  B pubkey: $B_PUB"
+        # Share the vault with B, then write a file through A's mount.
+        za vault demo shares add "$B_PUB" >/dev/null 2>&1
+        check_result "shared demo with B"
+        echo "synced-payload" > "$MNT_A/synced.txt"
+        sleep 1
+        # B pulls A's vault and reads the file.
+        A_DID="$(za id 2>/dev/null | tr -d '[:space:]')"
+        zb vault demo sync "did:key:$A_DID" >/dev/null 2>&1 || \
+            print_warning "sync pull not wired the way the harness assumed — see TODO"
+        expect_eq_softfail "B reads file written through A's mount" \
+            "$(zb vault demo cat /synced.txt 2>/dev/null)" "synced-payload"
+    fi
+fi
+
+# --- summary ----------------------------------------------------------------
+
+print_summary "FUSE e2e passed" "FUSE e2e check(s) failed"

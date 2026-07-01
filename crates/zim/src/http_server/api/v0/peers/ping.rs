@@ -39,7 +39,7 @@ pub async fn handler(
     // resolver does an HTTPS GET on the hub's `did.json` and picks
     // the first peer-purpose verification method.
     let identity = Identity::parse(&req.peer).map_err(|e| PingError::BadDid(e.to_string()))?;
-    let peer = zim_did::resolve_pubkey(&identity, state.peer().resolver().as_ref())
+    let peer = zim_did::resolve_pubkey(&identity, state.resolver().as_ref())
         .await
         .map_err(|e| PingError::BadDid(e.to_string()))?;
 

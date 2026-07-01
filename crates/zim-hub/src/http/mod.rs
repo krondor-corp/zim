@@ -1,11 +1,9 @@
-pub mod admin;
 pub mod api;
-pub mod app;
 pub mod auth;
 pub mod health;
 pub mod html;
-pub mod marketing;
-pub mod sse;
+pub mod spa;
+pub mod user_did;
 pub mod well_known;
 
 use axum::http::HeaderValue;
@@ -20,11 +18,11 @@ use crate::state::AppState;
 
 /// Content Security Policy applied to every response.
 ///
-/// `script-src` allows `'unsafe-eval'` because Datastar evaluates the inline
-/// `data-on-*` action expressions via `new Function(...)`. A future hardening
-/// pass could move to signed/precompiled actions and tighten this.
+/// `script-src` is `'self'` plus `'wasm-unsafe-eval'` (the Yew/WASM bundle
+/// instantiates its module) and `'unsafe-inline'` for the small inline
+/// theme-init script. No `'unsafe-eval'` — Datastar (which needed it) is gone.
 const CSP: &str = "default-src 'self'; \
-                   script-src 'self' 'unsafe-eval' 'unsafe-inline'; \
+                   script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'; \
                    style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; \
                    font-src 'self' https://fonts.gstatic.com; \
                    img-src 'self' data: blob:; \
@@ -43,23 +41,20 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         // Operator / infra surface (unauthenticated).
         .nest("/_status", health::router(state.clone()))
-        .nest("/_events", sse::router(state.clone()))
         .nest("/.well-known", well_known::router(state.clone()))
+        // Per-user did:web documents — `did:web:<host>:u:<id>` resolves here.
+        // Public (pubkeys only), like the hub's own did.json.
+        .nest("/u", user_did::router(state.clone()))
         .route("/static/*path", get(html::static_files::handler))
-        // Public marketing page — no auth, no user data.
-        .route("/", get(marketing::home))
         // OAuth flow is public so anonymous users can sign in.
         .nest("/auth", auth::router(state.clone()))
-        // Authenticated workspace. Everything that touches a user
-        // row, a vault, or escrow lives here.
-        .nest("/app", app::router(state.clone()))
-        // Convenience: /_admin → /app/_admin so old bookmarks don't
-        // 404.
-        .route(
-            "/_admin",
-            get(|| async { axum::response::Redirect::permanent("/app/_admin") }),
-        )
+        // JSON API — the SPA's whole backend (incl. /api/v0/admin).
         .nest("/api", api::router(state.clone()))
+        // The Yew SPA owns everything else: `/`, `/v/:id`, `/settings`,
+        // `/admin`, `/device`, deep links, and its hashed assets. Mounted last
+        // as the fallback so the routes above win.
+        .route("/", get(spa::root))
+        .fallback(spa::fallback)
         .with_state(state)
         .layer(SetResponseHeaderLayer::if_not_present(
             axum::http::header::CONTENT_SECURITY_POLICY,

@@ -1,4 +1,4 @@
-//! `zim vault <target> relays rm <peer>` — revoke a relay.
+//! `zim vault <target> relays rm <recipient>` — revoke a relay by recipient.
 
 use std::fmt;
 
@@ -15,13 +15,13 @@ use crate::http_server::api::v0::vault::unrelay::UnrelayRequest;
 pub struct Rm {
     #[arg(skip)]
     pub target: String,
-    /// Peer nick or hex pubkey.
-    pub peer: String,
+    /// Peer nick or DID of the recipient whose relay entry to remove.
+    pub recipient: String,
 }
 
 #[derive(Debug, serde::Serialize)]
 pub struct RmOutput {
-    pub peer: String,
+    pub recipient: String,
     pub height: u64,
 }
 
@@ -45,10 +45,16 @@ impl Op for Rm {
 
     async fn run(&self, ctx: ApiContext) -> Result<Self::Output, Self::Error> {
         let vault_id = ctx.client.resolve_vault(&self.target).await?;
-        let peer = ctx.client.resolve_peer(&self.peer).await?;
-        let r = ctx.client.call(UnrelayRequest { vault_id, peer }).await?;
+        let recipient = ctx.client.resolve_peer(&self.recipient).await?;
+        let r = ctx
+            .client
+            .call(UnrelayRequest {
+                vault_id,
+                recipient,
+            })
+            .await?;
         Ok(RmOutput {
-            peer: r.peer,
+            recipient: r.recipient,
             height: r.height,
         })
     }
@@ -59,7 +65,7 @@ impl fmt::Display for RmOutput {
         write!(
             f,
             "{} → height {}",
-            ui::failure("relay removed", &self.peer),
+            ui::failure("relay removed", &self.recipient),
             ui::num(self.height.to_string())
         )
     }

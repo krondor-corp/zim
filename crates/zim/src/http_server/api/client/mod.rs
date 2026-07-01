@@ -16,15 +16,10 @@
 
 #[allow(clippy::module_inception)]
 mod client;
-mod error;
 
 pub use client::ApiClient;
-pub use error::ApiError;
 
-use reqwest::{Client, RequestBuilder, Url};
-use serde::de::DeserializeOwned;
-
-pub trait ApiRequest {
-    type Response: DeserializeOwned;
-    fn build_request(self, base_url: &Url, client: &Client) -> RequestBuilder;
-}
+// The request/response pattern lives in `zim-api` now (one definition,
+// shared with the hub client). Re-exported here so the daemon's endpoint
+// `impl ApiRequest` blocks and their `ApiError` imports keep this path.
+pub use zim_api::{ApiError, ApiRequest};

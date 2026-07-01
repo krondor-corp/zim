@@ -7,13 +7,20 @@
 //! 3. `$XDG_CONFIG_HOME/zim` (XDG default)
 //! 4. `~/.config/zim`
 //!
+//! **Debug builds** (`cfg!(debug_assertions)`, i.e. anything but
+//! `--release`) nest the *default* location under a `debug/` subdir —
+//! so a locally-installed debug binary (`./bin/install --dev`) keeps
+//! its state isolated from a release install and is trivial to wipe
+//! with `zim clean`. Explicit overrides (1, 2) are honoured verbatim:
+//! if you name a path, that's the path.
+//!
 //! Layout under the resolved directory:
 //!
 //! ```text
 //! $ZIM_HOME/
 //! ├── config.toml      # AppConfig (api_port, log_level, …)
 //! ├── identity.key     # Ed25519 secret, hex-encoded
-//! ├── log.sqlite       # SqliteVaultLog (tracks every known vault)
+//! ├── log.sqlite       # vault log + contacts book (SqliteVaultLog, SqlitePeerStore)
 //! ├── blobs/           # BlobsProvider::legacy_fs(...) store
 //! └── state/
 //!     └── daemon.log   # daemon process log (future)
@@ -21,9 +28,35 @@
 
 use std::path::{Path, PathBuf};
 
+/// Subdirectory appended to the *default* home in debug builds, so a
+/// debug binary never shares state with a release install. Release
+/// builds resolve to the bare default. See `with_profile_suffix`.
+#[cfg(debug_assertions)]
+pub const DEBUG_SUBDIR: &str = "debug";
+
+/// Whether this binary resolves the default home under [`DEBUG_SUBDIR`].
+/// True for any non-`--release` build. Surfaced so ops can label output
+/// ("debug profile → ~/.config/zim/debug").
+pub const fn is_debug_profile() -> bool {
+    cfg!(debug_assertions)
+}
+
+/// Append the debug subdir to a *default*-resolved base in debug
+/// builds; no-op in release. Explicit overrides never pass through here.
+#[cfg(debug_assertions)]
+fn with_profile_suffix(base: PathBuf) -> PathBuf {
+    base.join(DEBUG_SUBDIR)
+}
+#[cfg(not(debug_assertions))]
+fn with_profile_suffix(base: PathBuf) -> PathBuf {
+    base
+}
+
 /// Base directory. Honours `$ZIM_HOME`, then `$XDG_CONFIG_HOME/zim`,
 /// then `~/.config/zim`. The `cli_override` parameter wins outright
-/// when present (used for the `--config-path` flag).
+/// when present (used for the `--config-path` flag). Debug builds nest
+/// the *default* path under [`DEBUG_SUBDIR`]; explicit overrides
+/// (`cli_override`, `$ZIM_HOME`) are used verbatim.
 pub fn home_dir(cli_override: Option<&Path>) -> Result<PathBuf, std::io::Error> {
     if let Some(p) = cli_override {
         return Ok(p.to_path_buf());
@@ -31,33 +64,29 @@ pub fn home_dir(cli_override: Option<&Path>) -> Result<PathBuf, std::io::Error> 
     if let Some(v) = std::env::var_os("ZIM_HOME") {
         return Ok(PathBuf::from(v));
     }
-    if let Some(v) = std::env::var_os("XDG_CONFIG_HOME") {
-        return Ok(PathBuf::from(v).join("zim"));
-    }
-    let home = dirs::home_dir().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "could not determine home directory",
-        )
-    })?;
-    Ok(home.join(".config").join("zim"))
+    let base = if let Some(v) = std::env::var_os("XDG_CONFIG_HOME") {
+        PathBuf::from(v).join("zim")
+    } else {
+        let home = dirs::home_dir().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "could not determine home directory",
+            )
+        })?;
+        home.join(".config").join("zim")
+    };
+    Ok(with_profile_suffix(base))
 }
 
 pub fn config_file(home: &Path) -> PathBuf {
     home.join("config.toml")
 }
 
-/// Local peer address book — nickname → pubkey, owned by the daemon.
-/// See `crate::peers`.
-pub fn peers_file(home: &Path) -> PathBuf {
-    home.join("peers.toml")
-}
-
 pub fn identity_file(home: &Path) -> PathBuf {
     home.join("identity.key")
 }
 
-/// Where `zim login` persists the daemon's hub session — the URL we
+/// Where `zim hub login` persists the daemon's hub session — the URL we
 /// authenticated against + the bearer token from the device-code
 /// poll. Read by the daemon on startup so it can talk to the hub
 /// without re-prompting.

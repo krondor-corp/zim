@@ -10,7 +10,7 @@
 //!
 //! The companion [`OpsLog`](super::OpsLog) stores `Op`s keyed by `OpId`.
 
-use iroh_blobs::Hash;
+use crate::linked_data::Hash;
 use serde::{Deserialize, Serialize};
 
 use crate::fs::AbsPath;

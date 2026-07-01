@@ -40,6 +40,12 @@ enum Entry {
         secret: Secret,
         #[serde(default)]
         mime: Option<String>,
+        /// `blake3(plaintext)` for the file body — raw 32 bytes as a CBOR byte
+        /// string. Present on entries written by recent daemons; `None` on
+        /// legacy or synthetic entries. Used by `readFile` to confirm the
+        /// correct key was used (streaming cipher has no auth tag).
+        #[serde(default)]
+        plaintext_hash: Option<serde_bytes::ByteBuf>,
     },
     Dir {
         link: Cid,
@@ -62,6 +68,10 @@ struct EntryView {
     /// 32-byte hex — feed back to `read_dir` / `read_file`.
     secret: String,
     mime: Option<String>,
+    /// blake3 hex of the plaintext body (files only). Feed back to `readFile`
+    /// so it can verify the decrypted output. `null` for legacy entries and
+    /// all directories.
+    plaintext_hash: Option<String>,
 }
 
 /// Subset of the hub's `/api/v0/v/{id}/manifest` response that
@@ -167,13 +177,20 @@ impl WasmVault {
     /// File content uses the *streaming* cipher format (12-byte
     /// nonce || raw ChaCha20 keystream — see `Secret::encrypt_reader`,
     /// which `ContentStore::put_file` writes with), NOT the one-shot
-    /// AEAD envelope dir bodies use. Integrity comes from
-    /// content-addressing: the ciphertext hash was already verified
-    /// by fetching the blob at that hash.
+    /// AEAD envelope dir bodies use. Pass `plaintext_hash_hex` (the
+    /// `plaintext_hash` field from the parent dir listing) to verify
+    /// the decrypted output — wrong key yields garbage silently without
+    /// this check. `null` skips verification (legacy entries only).
     #[wasm_bindgen(js_name = readFile)]
-    pub fn read_file(&self, secret_hex: &str, ciphertext: &[u8]) -> Result<Vec<u8>, JsError> {
+    pub fn read_file(
+        &self,
+        secret_hex: &str,
+        ciphertext: &[u8],
+        plaintext_hash_hex: Option<String>,
+    ) -> Result<Vec<u8>, JsError> {
         let secret = secret_from_hex(secret_hex)?;
-        decode_file_inner(&secret, ciphertext).map_err(|e| JsError::new(&e))
+        decode_file_inner(&secret, ciphertext, plaintext_hash_hex.as_deref())
+            .map_err(|e| JsError::new(&e))
     }
 }
 
@@ -187,7 +204,11 @@ fn decode_dir(secret: &Secret, ciphertext: &[u8]) -> Result<String, JsError> {
     decode_dir_inner(secret, ciphertext).map_err(|e| JsError::new(&e))
 }
 
-fn decode_file_inner(secret: &Secret, ciphertext: &[u8]) -> Result<Vec<u8>, String> {
+fn decode_file_inner(
+    secret: &Secret,
+    ciphertext: &[u8],
+    plaintext_hash_hex: Option<&str>,
+) -> Result<Vec<u8>, String> {
     use std::io::Read;
     let mut reader = secret
         .decrypt_reader(std::io::Cursor::new(ciphertext.to_vec()))
@@ -195,7 +216,20 @@ fn decode_file_inner(secret: &Secret, ciphertext: &[u8]) -> Result<Vec<u8>, Stri
     let mut plaintext = Vec::with_capacity(ciphertext.len().saturating_sub(12));
     reader
         .read_to_end(&mut plaintext)
-        .map_err(|e| format!("file decrypt failed: {e}"))?;
+        .map_err(|e| format!("file read failed: {e}"))?;
+
+    if let Some(expected_hex) = plaintext_hash_hex {
+        let expected =
+            hex::decode(expected_hex).map_err(|e| format!("plaintext_hash hex invalid: {e}"))?;
+        let actual = blake3::hash(&plaintext);
+        if actual.as_bytes() != expected.as_slice() {
+            return Err(format!(
+                "plaintext_hash mismatch: got {} expected {expected_hex}",
+                hex::encode(actual.as_bytes())
+            ));
+        }
+    }
+
     Ok(plaintext)
 }
 
@@ -211,12 +245,20 @@ fn decode_dir_inner(secret: &Secret, ciphertext: &[u8]) -> Result<String, String
     let views: Vec<EntryView> = dir
         .into_iter()
         .map(|(name, entry)| match entry {
-            Entry::File { link, secret, mime } => EntryView {
+            Entry::File {
+                link,
+                secret,
+                mime,
+                plaintext_hash,
+            } => EntryView {
                 name,
                 kind: "file",
                 hash: hex::encode(link.hash().digest()),
                 secret: hex::encode(secret.bytes()),
                 mime,
+                plaintext_hash: plaintext_hash
+                    .filter(|b| b.len() == 32)
+                    .map(|b| hex::encode(&*b)),
             },
             Entry::Dir { link, secret } => EntryView {
                 name,
@@ -224,6 +266,7 @@ fn decode_dir_inner(secret: &Secret, ciphertext: &[u8]) -> Result<String, String
                 hash: hex::encode(link.hash().digest()),
                 secret: hex::encode(secret.bytes()),
                 mime: None,
+                plaintext_hash: None,
             },
         })
         .collect();
@@ -303,8 +346,19 @@ mod tests {
         encrypted_reader.read_to_end(&mut ciphertext).unwrap();
 
         // Browser side.
-        let recovered = decode_file_inner(&secret, &ciphertext).expect("file decode");
+        // No plaintext_hash provided (legacy path).
+        let recovered = decode_file_inner(&secret, &ciphertext, None).expect("file decode");
         assert_eq!(recovered, plaintext);
+
+        // With plaintext_hash: verify match.
+        let hash_hex = hex::encode(blake3::hash(plaintext).as_bytes());
+        let verified =
+            decode_file_inner(&secret, &ciphertext, Some(&hash_hex)).expect("hash verify");
+        assert_eq!(verified, plaintext);
+
+        // Wrong hash → error.
+        let bad_hex = hex::encode([0u8; 32]);
+        assert!(decode_file_inner(&secret, &ciphertext, Some(&bad_hex)).is_err());
     }
 
     /// Wrong secret → decrypt error, not a panic or garbage decode.

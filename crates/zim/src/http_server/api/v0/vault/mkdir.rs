@@ -30,9 +30,25 @@ pub struct MkdirResponse {
 
 pub async fn handler(
     State(state): State<ServiceState>,
-    VaultHandle { mut vault, .. }: VaultHandle,
+    VaultHandle { id, mut vault }: VaultHandle,
     Json(req): Json<MkdirRequest>,
 ) -> Result<impl IntoResponse, MkdirError> {
+    #[cfg(feature = "fuse")]
+    if let Some(res) = state.mounts().fs_mkdir(id, req.path.clone()).await {
+        let c = res.map_err(|e| MkdirError::Mkdir(e.to_string()))?;
+        return Ok((
+            http::StatusCode::OK,
+            Json(MkdirResponse {
+                path: req.path,
+                link: c.link,
+                height: c.height,
+            }),
+        )
+            .into_response());
+    }
+    #[cfg(not(feature = "fuse"))]
+    let _ = id;
+
     let abs = AbsPath::new(&req.path).ok_or_else(|| MkdirError::BadPath(req.path.clone()))?;
     vault
         .fs()

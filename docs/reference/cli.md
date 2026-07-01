@@ -98,6 +98,22 @@ This expands to:
 
 This means adding a new command is: write the struct + error + `Op` impl, then add one line to the `command_enum!`.
 
+### Profile-gated commands
+
+An entry can be gated to a build profile with an optional leading `cfg(<predicate>):` prefix. The macro threads the `#[cfg(<predicate>)]` onto every generated site for that entry — the `Command` variant, its `OpOutput`/`OpError` variants, and both dispatch arms — so the command is wholly present or wholly absent:
+
+```rust
+command_enum! {
+    (Init, ops::Init),
+    cfg(debug_assertions):      (Clean,  ops::Clean),   // debug builds only
+    cfg(not(debug_assertions)): (Update, ops::Update),  // release builds only
+}
+```
+
+The prefix is a bare `cfg(...):`, **not** `#[cfg(...)]` — a `#[cfg(...)]` would be ambiguous with the clap `#[…]` attribute repetition that follows (clap attrs like `#[command(subcommand)]` still go in their normal `#[…]` position and land only on the `Command` variant). Gate the op's `pub mod` / re-export in `ops/mod.rs` with the same `#[cfg(...)]` so the unused code is compiled out too.
+
+This is how `debug_assertions` (on for `cargo build`, off for `--release`) drives the dev/release split: `zim clean` exists only in debug builds. See [INSTALL.md](../INSTALL.md#debug-vs-release-profile) for the user-facing behavior.
+
 ### Nesting
 
 Subcommand groups (like `bucket shares create`) use nested `command_enum!` invocations. The `bucket` module has its own `command_enum!` generating a `BucketCommand`, then wraps it:

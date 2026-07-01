@@ -119,7 +119,7 @@ pub async fn handler(
 
     // Land authenticated users in the workspace, not on the public
     // marketing page.
-    ([(SET_COOKIE, cookie)], Redirect::to("/app")).into_response()
+    ([(SET_COOKIE, cookie)], Redirect::to("/")).into_response()
 }
 
 /// Look up the user by email or insert a fresh row. Emails on the

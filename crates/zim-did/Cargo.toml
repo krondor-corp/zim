@@ -13,6 +13,13 @@ categories.workspace = true
 name = "zim_did"
 path = "src/lib.rs"
 
+[features]
+# The reqwest-backed did:web resolver. Default for the daemon + hub;
+# wasm consumers build with `default-features = false` to drop reqwest +
+# tokio (and their native transports) and keep just the DID/Identity types.
+default = ["http-resolver"]
+http-resolver = ["dep:reqwest", "dep:tokio"]
+
 [dependencies]
 zim-crypto = { path = "../zim-crypto", version = "0.1.0" }
 
@@ -24,9 +31,10 @@ hex = "0.4"
 percent-encoding = "2"
 
 # HTTP-backed did:web resolver lives here so peers (daemon + hub) can
-# resolve identities without each app rebuilding it.
-reqwest = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
+# resolve identities without each app rebuilding it. Gated behind
+# `http-resolver` so the wasm FS/crypto layer doesn't pull native HTTP.
+reqwest = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["sync"], optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }

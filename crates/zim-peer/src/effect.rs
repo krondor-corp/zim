@@ -5,8 +5,8 @@
 //! submit an effect into the queue. The background runner picks them
 //! up and dispatches via [`SyncCoordinator::execute`](crate::SyncCoordinator::execute).
 //!
-//! Three live variants today: [`Self::PullFromPeer`],
-//! [`Self::AnnounceHead`], [`Self::OfferShare`]. Earlier drafts
+//! Two live variants today: [`Self::PullFromPeer`] and
+//! [`Self::AnnounceHead`]. Earlier drafts
 //! carried Vault-mutation variants (`Add` / `Mkdir` / `Rm` / `Save` /
 //! `MergeWith`) and infra ones (`ApplyRemoteChain`, `DownloadBlobs`,
 //! `Log`) but every mutation path the daemon actually has calls
@@ -31,22 +31,18 @@ pub enum Effect {
         peer_id: PublicKey,
     },
 
-    /// Tell a peer we advanced. Push, no reply expected.
+    /// Tell `peer_id` we advanced — push, no reply expected. The sole
+    /// notify mechanism: the receiver turns it into a `PullFromPeer`,
+    /// accepting per its [`AcceptPolicy`](crate::AcceptPolicy) if the
+    /// vault is new, or fast-forwarding if known. `recipient` is the
+    /// shareholder this push serves — `peer_id` itself for a direct
+    /// share, the hosted client when `peer_id` is its relay.
     AnnounceHead {
         peer_id: PublicKey,
         vault_id: VaultId,
-        head: Head,
-    },
-
-    /// Tell a peer "I just added you to this vault's shares — here's
-    /// where I am, come pull it." One-way push fired by the HTTP
-    /// `share` handler after `vault.add_share + save`. The receiver
-    /// bootstraps the vault into its local registry. See
-    /// `docs/research/optimistic-share-acceptance.md` for the v2
-    /// non-blocking variant.
-    OfferShare {
-        peer_id: PublicKey,
-        vault_id: VaultId,
-        head: Head,
+        // Boxed: `Head` dwarfs the other variant, and an effect is moved
+        // through an mpsc queue, so keep the enum small.
+        head: Box<Head>,
+        recipient: PublicKey,
     },
 }

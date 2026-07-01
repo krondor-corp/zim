@@ -15,10 +15,10 @@
 //! gone: typing a hex pubkey doesn't prove possession and let
 //! anyone claim metadata visibility for any pubkey.
 
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use zim_crypto::PublicKey;
@@ -29,9 +29,61 @@ use crate::state::AppState;
 
 pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
+        .route("/", get(list))
         .route("/enroll-challenge", get(enroll_challenge))
         .route("/self", post(self_enroll))
+        .route("/:pubkey", delete(remove))
         .with_state(state)
+}
+
+// Wire types are shared: `zim_api::hub::{Device, DevicesResponse}`. This
+// route mirrors `zim_api::hub::DevicesRequest` (`GET /api/v0/devices`).
+use zim_api::hub::{Device, DevicesResponse};
+
+/// `GET /api/v0/devices` — the signed-in user's enrolled peers.
+async fn list(State(state): State<AppState>, RequireUser(user): RequireUser) -> Response {
+    match UserPeer::list_for_user(user.id(), &state.db).await {
+        Ok(rows) => Json(DevicesResponse {
+            devices: rows
+                .iter()
+                .map(|r| Device {
+                    pubkey: r.peer_pubkey_hex().to_string(),
+                    did: r
+                        .peer_pubkey()
+                        .map(|pk| zim_did::Identity::Key(pk).to_did().to_string())
+                        .unwrap_or_default(),
+                    label: r.label().map(str::to_string),
+                    kind: r.kind().to_string(),
+                    created_at: r.created_at().to_string(),
+                })
+                .collect(),
+        })
+        .into_response(),
+        Err(e) => {
+            tracing::error!("list devices: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, "list failed").into_response()
+        }
+    }
+}
+
+/// `DELETE /api/v0/devices/{pubkey}` — unenroll one of the user's peers.
+async fn remove(
+    State(state): State<AppState>,
+    RequireUser(user): RequireUser,
+    Path(pubkey): Path<String>,
+) -> Response {
+    let pk = match PublicKey::from_hex(pubkey.trim()) {
+        Ok(p) => p,
+        Err(_) => return (StatusCode::BAD_REQUEST, "invalid pubkey hex").into_response(),
+    };
+    match UserPeer::delete_for_user(user.id(), &pk, &state.db).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "no such device").into_response(),
+        Err(e) => {
+            tracing::error!("delete device: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, "delete failed").into_response()
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -132,7 +184,7 @@ async fn self_enroll(
 
     // 5. Idempotent path: if THIS user already has THIS pubkey
     //    enrolled, treat the call as a successful no-op. Lets
-    //    `zim login` re-run without manual cleanup — the daemon
+    //    `zim hub login` re-run without manual cleanup — the daemon
     //    just gets a fresh bearer + reuses the existing row.
     //
     //    A different user attempting the same pubkey still hits
@@ -160,16 +212,11 @@ async fn self_enroll(
         }
     }
 
+    // Label is optional: a web key is the account's single master identity
+    // and needs none; daemons may set one to tell devices apart. Empty → NULL.
     let label = body.label.trim();
-    let display_label = if label.is_empty() {
-        match kind {
-            PeerKind::Web => "browser".to_string(),
-            PeerKind::Daemon => "daemon".to_string(),
-        }
-    } else {
-        label.to_string()
-    };
-    match UserPeer::create(user.id(), &pubkey, &display_label, kind, &state.db).await {
+    let label = (!label.is_empty()).then_some(label);
+    match UserPeer::create(user.id(), &pubkey, label, kind, &state.db).await {
         Ok(_) => {}
         Err(sqlx::Error::Database(e)) if e.message().contains("UNIQUE constraint failed") => {
             return (StatusCode::CONFLICT, "already enrolled").into_response();

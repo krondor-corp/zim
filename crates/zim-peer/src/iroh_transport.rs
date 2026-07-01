@@ -25,7 +25,6 @@ use zim_core::iroh::{self, AcceptError, Connection, Endpoint, ProtocolHandler};
 use zim_crypto::PublicKey;
 
 use crate::coordinator::SyncCoordinator;
-use crate::peers::PeerStore;
 use crate::wire_protocol::{dispatch_request, WireReply, WireRequest};
 use zim_core::vault::VaultLog;
 
@@ -38,14 +37,14 @@ const MAX_MESSAGE: usize = 1024 * 1024;
 
 /// Iroh `ProtocolHandler` that routes incoming sync messages into a
 /// [`SyncCoordinator`].
-pub struct SyncProtocol<L: VaultLog + Clone + 'static, P: PeerStore + 'static>
+pub struct SyncProtocol<L: VaultLog + Clone + 'static>
 where
     L::Error: std::error::Error + Send + Sync + 'static,
 {
-    coord: Arc<SyncCoordinator<L, P>>,
+    coord: Arc<SyncCoordinator<L>>,
 }
 
-impl<L: VaultLog + Clone + 'static, P: PeerStore + 'static> std::fmt::Debug for SyncProtocol<L, P>
+impl<L: VaultLog + Clone + 'static> std::fmt::Debug for SyncProtocol<L>
 where
     L::Error: std::error::Error + Send + Sync + 'static,
 {
@@ -54,16 +53,16 @@ where
     }
 }
 
-impl<L: VaultLog + Clone + 'static, P: PeerStore + 'static> SyncProtocol<L, P>
+impl<L: VaultLog + Clone + 'static> SyncProtocol<L>
 where
     L::Error: std::error::Error + Send + Sync + 'static,
 {
-    pub fn new(coord: Arc<SyncCoordinator<L, P>>) -> Self {
+    pub fn new(coord: Arc<SyncCoordinator<L>>) -> Self {
         Self { coord }
     }
 }
 
-impl<L: VaultLog + Clone + 'static, P: PeerStore + 'static> Clone for SyncProtocol<L, P>
+impl<L: VaultLog + Clone + 'static> Clone for SyncProtocol<L>
 where
     L::Error: std::error::Error + Send + Sync + 'static,
 {
@@ -74,7 +73,7 @@ where
     }
 }
 
-impl<L: VaultLog + Clone + 'static, P: PeerStore + 'static> ProtocolHandler for SyncProtocol<L, P>
+impl<L: VaultLog + Clone + 'static> ProtocolHandler for SyncProtocol<L>
 where
     L::Error: std::error::Error + Send + Sync + 'static,
 {
@@ -85,8 +84,8 @@ where
     }
 }
 
-async fn handle_connection<L: VaultLog + Clone + 'static, P: PeerStore + 'static>(
-    coord: Arc<SyncCoordinator<L, P>>,
+async fn handle_connection<L: VaultLog + Clone + 'static>(
+    coord: Arc<SyncCoordinator<L>>,
     conn: Connection,
 ) -> Result<(), AcceptError>
 where

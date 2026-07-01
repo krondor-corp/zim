@@ -45,16 +45,6 @@ pub struct VerificationMethod {
     /// [`did_key_decode`] is the bridge.
     #[serde(rename = "publicKeyMultibase")]
     pub public_key_multibase: String,
-
-    /// Custom field describing what this verification method is FOR.
-    /// Not in the DID-core spec — added so the dial loop can tell a
-    /// browser-resident `web` key from a server-runnable `peer` key
-    /// without dialing every method and discovering by timeout.
-    ///
-    /// Missing/unknown → [`VmPurpose::Unknown`]. Treat unknown as
-    /// peer-capable for now; revisit if it causes wasted dials.
-    #[serde(default)]
-    pub purpose: VmPurpose,
 }
 
 impl VerificationMethod {
@@ -63,18 +53,6 @@ impl VerificationMethod {
     pub fn pubkey(&self) -> Result<PublicKey, String> {
         did_key_decode(&self.public_key_multibase)
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum VmPurpose {
-    /// Dialable as an iroh peer (daemon / hub backend).
-    Peer,
-    /// Browser-resident key (`zim-wasm`) — signs and decrypts but
-    /// never runs an endpoint. Dial loop skips these.
-    Web,
-    #[default]
-    Unknown,
 }
 
 #[cfg(test)]
@@ -86,11 +64,10 @@ mod tests {
         let body = r#"{
             "id": "did:web:hub.example.com",
             "verificationMethod": [{
-                "id": "did:web:hub.example.com#peer",
+                "id": "did:web:hub.example.com#key-0",
                 "controller": "did:web:hub.example.com",
                 "type": "Ed25519VerificationKey2020",
-                "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
-                "purpose": "peer"
+                "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
             }]
         }"#;
         let doc: DidDocument = serde_json::from_str(body).unwrap();
@@ -98,25 +75,23 @@ mod tests {
         assert_eq!(doc.verification_method.len(), 1);
         let vm = &doc.verification_method[0];
         assert_eq!(vm.vm_type, "Ed25519VerificationKey2020");
-        assert_eq!(vm.purpose, VmPurpose::Peer);
         assert!(vm.pubkey().is_ok());
     }
 
     #[test]
-    fn unknown_purpose_falls_through() {
-        // Two hashes on the raw string so JSON fragments like `"#a"`
-        // don't close it early.
+    fn unknown_fields_are_ignored() {
         let body = r##"{
             "id": "did:web:x",
             "verificationMethod": [{
                 "id": "#a",
                 "controller": "did:web:x",
                 "type": "Ed25519VerificationKey2020",
-                "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+                "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+                "purpose": "legacy-field-ignored"
             }]
         }"##;
         let doc: DidDocument = serde_json::from_str(body).unwrap();
-        assert_eq!(doc.verification_method[0].purpose, VmPurpose::Unknown);
+        assert!(doc.verification_method[0].pubkey().is_ok());
     }
 
     #[test]

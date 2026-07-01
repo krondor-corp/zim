@@ -18,12 +18,23 @@ path = "src/lib.rs"
 name = "zim"
 path = "src/main.rs"
 
+[features]
+# Off by default so the daemon builds without libfuse/macFUSE. Release builds
+# for end users turn it on: `cargo build -p zim --features fuse`.
+default = []
+fuse = ["dep:zim-fuse"]
+# Hub integration: the `zim hub` subcommand + the typed hub client.
+# Off by default so a daemon-only `zim` doesn't compile the hub surface.
+hub = ["zim-api/hub"]
+
 [dependencies]
+zim-api = { path = "../zim-api", version = "0.1.0" }
 zim-core = { path = "../zim-core", version = "0.1.0" }
 zim-crypto = { path = "../zim-crypto", version = "0.1.0" }
 zim-did = { path = "../zim-did", version = "0.1.0" }
 zim-runtime = { path = "../zim-runtime", version = "0.1.0" }
 zim-peer = { path = "../zim-peer", version = "0.1.0" }
+zim-fuse = { path = "../zim-fuse", version = "0.1.0", features = ["mount"], optional = true }
 
 anyhow = { workspace = true }
 async-trait = { workspace = true }

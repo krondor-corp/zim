@@ -34,7 +34,7 @@ pub async fn handler(
     Json(req): Json<SyncRequest>,
 ) -> Result<impl IntoResponse, SyncError> {
     let identity = Identity::parse(&req.peer).map_err(|e| SyncError::BadPeer(e.to_string()))?;
-    let peer = zim_did::resolve_pubkey(&identity, state.peer().resolver().as_ref())
+    let peer = zim_did::resolve_pubkey(&identity, state.resolver().as_ref())
         .await
         .map_err(|e| SyncError::BadPeer(e.to_string()))?;
     state

@@ -1,9 +1,9 @@
+pub mod accept;
 pub mod access;
 pub mod config;
 pub mod database;
 pub mod errors;
 pub mod http;
-pub mod sri;
 pub mod state;
 
 pub use config::Config;

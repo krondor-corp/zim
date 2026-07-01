@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>zim</title>
+    <link rel="icon" type="image/svg+xml" href="/static/zim-logo.svg" />
+    <link rel="stylesheet" href="/static/style.css" />
+  <link rel="modulepreload" href="/zim-hub-web-b0afb0cd636f2f33.js" crossorigin="anonymous" integrity="sha384-lK+9kRjidmJYSQgb10mvO2/prioaSh7kLyb/3T74qcMhei64qml1PhWg9APnX1fn"><link rel="preload" href="/zim-hub-web-b0afb0cd636f2f33_bg.wasm" crossorigin="anonymous" integrity="sha384-netIV1We32+rbz5CfPLmOO+uvEV6+PtZXyP0LO91itU1za+AcZ7cHjhFo+bh9fRZ" as="fetch" type="application/wasm"></head>
+  <body>
+<script type="module">
+import init, * as bindings from '/zim-hub-web-b0afb0cd636f2f33.js';
+const wasm = await init({ module_or_path: '/zim-hub-web-b0afb0cd636f2f33_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script></body>
+</html>

@@ -32,6 +32,7 @@ docs/
 | [concepts/data-model.md](./concepts/data-model.md) | Bucket, manifest, nodes, links |
 | [concepts/cryptography.md](./concepts/cryptography.md) | Ed25519, X25519, ChaCha20-Poly1305 |
 | [concepts/synchronization.md](./concepts/synchronization.md) | Peer sync protocol |
+| [concepts/acceptance-and-sharing.md](./concepts/acceptance-and-sharing.md) | `AcceptPolicy` hook, recipient routing, share population |
 | [concepts/security.md](./concepts/security.md) | Threat model, trust boundaries |
 | [concepts/access-model.md](./concepts/access-model.md) | Shares, mirrors, publication, relay |
 | [concepts/identity.md](./concepts/identity.md) | Web-key vault, Google auth, Argon2id |

@@ -3,7 +3,6 @@ use axum::response::IntoResponse;
 use axum::Json;
 use reqwest::{Client, RequestBuilder, Url};
 use serde::{Deserialize, Serialize};
-use zim_core::fs::Relay;
 use zim_core::linked_data::Link;
 use zim_did::Identity;
 
@@ -17,13 +16,16 @@ use zim_peer::VaultLookupError;
 pub struct RelayRequest {
     #[serde(skip)]
     pub vault_id: zim_core::vault::VaultId,
-    /// DID URL of the relay peer.
-    pub peer: String,
+    /// DID URL of the ephemeral recipient peer (e.g. browser session key).
+    pub recipient: String,
+    /// DID URL of the always-on via peer (e.g. the hub).
+    pub via: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelayResponse {
-    pub peer: String,
+    pub recipient: String,
+    pub via: String,
     pub link: Link,
     pub height: u64,
 }
@@ -33,15 +35,18 @@ pub async fn handler(
     VaultHandle { mut vault, .. }: VaultHandle,
     Json(req): Json<RelayRequest>,
 ) -> Result<impl IntoResponse, RelayError> {
-    let identity = Identity::parse(&req.peer).map_err(|e| RelayError::BadPeer(e.to_string()))?;
-    // Resolve `did:web` into a concrete pubkey so the manifest's
-    // relay list stays `Identity::Key`-shaped (matches `remove_relay`
-    // which matches by pubkey). The originating DID URL is lost on
-    // disk; track-DID-alongside-key is a Phase 3 follow-up.
-    let pubkey = zim_did::resolve_pubkey(&identity, state.peer().resolver().as_ref())
+    let recipient_identity =
+        Identity::parse(&req.recipient).map_err(|e| RelayError::BadPeer(e.to_string()))?;
+    let via_identity = Identity::parse(&req.via).map_err(|e| RelayError::BadPeer(e.to_string()))?;
+    let recipient_pk = zim_did::resolve_pubkey(&recipient_identity, state.resolver().as_ref())
         .await
         .map_err(|e| RelayError::BadPeer(e.to_string()))?;
-    vault.add_relay(Relay::new(Identity::Key(pubkey)));
+    let via_pk = zim_did::resolve_pubkey(&via_identity, state.resolver().as_ref())
+        .await
+        .map_err(|e| RelayError::BadPeer(e.to_string()))?;
+    vault
+        .add_share_via(recipient_pk, Some(Identity::Key(via_pk)))
+        .map_err(|e| RelayError::Save(e.to_string()))?;
     let link = vault
         .save()
         .await
@@ -54,7 +59,8 @@ pub async fn handler(
     Ok((
         http::StatusCode::OK,
         Json(RelayResponse {
-            peer: req.peer,
+            recipient: req.recipient,
+            via: req.via,
             link,
             height: head.height,
         }),

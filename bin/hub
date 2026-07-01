@@ -40,6 +40,11 @@ fi
 export ZIM_HUB_LISTEN ZIM_HUB_HOME ZIM_HUB_ADMIN_EMAILS
 export ZIM_HUB_S3_ENDPOINT ZIM_HUB_S3_ACCESS_KEY ZIM_HUB_S3_SECRET_KEY ZIM_HUB_S3_BUCKET
 
+# Rebuild the Yew SPA first — the hub serves web/dist, and a debug build
+# reads it off disk per-request, so this guarantees a fresh bundle every
+# launch instead of silently serving a stale one.
+"$PROJECT_ROOT/bin/build-web"
+
 cargo build --bin zim-hub
 
 # `confit run credentials.app --upper` resolves GOOGLE_O_AUTH_CLIENT_ID

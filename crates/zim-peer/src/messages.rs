@@ -19,6 +19,7 @@
 use serde::{Deserialize, Serialize};
 
 use zim_core::vault::{Head, VaultId};
+use zim_crypto::PublicKey;
 
 // ─── Head ───────────────────────────────────────────────────────────
 
@@ -122,32 +123,24 @@ pub struct PongReply {
     pub uptime_secs: u64,
 }
 
-// ─── Share offer ────────────────────────────────────────────────────
-
-/// "I just added you to the shares of this vault — here's its head
-/// so you can pull the chain." Fire-and-forget push: receiver
-/// answers with a bare ack and then bootstraps the vault locally on
-/// its own time (manifest walk → log population → registry insert).
-///
-/// v1 is "spam on share" — alice's daemon sends this every time her
-/// `share` op adds a recipient, no opt-in handshake. We accept the
-/// risk that anyone could announce a vault to us; later versions can
-/// gate this behind a known-peers list.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShareOffered {
-    pub vault_id: VaultId,
-    pub head: Head,
-}
-
 // ─── Head advanced (push) ───────────────────────────────────────────
 
-/// "I just advanced to this head on `vault_id` — come pull."
-/// Fire-and-forget push: receiver acks and submits an
-/// `Effect::PullFromPeer` on its own time.
+/// "I just advanced to this head on `vault_id` — come pull." The sole
+/// notify push: a fire-and-forget message the receiver acks, then
+/// turns into an `Effect::PullFromPeer`. Acceptance is decided by the
+/// receiver's [`AcceptPolicy`](crate::AcceptPolicy); a known vault
+/// fast-forwards.
+///
+/// `recipient` is the shareholder this push is *for* — equal to the
+/// dialed peer for a direct share, but a hosted client (e.g. a browser
+/// key) when the dialed peer is that client's relay. A relay needs it to
+/// know whose storage the push is destined for; a direct peer's policy
+/// ignores it (the recipient is itself).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HeadAdvanced {
     pub vault_id: VaultId,
     pub head: Head,
+    pub recipient: PublicKey,
 }
 
 // ─── Ack ────────────────────────────────────────────────────────────

@@ -1,7 +1,8 @@
 //! Daemon-side runtime state — held by every axum handler via `State`.
 //!
-//! Owns the `zim_peer::Peer<SqliteVaultLog, TomlPeerStore>` plus the resolved data
-//! dir. Vaults are tracked by the inner `SyncCoordinator`'s registry
+//! Owns the `zim_peer::Peer<SqliteVaultLog>` plus the contacts book, the
+//! DID resolver, and the resolved data dir. Vaults are tracked by the
+//! inner `SyncCoordinator`'s registry
 //! and persisted in the `SqliteVaultLog`; the daemon doesn't keep a
 //! separate "current vault" notion. Per-vault handlers take their
 //! target via the URL (`/api/v0/vault/:vault_id/...`) and the
@@ -16,12 +17,12 @@ use axum::response::{IntoResponse, Response};
 
 use zim_core::blobs::BlobsProvider;
 use zim_crypto::PrivateKey;
-use zim_did::HttpDidResolver;
+use zim_did::{DidResolver, HttpDidResolver};
 use zim_peer::SqliteVaultLog;
-use zim_peer::{Peer, VaultLookupError};
+use zim_peer::{AcceptPolicy, Peer, SqlitePeerStore, VaultLookupError};
 
+use crate::accept::ContactsAcceptPolicy;
 use crate::context::paths;
-use crate::peers::TomlPeerStore;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StateError {
@@ -57,8 +58,20 @@ pub fn vault_lookup_response(e: VaultLookupError) -> Response {
 
 #[derive(Clone)]
 pub struct ServiceState {
-    peer: Peer<SqliteVaultLog, TomlPeerStore>,
+    peer: Peer<SqliteVaultLog>,
+    /// The contacts address book — `nick → DID` with a `trusted` flag,
+    /// in the daemon's `log.sqlite`. Shared with the acceptance policy
+    /// (same handle), so HTTP handlers and the gate see one table.
+    peers: SqlitePeerStore,
+    /// DID resolver. Lives here, not on the peer: the sync protocol owns
+    /// no DID resolution. Used by the share handler, reconcile, and the
+    /// acceptance policy.
+    resolver: Arc<dyn DidResolver>,
     home: PathBuf,
+    /// FUSE mount lifecycle. Shared (mutated through interior locks), so it's
+    /// behind an `Arc` to keep `ServiceState: Clone`.
+    #[cfg(feature = "fuse")]
+    mounts: Arc<crate::mount::MountManager>,
 }
 
 impl ServiceState {
@@ -70,32 +83,47 @@ impl ServiceState {
         let blobs = BlobsProvider::legacy_fs(&blobs_path)
             .await
             .map_err(|e| StateError::Blobs(e.to_string()))?;
-        Self::boot_with_blobs(home, blobs).await
+        Self::boot_with_blobs(home, blobs, None).await
     }
 
-    /// Boot with a caller-supplied blob store. The hub uses this to
-    /// plug in `zim_peer::object_store::s3_provider` (minio in dev,
-    /// S3 in prod) instead of the local filesystem store.
-    pub async fn boot_with_blobs(home: &Path, blobs: BlobsProvider) -> Result<Self, StateError> {
+    /// Boot with a caller-supplied blob store and (optionally) a custom
+    /// [`AcceptPolicy`]. The hub uses this to plug in an S3 blob store
+    /// (minio in dev) *and* a `user_peers`-backed acceptance policy;
+    /// `None` falls back to the daemon's contacts-backed policy.
+    pub async fn boot_with_blobs(
+        home: &Path,
+        blobs: BlobsProvider,
+        accept: Option<Arc<dyn AcceptPolicy>>,
+    ) -> Result<Self, StateError> {
         let secret = load_or_create_identity(home).await?;
         let log = SqliteVaultLog::new(&paths::log_file(home))
+            .map_err(|e| StateError::SqliteLog(e.to_string()))?;
+        // Contacts book lives in the same `log.sqlite` (one migration
+        // set). Opened separately from `log` — distinct connections to
+        // the same file, which WAL handles fine.
+        let peers = SqlitePeerStore::open(&paths::log_file(home))
             .map_err(|e| StateError::SqliteLog(e.to_string()))?;
 
         // `allow_http` lets the dev/loopback path resolve hubs on
         // `http://127.0.0.1:…` without TLS. Production hubs use
         // HTTPS; harmless in dev because resolver is only ever
         // called for did:web inputs.
-        let resolver = Arc::new(HttpDidResolver::new().with_allow_http(true));
+        let resolver: Arc<dyn DidResolver> = Arc::new(HttpDidResolver::new().with_allow_http(true));
 
-        let peers = TomlPeerStore::new(home.to_path_buf());
+        // Inbound acceptance: the daemon gates new vaults on its
+        // contacts; the hub passes its own `user_peers`-backed policy.
+        let accept = accept.unwrap_or_else(|| {
+            Arc::new(ContactsAcceptPolicy::new(peers.clone(), resolver.clone()))
+                as Arc<dyn AcceptPolicy>
+        });
+
         let peer = Peer::builder()
             .with_secret(secret)
             .with_log(log)
-            .with_peers(peers)
+            .with_accept_policy(accept)
             .with_blobs(blobs)
-            .with_resolver(resolver)
             // Without discovery, peers can't dial each other by
-            // pubkey alone — the share-offer effect would fail with
+            // pubkey alone — the announce effect would fail with
             // "connect to peer …". pkarr DHT gets us peer→addr
             // resolution over the public network.
             .with_pkarr_discovery()
@@ -110,18 +138,48 @@ impl ServiceState {
             .await
             .map_err(|e| StateError::PeerBuild(e.to_string()))?;
 
+        #[cfg(feature = "fuse")]
+        let mounts = Arc::new(crate::mount::MountManager::new(
+            peer.clone(),
+            tokio::runtime::Handle::current(),
+            home,
+        ));
+
         Ok(Self {
             peer,
+            peers,
+            resolver,
             home: home.to_path_buf(),
+            #[cfg(feature = "fuse")]
+            mounts,
         })
     }
 
-    pub fn peer(&self) -> &Peer<SqliteVaultLog, TomlPeerStore> {
+    pub fn peer(&self) -> &Peer<SqliteVaultLog> {
         &self.peer
+    }
+
+    /// The DID resolver. Used by the share handler, reconcile, and the
+    /// acceptance policy — DID resolution is a daemon concern, not the
+    /// sync protocol's.
+    pub fn resolver(&self) -> &Arc<dyn DidResolver> {
+        &self.resolver
+    }
+
+    /// The contacts address book (`nick → DID`, with a `trusted` flag).
+    /// Backed by the daemon's `log.sqlite`.
+    pub fn peers(&self) -> &SqlitePeerStore {
+        &self.peers
     }
 
     pub fn home(&self) -> &Path {
         &self.home
+    }
+
+    /// The FUSE mount manager (daemon built with `--features fuse`).
+    #[cfg(feature = "fuse")]
+    pub fn mounts(&self) -> &Arc<crate::mount::MountManager> {
+        &self.mounts
     }
 }
 

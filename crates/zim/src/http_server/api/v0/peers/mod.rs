@@ -11,6 +11,7 @@ use axum::Router;
 pub mod add;
 pub mod list;
 pub mod ping;
+pub mod reconcile;
 pub mod rm;
 
 use crate::ServiceState;
@@ -21,5 +22,6 @@ pub fn router(state: ServiceState) -> Router<ServiceState> {
         .route("/add", post(add::handler))
         .route("/rm", post(rm::handler))
         .route("/ping", post(ping::handler))
+        .route("/reconcile", post(reconcile::handler))
         .with_state(state)
 }

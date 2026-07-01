@@ -30,6 +30,8 @@ ipld-core = { workspace = true }
 hex = "0.4"
 base64 = "0.22"
 argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
+blake3 = { version = "1.5", default-features = false }
+serde_bytes = "0.11"
 zim-crypto = { path = "../zim-crypto" }
 
 [dev-dependencies]

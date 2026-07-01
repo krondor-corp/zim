@@ -6,20 +6,15 @@ use anyhow::anyhow;
 use bytes::Bytes;
 
 use crate::iroh::{
-    ApiBlobStatus as BlobStatus, Blobs, BlobsProtocol, Downloader, Endpoint, FsStore, Hash,
-    MemStore, Shuffled,
+    ApiBlobStatus as BlobStatus, Blobs, BlobsProtocol, Downloader, Endpoint, FsStore, MemStore,
+    Shuffled,
 };
+use crate::linked_data::Hash;
 use zim_crypto::PublicKey;
 
 use super::blob_store::{BlobError, BlobStore};
 
 /// Concrete blob provider backed by `Arc<BlobsProtocol>`.
-///
-/// Created from any iroh-compatible store backend:
-/// - `MemStore` (iroh in-memory)
-/// - `FsStore` (iroh filesystem)
-/// - `crate::iroh::Store` (any iroh store — `zim_peer::object_store`
-///   plugs its SQLite+S3 backend in through this)
 #[derive(Clone, Debug)]
 pub struct BlobsProvider {
     protocol: Arc<BlobsProtocol>,
@@ -43,6 +38,19 @@ impl BlobsProvider {
         Ok(Self::from(store))
     }
 
+    /// Promote a blob to a persistent (tagged) state so it survives GC.
+    pub async fn tag(&self, hash: Hash) -> anyhow::Result<()> {
+        let iroh_hash = iroh_blobs::Hash::from(hash);
+        let haf = iroh_blobs::HashAndFormat::raw(iroh_hash);
+        self.protocol
+            .store()
+            .tags()
+            .create(haf)
+            .await
+            .map_err(|e| anyhow!("tag blob {hash}: {e}"))?;
+        Ok(())
+    }
+
     pub async fn download_hash(
         &self,
         hash: Hash,
@@ -52,6 +60,7 @@ impl BlobsProvider {
         if self.stat(&hash).await.unwrap_or(false) {
             return Ok(());
         }
+        let iroh_hash = iroh_blobs::Hash::from(hash);
         let downloader = Downloader::new(self.protocol.store(), endpoint);
         let discovery = Shuffled::new(
             peer_ids
@@ -59,15 +68,8 @@ impl BlobsProvider {
                 .map(crate::iroh::to_iroh_public_key)
                 .collect(),
         );
-        downloader.download(hash, discovery).await?;
-        // Pin the freshly-downloaded blob behind a persistent tag.
-        // Without this, iroh-blobs treats the download as
-        // ephemeral — the underlying file survives only as long as
-        // the temp-tag the downloader created, and the next gc
-        // sweep (including daemon restart) reclaims it. That's how
-        // remote manifests learned via apply_chain went missing on
-        // restart even though the log still pointed at them.
-        let haf = iroh_blobs::HashAndFormat::raw(hash);
+        downloader.download(iroh_hash, discovery).await?;
+        let haf = iroh_blobs::HashAndFormat::raw(iroh_hash);
         self.protocol
             .store()
             .tags()
@@ -86,6 +88,7 @@ impl BlobsProvider {
         if self.stat(&hash).await.unwrap_or(false) {
             return Ok(());
         }
+        let iroh_hash = iroh_blobs::Hash::from(hash);
         let downloader = Downloader::new(self.protocol.store(), endpoint);
         let discovery = Shuffled::new(
             peer_ids
@@ -94,9 +97,8 @@ impl BlobsProvider {
                 .collect(),
         );
         let hash_and_format =
-            crate::iroh::HashAndFormat::new(hash, crate::iroh::BlobFormat::HashSeq);
+            iroh_blobs::HashAndFormat::new(iroh_hash, iroh_blobs::BlobFormat::HashSeq);
         downloader.download(hash_and_format, discovery).await?;
-        // Persistent tag — see `download_hash` for the rationale.
         self.protocol
             .store()
             .tags()
@@ -106,8 +108,6 @@ impl BlobsProvider {
         Ok(())
     }
 }
-
-// -- From impls for each store backend --
 
 impl From<MemStore> for BlobsProvider {
     fn from(store: MemStore) -> Self {
@@ -136,35 +136,30 @@ impl From<crate::iroh::Store> for BlobsProvider {
 #[async_trait::async_trait]
 impl BlobStore for BlobsProvider {
     async fn get(&self, hash: &Hash) -> Result<Bytes, BlobError> {
+        let iroh_hash = iroh_blobs::Hash::from(*hash);
         self.blobs()
-            .get_bytes(*hash)
+            .get_bytes(iroh_hash)
             .await
             .map_err(|e| anyhow!("get: {e}").into())
     }
 
     async fn put(&self, data: Vec<u8>) -> Result<Hash, BlobError> {
-        let hash = self
+        let iroh_hash = self
             .blobs()
             .add_bytes(data)
             .into_future()
             .await
             .map_err(|e| anyhow!("put: {e}"))?
             .hash;
-        Ok(hash)
+        Ok(Hash::from(iroh_hash))
     }
 
-    /// Streams the reader into iroh-blobs' `add_stream`. Chunks the sync
-    /// reader on a blocking thread (64KB chunks) into a flume-backed
-    /// `Stream<Item = io::Result<Bytes>>`. Only one chunk is in flight at
-    /// a time — memory footprint is bounded regardless of payload size.
     async fn put_reader(
         &self,
         mut reader: Box<dyn std::io::Read + Send + 'static>,
     ) -> Result<Hash, BlobError> {
         const CHUNK: usize = 64 * 1024;
-
         let (tx, rx) = flume::bounded::<std::io::Result<Bytes>>(4);
-
         tokio::task::spawn_blocking(move || {
             let mut buf = vec![0u8; CHUNK];
             loop {
@@ -182,22 +177,22 @@ impl BlobStore for BlobsProvider {
                 }
             }
         });
-
         let stream = rx.into_stream();
-        let hash = self
+        let iroh_hash = self
             .blobs()
             .add_stream(stream)
             .await
             .await
             .map_err(|e| anyhow!("put_reader: {e}"))?
             .hash;
-        Ok(hash)
+        Ok(Hash::from(iroh_hash))
     }
 
     async fn stat(&self, hash: &Hash) -> Result<bool, BlobError> {
+        let iroh_hash = iroh_blobs::Hash::from(*hash);
         let stat = self
             .blobs()
-            .status(*hash)
+            .status(iroh_hash)
             .await
             .map_err(|e| anyhow!("stat: {e}"))?;
         Ok(matches!(stat, BlobStatus::Complete { .. }))

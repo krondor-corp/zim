@@ -1,0 +1,8 @@
+# Trunk build config. `trunk build` emits to dist/, which the hub serves at
+# the root `/`. The hub keeps owning OAuth, the session cookie, and the JSON
+# API; this SPA mounts client-side and talks to that API via the SDK.
+[build]
+target = "index.html"
+dist = "dist"
+# Served at the site root.
+public_url = "/"

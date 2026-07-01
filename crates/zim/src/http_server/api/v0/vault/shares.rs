@@ -28,8 +28,12 @@ pub struct SharesResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShareInfo {
-    /// DID URL of the share recipient.
+    /// DID URL of the share recipient (who decrypts).
     pub peer: String,
+    /// The relay host this share is reached *through* (e.g. the hub for a
+    /// browser key), or absent for a directly-dialed peer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via: Option<String>,
 }
 
 pub async fn handler(
@@ -43,6 +47,7 @@ pub async fn handler(
         .iter()
         .map(|(_, share)| ShareInfo {
             peer: share.identity().to_string(),
+            via: share.via().map(|v| v.to_string()),
         })
         .collect();
     let you = zim_did::Identity::Key(state.peer().secret().public()).to_string();

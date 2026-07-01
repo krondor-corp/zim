@@ -24,6 +24,8 @@ rand = "0.9"
 getrandom = { version = "0.2", features = ["js"] }
 sha2 = "0.10"
 hex = "0.4"
+base64 = { workspace = true }
+serde_json = { workspace = true }
 
 # crypto primitives
 aes-kw = { version = "0.2", features = ["alloc"] }
@@ -36,5 +38,4 @@ ed25519-dalek = { version = "2.2.0", features = ["serde"] }
 blake3 = "1.5"
 
 [dev-dependencies]
-serde_json = { workspace = true }
 tempfile = { workspace = true }

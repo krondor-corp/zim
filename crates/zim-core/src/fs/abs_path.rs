@@ -25,16 +25,25 @@ impl AbsPath {
     /// assert!(AbsPath::new("foo").is_none());
     /// ```
     pub fn new(path: impl Into<PathBuf>) -> Option<Self> {
+        // Use `has_root()` (a leading separator), not `is_absolute()`: the
+        // latter additionally requires a Windows-style prefix on targets that
+        // are neither unix nor windows — notably `wasm32-unknown-unknown` —
+        // so it wrongly rejects "/" in the browser. `has_root()` is the
+        // separator-based check we actually mean, and agrees with
+        // `is_absolute()` on native.
         let p = path.into();
-        p.is_absolute().then_some(Self(p))
+        p.has_root().then_some(Self(p))
     }
 
     /// Wrap a `PathBuf` that is known to be absolute by construction
     /// (e.g. built via `Path::new("/").join(rel)`). Debug-asserts the
     /// invariant; in release the assertion is a no-op.
     pub fn from_abs(path: PathBuf) -> Self {
+        // `has_root()`, not `is_absolute()` — the latter wrongly returns false
+        // for "/" on wasm32-unknown-unknown (neither unix nor windows), which
+        // would trip this assert in browser debug builds. See `Self::new`.
         debug_assert!(
-            path.is_absolute(),
+            path.has_root(),
             "AbsPath::from_abs called with relative path: {}",
             path.display()
         );

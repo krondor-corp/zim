@@ -59,6 +59,12 @@ impl Op for Run {
             .map_err(|e: std::net::AddrParseError| RunError::BadBind(e.to_string()))?;
 
         let state = ServiceState::boot(&ctx.home).await?;
+
+        // Re-mount any vaults registered with `--auto`. Best-effort: a missing
+        // mountpoint or busy vault is logged, not fatal.
+        #[cfg(feature = "fuse")]
+        state.mounts().start_auto().await;
+
         let config = Config::new(addr);
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(());

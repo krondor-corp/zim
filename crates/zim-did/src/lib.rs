@@ -23,10 +23,11 @@
 //!   that `Share` / `Relay` and `PeerEntry` carry instead of a raw
 //!   pubkey), [`DidMethod`].
 //! - `did:key` codec — ed25519 over multibase + multicodec prefix.
-//! - `did:web` parsing + [`HttpDidResolver`] (reqwest-backed, cached).
+//! - `did:web` parsing + `HttpDidResolver` (reqwest-backed, cached;
+//!   behind the default `http-resolver` feature).
 //!
 //! Anything that needs a live pubkey from a `did:web` either calls
-//! the convenience [`HttpDidResolver`] or constructs its own resolver
+//! the convenience `HttpDidResolver` or constructs its own resolver
 //! by implementing [`DidResolver`]. Tests typically use
 //! [`StaticResolver`].
 
@@ -35,17 +36,20 @@ use zim_crypto::PublicKey;
 mod did;
 mod did_key;
 mod document;
+#[cfg(feature = "http-resolver")]
 mod http_resolver;
 mod identity;
 mod resolver;
 
 pub use did::{Did, DidError, DidMethod};
 pub use did_key::{did_key_decode, did_key_encode};
-pub use document::{DidDocument, VerificationMethod, VmPurpose};
+pub use document::{DidDocument, VerificationMethod};
+#[cfg(feature = "http-resolver")]
 pub use http_resolver::HttpDidResolver;
 pub use identity::{Identity, IdentityError};
 pub use resolver::{
-    did_web_url, pick_peer_pubkey, resolve_pubkey, DidResolver, ResolveError, StaticResolver,
+    did_web_url, pick_pubkey, resolve_pubkey, resolve_reaches, DidResolver, Reach, ResolveError,
+    StaticResolver,
 };
 
 /// Convenience: build an [`Identity`] from a daemon's ed25519

@@ -7,10 +7,9 @@
 //! out-of-band coordination.
 //!
 //! Phase 1: doc is unsigned and lists exactly one verification method —
-//! the hub's iroh pubkey, marked as a `peer` purpose so dialers know
-//! it's reachable. Phase 3 adds signed key rotation; today, rotation
-//! means a fresh hub identity and a new `did:web` (because there's no
-//! controller to sign the next doc).
+//! the hub's iroh pubkey. Phase 3 adds signed key rotation; today,
+//! rotation means a fresh hub identity and a new `did:web` (because
+//! there's no controller to sign the next doc).
 
 use axum::extract::State;
 use axum::routing::get;
@@ -43,10 +42,6 @@ struct VerificationMethod {
     controller: String,
     #[serde(rename = "publicKeyMultibase")]
     public_key_multibase: String,
-    /// Non-standard zim extension: distinguishes dialable iroh peers
-    /// from browser-resident web keys. Replaces the old `dialable: bool`
-    /// flag on `Share`.
-    purpose: &'static str,
 }
 
 async fn did_doc(State(state): State<AppState>) -> Json<DidDocument> {
@@ -68,11 +63,10 @@ async fn did_doc(State(state): State<AppState>) -> Json<DidDocument> {
         ],
         id: state.did.clone(),
         verification_method: vec![VerificationMethod {
-            id: format!("{}#peer", state.did),
+            id: format!("{}#key-0", state.did),
             method_type: "Ed25519VerificationKey2020",
             controller: state.did.clone(),
             public_key_multibase: multibase,
-            purpose: "peer",
         }],
     })
 }

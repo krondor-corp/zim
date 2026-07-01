@@ -13,6 +13,10 @@ pub struct AddRequest {
     pub nick: String,
     /// DID URL of the peer being added.
     pub did: String,
+    /// Mark this contact trusted — auto-shared into the vaults you own.
+    /// Defaults to `false` (shareable, but opt-in per vault).
+    #[serde(default)]
+    pub trusted: bool,
     #[serde(default)]
     pub notes: Option<String>,
 }
@@ -31,12 +35,13 @@ pub async fn handler(
     // than persist garbage that resolver-callers will rediscover
     // later. We don't keep the parsed Identity; the DID string is
     // round-tripped through TOML and re-parsed on read.
-    Identity::parse(&req.did).map_err(|e| AddError::BadDid(e.to_string()))?;
+    let identity = Identity::parse(&req.did).map_err(|e| AddError::BadDid(e.to_string()))?;
 
-    let mut book =
-        crate::peers::PeerBook::load(state.home()).map_err(|e| AddError::Storage(e.to_string()))?;
-    book.upsert(req.nick.clone(), req.did.clone(), req.notes);
-    book.save(state.home())
+    use zim_peer::PeerStore;
+    state
+        .peers()
+        .upsert(&req.nick, identity, req.trusted, req.notes)
+        .await
         .map_err(|e| AddError::Storage(e.to_string()))?;
     Ok((
         http::StatusCode::OK,

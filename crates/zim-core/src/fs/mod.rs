@@ -62,4 +62,4 @@ pub use fs_inner::{Fs, FsError, FsInner};
 pub use manifest::{Manifest, ManifestError, Shares};
 pub use pins::Pins;
 pub use published::Published;
-pub use share::{Relay, Share};
+pub use share::Share;

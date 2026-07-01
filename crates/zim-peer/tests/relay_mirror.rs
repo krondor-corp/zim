@@ -13,20 +13,18 @@
 use bytes::Bytes;
 
 use zim_core::blobs::{BlobStore, BlobsProvider};
-use zim_core::fs::{AbsPath, Relay};
+use zim_core::fs::AbsPath;
 use zim_core::vault::VaultLog;
 use zim_crypto::PrivateKey;
 use zim_did::Identity;
-use zim_peer::peers::MemoryPeerStore;
 use zim_peer::{MemoryVaultLog, Vault};
 
 use zim_peer::{Effect, Peer};
 
-async fn make_peer(blobs: BlobsProvider) -> anyhow::Result<Peer<MemoryVaultLog, MemoryPeerStore>> {
+async fn make_peer(blobs: BlobsProvider) -> anyhow::Result<Peer<MemoryVaultLog>> {
     Peer::builder()
         .with_secret(PrivateKey::generate())
         .with_log(MemoryVaultLog::new())
-        .with_peers(MemoryPeerStore::new())
         .with_blobs(blobs)
         .build()
         .await
@@ -60,7 +58,13 @@ async fn hub_mirrors_chain_without_a_share() {
     .await
     .expect("init");
     let vault_id = alice_vault.id();
-    alice_vault.add_relay(Relay::new(Identity::Key(hub_pk)));
+    // A browser client is granted the vault *via* the hub: the secret is
+    // sealed to the browser key, the hub is only the `via` host — so it
+    // mirrors the chain without ever holding a Share or the vault secret.
+    let browser = PrivateKey::generate().public();
+    alice_vault
+        .add_share_via(browser, Some(Identity::Key(hub_pk)))
+        .expect("share via hub");
 
     // Some real content so the chain isn't trivial.
     alice_vault

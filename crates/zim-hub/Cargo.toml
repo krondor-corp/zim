@@ -15,10 +15,6 @@ categories.workspace = true
 readme = "README.md"
 build = "build.rs"
 
-[build-dependencies]
-sha2 = "0.10"
-base64 = "0.22"
-
 [lib]
 name = "zim_hub"
 path = "src/lib.rs"
@@ -27,9 +23,20 @@ path = "src/lib.rs"
 name = "zim-hub"
 path = "src/main.rs"
 
+# Dev-only hub state seeder: writes the user + daemon device rows that
+# a successful `zim login` would produce, skipping the device-code
+# browser dance. See src/bin/devseed.rs.
+[[bin]]
+name = "zim-hub-devseed"
+path = "src/bin/devseed.rs"
+
 [dependencies]
 # workspace — in-process peer Service surface
 zim = { path = "../zim", version = "0.1.0" }
+# Shared API contract: the server serializes these wire types; the CLI +
+# web SPA deserialize them. Routes here MUST mirror the request types in
+# `zim_api::hub` (no compile-time link — see each request's doc comment).
+zim-api = { path = "../zim-api", version = "0.1.0", default-features = false, features = ["hub"] }
 zim-core = { path = "../zim-core", version = "0.1.0" }
 zim-did = { path = "../zim-did", version = "0.1.0" }
 zim-runtime = { path = "../zim-runtime", version = "0.1.0" }
@@ -43,8 +50,6 @@ tower-http = { workspace = true, features = ["cors", "trace", "set-header"] }
 http = { workspace = true }
 
 # templates + static
-askama = { workspace = true }
-askama_axum = { workspace = true }
 rust-embed = "8.5"
 mime_guess = { workspace = true }
 

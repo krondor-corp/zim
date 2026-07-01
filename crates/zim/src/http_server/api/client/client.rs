@@ -4,7 +4,7 @@ use reqwest::Client;
 use url::Url;
 use zim_core::vault::VaultId;
 
-use super::error::ApiError;
+use super::ApiError;
 use super::ApiRequest;
 use crate::http_server::api::v0::peers::list::ListRequest as PeersListRequest;
 use crate::http_server::api::v0::vaults::list::ListRequest;

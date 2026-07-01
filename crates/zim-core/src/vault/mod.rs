@@ -32,7 +32,7 @@ use zim_crypto::{PrivateKey, PublicKey, Secret, SecretShare};
 use zim_did::Identity;
 
 use crate::blobs::BlobStore;
-use crate::fs::{AbsPath, Fs, FsError, Manifest, Relay, Share};
+use crate::fs::{AbsPath, Fs, FsError, Manifest, Share};
 use crate::linked_data::Link;
 
 /// Versioned, encrypted file tree bound to a single UUID.
@@ -58,17 +58,41 @@ pub struct Vault<B: BlobStore, L: VaultLog> {
 impl<B: BlobStore, L: VaultLog> Vault<B, L> {
     // -- Constructors --
 
-    /// Bootstrap a brand-new vault at genesis. Generates a vault
-    /// secret, mints the owner's [`Share`], builds + signs the
-    /// genesis manifest, writes it to the blob store, and appends
-    /// `(link, height=0)` to the log.
-    ///
-    /// The vault's [`VaultId`] is *derived* here — it's the blake3
-    /// hash of the genesis blob just written, not a caller-supplied
-    /// value. Read it back via [`Self::id`].
+    /// Bootstrap a brand-new vault at genesis, shared with `owner`
+    /// only. Sugar for [`Self::init_with_shares`] with no extra keys.
     pub async fn init(
         name: String,
         owner: &PrivateKey,
+        blobs: B,
+        log: L,
+    ) -> Result<Self, VaultError<L::Error>> {
+        Self::init_with_shares(name, owner, None, &[], blobs, log).await
+    }
+
+    /// Bootstrap a brand-new vault at genesis, sealing the vault secret
+    /// to `owner` **and** every key in `shares` — so the owner's other
+    /// devices are shareholders from the very first manifest.
+    ///
+    /// This keeps a freshly-shared vault a single genesis head (height
+    /// 0) rather than a genesis followed by an immediate height-1
+    /// `save`. That matters against a hub: the hub accepts a genesis
+    /// unconditionally but verifies chain continuity on every *advance*,
+    /// so folding the shares into genesis avoids a spurious conflict.
+    ///
+    /// `owner_via` sets the genesis owner share's reachability: `None`
+    /// means the owner is dialed directly (a daemon), `Some(host)` means
+    /// the owner is reached *via* `host` (a browser key, reachable only
+    /// through its hub). Without this a peer advancing the vault would
+    /// try to dial a browser owner directly and fail — the announce must
+    /// target the hub, which mirrors the new head for the browser to read.
+    ///
+    /// The vault's [`VaultId`] is *derived* — the blake3 hash of the
+    /// genesis blob just written. Read it back via [`Self::id`].
+    pub async fn init_with_shares(
+        name: String,
+        owner: &PrivateKey,
+        owner_via: Option<Identity>,
+        shares: &[PublicKey],
         blobs: B,
         log: L,
     ) -> Result<Self, VaultError<L::Error>> {
@@ -77,19 +101,34 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
 
         let (fs, root_link) = Fs::init_tree(owner_pubkey, &secret, blobs).await?;
 
-        // Mint owner share and assemble the genesis manifest.
-        let share = SecretShare::new(&secret, &owner_pubkey).map_err(FsError::from)?;
-        let mut manifest = Manifest::new(name.clone(), owner, share, root_link.clone(), 0)?;
+        // Owner share + genesis manifest, then seal the same secret to
+        // each additional device so they're shareholders from genesis.
+        let owner_share = SecretShare::new(&secret, &owner_pubkey).map_err(FsError::from)?;
+        let mut manifest = Manifest::new(name.clone(), owner, owner_share, root_link.clone(), 0)?;
+        // Re-stamp the owner share's `via` when the owner is a hosted
+        // (browser) key. `Manifest::new` seals it with `via = None`
+        // (direct dial); a browser owner must carry `via = Some(hub)`.
+        if owner_via.is_some() {
+            let owner_share = SecretShare::new(&secret, &owner_pubkey).map_err(FsError::from)?;
+            manifest.add_share(
+                owner_pubkey,
+                Share::new(owner_share, Identity::Key(owner_pubkey), owner_via),
+            );
+        }
+        for pk in shares {
+            if *pk == owner_pubkey {
+                continue;
+            }
+            let secret_share = SecretShare::new(&secret, pk).map_err(FsError::from)?;
+            manifest.add_share(*pk, Share::new(secret_share, Identity::Key(*pk), None));
+        }
 
         // Snapshot the metadata pack so the genesis manifest is
         // self-contained — every dir body the root references is
         // embedded. Without this the persisted manifest blob holds an
         // empty `metadata` field and any subsequent `Vault::open`
-        // can't find the root dir body, failing with "blob not
-        // found". (Pre-cache-removal this was masked by the
-        // coordinator's in-memory vault registry — it never read the
-        // manifest back from disk.) Re-sign after the mutation since
-        // `metadata` is part of the signable bytes.
+        // can't find the root dir body. Re-sign after the mutation
+        // since `metadata` + `shares` are part of the signable bytes.
         manifest.set_metadata(fs.blobs().snapshot_metadata());
         manifest.sign(owner)?;
 
@@ -310,14 +349,39 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
 
     // -- Manifest mutations --
 
-    /// Grant `pubkey` access to this vault. Persisted on the next
-    /// [`Self::save`].
+    /// Grant `pubkey` direct access to this vault (dialed as an iroh
+    /// peer). Persisted on the next [`Self::save`].
     #[allow(clippy::result_large_err)]
     pub fn add_share(&mut self, pubkey: PublicKey) -> Result<(), VaultError<L::Error>> {
-        let secret_share = SecretShare::new(&Secret::default(), &pubkey).map_err(FsError::from)?;
+        self.add_share_via(pubkey, None)
+    }
+
+    /// Grant `client` access, reached through `via` (the always-on host
+    /// for a hosted client such as a browser) or directly when `via` is
+    /// `None`. The secret is sealed to `client`; the host never holds it.
+    /// Persisted on the next [`Self::save`].
+    #[allow(clippy::result_large_err)]
+    pub fn add_share_via(
+        &mut self,
+        client: PublicKey,
+        via: Option<Identity>,
+    ) -> Result<(), VaultError<L::Error>> {
+        // Placeholder secret share — re-minted against the live vault
+        // secret on the next `save`.
+        let secret_share = SecretShare::new(&Secret::default(), &client).map_err(FsError::from)?;
         self.manifest
-            .add_share(pubkey, Share::new(secret_share, Identity::Key(pubkey)));
+            .add_share(client, Share::new(secret_share, Identity::Key(client), via));
         Ok(())
+    }
+
+    /// Grant access from a resolved [`zim_did::Reach`] — the unit
+    /// [`zim_did::resolve_reaches`] returns. Seals to `reach.client`,
+    /// reached via `reach.via` (the host). One call per device when a
+    /// `did:web` expands to several.
+    #[allow(clippy::result_large_err)]
+    pub fn add_reach(&mut self, reach: zim_did::Reach) -> Result<(), VaultError<L::Error>> {
+        let via = reach.via.map(|(_, host_key)| Identity::Key(host_key));
+        self.add_share_via(reach.client, via)
     }
 
     /// Revoke `pubkey`'s share. Errors when the local peer isn't
@@ -334,24 +398,29 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
         Ok(())
     }
 
-    /// Authorize `relay` to serve this vault's published-set.
-    pub fn add_relay(&mut self, relay: Relay) {
-        self.manifest.add_relay(relay);
-    }
-
-    /// Revoke a relay. Errors when the local peer isn't itself a
-    /// shareholder.
+    /// Revoke a hosted client's share (the relay recipient). Errors when
+    /// the local peer isn't itself a shareholder.
     #[allow(clippy::result_large_err)]
-    pub fn remove_relay(&mut self, pubkey: PublicKey) -> Result<bool, VaultError<L::Error>> {
+    pub fn remove_relay(&mut self, recipient: PublicKey) -> Result<bool, VaultError<L::Error>> {
         let our_key = self.private_key.public();
         if self.manifest.get_share(&our_key).is_none() {
             return Err(crate::fs::FsError::ShareNotFound.into());
         }
-        Ok(self.manifest.remove_relay(&pubkey))
+        Ok(self.manifest.shares_mut().remove(&recipient).is_some())
     }
 
-    pub fn list_relays(&self) -> &[Relay] {
-        self.manifest.relays()
+    /// The hosted shares as `(recipient identity, via host)` pairs —
+    /// every share routed through an intermediary.
+    pub fn list_relays(&self) -> Vec<(Identity, Identity)> {
+        self.manifest
+            .shares()
+            .iter()
+            .filter_map(|(_, share)| {
+                share
+                    .via()
+                    .map(|via| (share.identity().clone(), via.clone()))
+            })
+            .collect()
     }
 
     /// Mark `path` as publicly served.

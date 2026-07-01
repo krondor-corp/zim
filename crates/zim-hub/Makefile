@@ -10,6 +10,14 @@ dev: ## Run zim-hub dev server with hot reload (OAuth creds via confit, blobs vi
 		echo "  curl -fsSL https://raw.githubusercontent.com/krondor-corp/confit/main/install.sh | bash"; \
 		exit 1; \
 	}
+	@command -v trunk >/dev/null 2>&1 || { \
+		echo "trunk not installed. Run: cargo install trunk"; exit 1; \
+	}
+	@# Build the Yew SPA (web/) into web/dist, which the hub serves. Run as a
+	@# separate step — trunk shells out to cargo, so it can't run from the
+	@# hub's build.rs (nested-cargo lock contention). For live SPA edits, run
+	@# `trunk watch` in crates/zim-hub/web alongside this.
+	@../../bin/build-web || exit 1
 	@# Dev blob store: the minio container from bin/minio. Idempotent —
 	@# `up` no-ops when it's already running, creates the zim-blobs
 	@# bucket either way.
@@ -30,7 +38,8 @@ dev: ## Run zim-hub dev server with hot reload (OAuth creds via confit, blobs vi
 	     ZIM_HUB_S3_BUCKET="$${ZIM_HUB_S3_BUCKET:-zim-blobs}" \
 	cargo watch \
 		-w src \
-		-w templates \
 		-w static \
+		-w wasm/src \
 		-w Cargo.toml \
+		--ignore 'static/vendor/**' \
 		-x "run -p zim-hub"

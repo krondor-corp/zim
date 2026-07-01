@@ -23,18 +23,13 @@ pub async fn handler(
     State(state): State<ServiceState>,
     Json(req): Json<RmRequest>,
 ) -> Result<impl IntoResponse, RmError> {
-    let mut book =
-        crate::peers::PeerBook::load(state.home()).map_err(|e| RmError::Storage(e.to_string()))?;
-    let peer = match book.remove(&req.nick) {
-        Ok(p) => p,
-        Err(crate::peers::PeersError::NotFound(n)) => return Err(RmError::NotFound(n)),
+    use zim_peer::{PeerStore, PeerStoreError};
+    let removed = match state.peers().remove(&req.nick).await {
+        Ok(entry) => entry,
+        Err(PeerStoreError::NotFound(n)) => return Err(RmError::NotFound(n)),
         Err(e) => return Err(RmError::Storage(e.to_string())),
     };
-    book.save(state.home())
-        .map_err(|e| RmError::Storage(e.to_string()))?;
-    let did = peer
-        .resolve_did()
-        .ok_or_else(|| RmError::Storage("removed peer had no DID/pubkey field".into()))?;
+    let did = removed.identity.to_string();
     Ok((
         http::StatusCode::OK,
         Json(RmResponse {

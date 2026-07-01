@@ -59,6 +59,14 @@ pub struct Verified {
     pub pubkey: PublicKey,
 }
 
+/// The `kid` claim from the JWT header, used to route the lookup.
+pub enum Kid {
+    /// 64-char hex pubkey — daemon-enrolled path, lookup by pubkey.
+    Pubkey(PublicKey),
+    /// RFC 7638 JWK thumbprint — browser path, lookup by thumbprint.
+    Thumbprint(String),
+}
+
 #[derive(Debug, Deserialize)]
 struct Header {
     alg: String,
@@ -115,6 +123,64 @@ pub fn verify(token: &str, expected_aud: &str) -> Result<Verified, JwtError> {
     }
 
     Ok(Verified { pubkey })
+}
+
+/// Parse the JWT header and return the `kid` without verifying
+/// anything. Used to route between the pubkey-hex daemon path and
+/// the thumbprint browser path.
+pub fn peek_kid(token: &str) -> Result<Kid, JwtError> {
+    let first = token
+        .split('.')
+        .next()
+        .ok_or(JwtError::Malformed("expected three parts"))?;
+    let header_bytes = URL_SAFE_NO_PAD.decode(first)?;
+    let header: Header = serde_json::from_slice(&header_bytes)?;
+    let kid = header.kid.ok_or(JwtError::Malformed("missing kid"))?;
+    // 64 hex chars = 32-byte pubkey.
+    if kid.len() == 64 && kid.chars().all(|c| c.is_ascii_hexdigit()) {
+        let pk = PublicKey::from_hex(&kid).map_err(|_| JwtError::BadKid)?;
+        Ok(Kid::Pubkey(pk))
+    } else {
+        Ok(Kid::Thumbprint(kid))
+    }
+}
+
+/// Verify a JWT whose signing key is already known. Used for the
+/// thumbprint path where the caller looked up the pubkey from the DB
+/// before calling this.
+pub fn verify_with_pubkey(
+    token: &str,
+    expected_aud: &str,
+    pubkey: &PublicKey,
+) -> Result<(), JwtError> {
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() != 3 {
+        return Err(JwtError::Malformed("expected three dot-separated parts"));
+    }
+    let signing_input = format!("{}.{}", parts[0], parts[1]);
+    let sig_bytes = URL_SAFE_NO_PAD.decode(parts[2])?;
+    let sig_arr: [u8; 64] = sig_bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| JwtError::Malformed("signature length"))?;
+    pubkey
+        .verify_bytes(signing_input.as_bytes(), &sig_arr)
+        .map_err(|_| JwtError::BadSignature)?;
+
+    let payload_bytes = URL_SAFE_NO_PAD.decode(parts[1])?;
+    let payload: Payload = serde_json::from_slice(&payload_bytes)?;
+
+    if payload.aud.trim_end_matches('/') != expected_aud.trim_end_matches('/') {
+        return Err(JwtError::BadAudience(payload.aud));
+    }
+    let now = chrono::Utc::now().timestamp();
+    if now + CLOCK_SKEW_SECS < payload.iat {
+        return Err(JwtError::NotYet);
+    }
+    if now - CLOCK_SKEW_SECS > payload.exp {
+        return Err(JwtError::Expired);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

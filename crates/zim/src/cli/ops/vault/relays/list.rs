@@ -63,10 +63,15 @@ impl fmt::Display for ListOutput {
             return writeln!(f, "{}", ui::dim("no relays"));
         }
         for r in &self.relays {
-            match self.nicks.get(&r.peer) {
-                Some(n) => writeln!(f, "{} {}", n, ui::dim(&r.peer))?,
-                None => writeln!(f, "{}", r.peer)?,
-            }
+            let recipient_label = match self.nicks.get(&r.recipient) {
+                Some(n) => format!("{} {}", n, ui::dim(&r.recipient)),
+                None => r.recipient.clone(),
+            };
+            let via_label = match self.nicks.get(&r.via) {
+                Some(n) => format!("{} {}", n, ui::dim(&r.via)),
+                None => r.via.clone(),
+            };
+            writeln!(f, "{} via {}", recipient_label, via_label)?;
         }
         Ok(())
     }

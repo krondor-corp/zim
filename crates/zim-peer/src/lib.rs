@@ -10,7 +10,7 @@
 //!
 //! Sync orchestration:
 //! - [`messages`] — wire-level Request/Reply structs (`Head`,
-//!   `Probe`, `Ancestor`, `Ping`, `ShareOffered`).
+//!   `Probe`, `Ancestor`, `Ping`, `HeadAdvanced`).
 //! - [`effect::Effect`] — side-effects taxonomy for background work.
 //! - [`coordinator::SyncCoordinator`] — vault open/sync entry points
 //!   (`open_vault`, `sync_vault`, `apply_chain`) + log-only reply
@@ -34,8 +34,10 @@
 //! [`BlobsProvider`]. Sync methods that need the iroh endpoint live
 //! on [`SyncCoordinator`], which owns one.
 
+pub mod accept;
 pub mod chain;
 pub mod coordinator;
+mod db;
 pub mod effect;
 pub mod iroh_transport;
 pub mod log;
@@ -49,15 +51,17 @@ pub mod wire_protocol;
 /// Daemon-side vault: the core vault over the iroh-blobs provider.
 pub type Vault<L> = zim_core::vault::Vault<zim_core::blobs::BlobsProvider, L>;
 
+pub use accept::{AcceptAll, AcceptPolicy, IncomingSync};
 pub use coordinator::{run_effects, DaemonInfo, MemoryPeerSender, SentMessage, SyncCoordinator};
+pub use db::DatabaseError;
 pub use effect::Effect;
 pub use iroh_transport::{IrohPeerSender, SyncProtocol, ALPN};
 pub use log::{MemoryVaultLog, SqliteVaultLog};
 pub use messages::{
     Ack, AncestorReply, AncestorRequest, HeadAdvanced, HeadReply, HeadRequest, PingRequest,
-    PongReply, ProbeReply, ProbeRequest, ShareOffered,
+    PongReply, ProbeReply, ProbeRequest,
 };
 pub use peer::{Discovery, Peer, PeerBuilder, VaultListing, VaultLookupError};
-pub use peers::{MemoryPeerStore, PeerEntry, PeerStore, PeerStoreError};
+pub use peers::{MemoryPeerStore, PeerEntry, PeerStore, PeerStoreError, SqlitePeerStore};
 pub use wire_protocol::{dispatch_request, PeerSender, WireReply, WireRequest};
 pub use zim_core::vault::{VaultError, VaultLog, VaultLogError};

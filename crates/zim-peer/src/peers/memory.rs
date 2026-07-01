@@ -41,6 +41,7 @@ impl PeerStore for MemoryPeerStore {
         &self,
         nick: &str,
         identity: Identity,
+        trusted: bool,
         notes: Option<String>,
     ) -> Result<(), PeerStoreError<Self::Error>> {
         let mut guard = self.inner.write().await;
@@ -52,6 +53,9 @@ impl PeerStore for MemoryPeerStore {
             PeerEntry {
                 nick: nick.to_string(),
                 identity,
+                // The in-memory store (tests) only models direct contacts.
+                via: None,
+                trusted,
                 added_at,
                 notes,
             },

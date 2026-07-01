@@ -33,7 +33,7 @@ pub async fn handler(
     Json(req): Json<UnshareRequest>,
 ) -> Result<impl IntoResponse, UnshareError> {
     let identity = Identity::parse(&req.peer).map_err(|e| UnshareError::BadPeer(e.to_string()))?;
-    let peer = zim_did::resolve_pubkey(&identity, state.peer().resolver().as_ref())
+    let peer = zim_did::resolve_pubkey(&identity, state.resolver().as_ref())
         .await
         .map_err(|e| UnshareError::BadPeer(e.to_string()))?;
     vault

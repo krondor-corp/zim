@@ -110,7 +110,7 @@ impl VaultLog for MemoryVaultLog {
 #[cfg(test)]
 mod tests {
     fn test_vault_id(byte: u8) -> zim_core::vault::VaultId {
-        zim_core::vault::VaultId::from_hash(zim_core::linked_data::Hash::new([byte; 32]))
+        zim_core::vault::VaultId::from_hash(zim_core::linked_data::Hash::new(&[byte; 32]))
     }
 
     use super::*;
@@ -139,7 +139,7 @@ mod tests {
     }
 
     fn test_link(byte: u8) -> Link {
-        let hash = zim_core::linked_data::Hash::new([byte; 32]);
+        let hash = zim_core::linked_data::Hash::new(&[byte; 32]);
         Link::new(zim_core::linked_data::LD_RAW_CODEC, hash)
     }
 

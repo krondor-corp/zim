@@ -3,7 +3,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use tokio::sync::Mutex;
+use futures::lock::Mutex;
 
 use crate::blobs::{BlobError, BlobStore};
 use crate::linked_data::{BlockEncoded, CodecError, Link};
@@ -214,7 +214,7 @@ impl<B: BlobStore> Fs<B> {
     /// bookkeeping beyond the ops-log blob.
     pub async fn save_tree(
         &self,
-        prior_root_hash: crate::iroh::Hash,
+        prior_root_hash: crate::linked_data::Hash,
         new_secret: Secret,
     ) -> Result<TreeSaveOutput, FsError> {
         let blobs = &self.1;
@@ -416,7 +416,7 @@ impl<B: BlobStore> Fs<B> {
         path: &AbsPath,
         link: Link,
         secret: Secret,
-        plaintext_hash: Option<crate::iroh::Hash>,
+        plaintext_hash: Option<crate::linked_data::Hash>,
     ) -> Result<(), FsError> {
         let entry = match plaintext_hash {
             Some(h) => Entry::file_from_path_with_hash(link.clone(), secret, path, h),
@@ -474,7 +474,7 @@ impl<B: BlobStore> Fs<B> {
         // dir-body hash it contained — those become orphans the metadata
         // tier needs to evict.
         if removed_entry.is_dir() {
-            let mut orphans: std::collections::HashSet<crate::iroh::Hash> =
+            let mut orphans: std::collections::HashSet<crate::linked_data::Hash> =
                 std::collections::HashSet::new();
             orphans.insert(removed_entry.link().hash());
             let removed_dir = self.1.get_metadata(&removed_entry).await?;
@@ -769,7 +769,7 @@ impl<B: BlobStore> Fs<B> {
     fn _collect_dir_hashes<'a>(
         dir: &'a Dir,
         blobs: &'a ContentStore<B>,
-        live: &'a mut std::collections::HashSet<crate::iroh::Hash>,
+        live: &'a mut std::collections::HashSet<crate::linked_data::Hash>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), FsError>> + Send + 'a>> {
         Box::pin(async move {
             for child in dir.entries().values() {
@@ -858,7 +858,7 @@ impl<B: BlobStore> Fs<B> {
         // (path, dir, optional old dir-body hash that's about to be orphaned).
         // The root entry has `None` because the root's hash isn't tracked here;
         // `save` evicts the prior root hash when it puts the new one.
-        let mut visited_dirs: Vec<(PathBuf, Dir, Option<crate::iroh::Hash>)> = Vec::new();
+        let mut visited_dirs: Vec<(PathBuf, Dir, Option<crate::linked_data::Hash>)> = Vec::new();
         let mut name = rel.file_name().unwrap().to_string_lossy().to_string();
         let parent_path = rel.parent().unwrap_or(Path::new(""));
 

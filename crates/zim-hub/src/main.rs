@@ -15,29 +15,49 @@ const DEFAULT_FILTER: &str = "info,\
     tokio_util=warn,\
     sqlx=warn";
 
-fn init_logging(log_level: tracing::Level) -> Vec<tracing_appender::non_blocking::WorkerGuard> {
+fn init_logging(
+    log_level: tracing::Level,
+    data_dir: &std::path::Path,
+) -> Vec<tracing_appender::non_blocking::WorkerGuard> {
     let mut guards = Vec::new();
+
+    // Shared filter string for both sinks. Parsed twice (EnvFilter isn't
+    // cheaply cloneable) — one filter per layer.
+    let base = format!("{DEFAULT_FILTER},zim_hub={log_level},zim=info");
+    let filter_str = std::env::var("RUST_LOG")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(base);
 
     let (stdout_writer, stdout_guard) = tracing_appender::non_blocking(std::io::stdout());
     guards.push(stdout_guard);
-
-    let base = format!("{DEFAULT_FILTER},zim_hub={log_level},zim=info");
-    let filter = EnvFilter::builder().parse_lossy(
-        std::env::var("RUST_LOG")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(base),
-    );
-
-    let layer = tracing_subscriber::fmt::layer()
+    let stdout_layer = tracing_subscriber::fmt::layer()
         .with_writer(stdout_writer)
         .with_target(false)
         .with_thread_ids(false)
         .with_timer(tracing_subscriber::fmt::time::uptime())
         .compact()
-        .with_filter(filter);
+        .with_filter(EnvFilter::builder().parse_lossy(&filter_str));
 
-    tracing_subscriber::registry().with(layer).init();
+    // Clean log file at `<data_dir>/hub.log` — tracing output only, so the
+    // dev harness can read it unmixed with the cargo-watch build noise that
+    // shares the hub's tmux pane.
+    let _ = std::fs::create_dir_all(data_dir);
+    let (file_writer, file_guard) =
+        tracing_appender::non_blocking(tracing_appender::rolling::never(data_dir, "hub.log"));
+    guards.push(file_guard);
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_writer(file_writer)
+        .with_ansi(false)
+        .with_target(false)
+        .with_timer(tracing_subscriber::fmt::time::uptime())
+        .compact()
+        .with_filter(EnvFilter::builder().parse_lossy(&filter_str));
+
+    tracing_subscriber::registry()
+        .with(stdout_layer)
+        .with(file_layer)
+        .init();
 
     std::panic::set_hook(Box::new(|panic| match panic.location() {
         Some(loc) => tracing::error!(
@@ -83,7 +103,7 @@ async fn main() {
         }
     };
 
-    let _guards = init_logging(config.log_level);
+    let _guards = init_logging(config.log_level, &config.data_dir);
 
     if let Err(e) = std::fs::create_dir_all(&config.data_dir) {
         tracing::error!(
@@ -97,56 +117,18 @@ async fn main() {
     // `ZIM_HUB_S3_*` is configured, local filesystem store otherwise.
     // The SQLite index that maps blake3 hashes onto object keys
     // always lives in the data dir.
-    let service = match &config.s3 {
-        Some(s3) => {
-            tracing::info!("  blobs    s3 {} bucket={}", s3.endpoint, s3.bucket);
-            let index_path = config.data_dir.join("blob-index.sqlite");
-            let blobs = match zim_peer::object_store::s3_provider(
-                &index_path,
-                &s3.endpoint,
-                &s3.access_key,
-                &s3.secret_key,
-                &s3.bucket,
-                s3.region.as_deref(),
-            )
-            .await
-            {
-                Ok(b) => b,
-                Err(e) => {
-                    tracing::error!("failed to open s3 blob store: {e}");
-                    std::process::exit(3);
-                }
-            };
-            zim::ServiceState::boot_with_blobs(&config.data_dir, blobs).await
-        }
-        None => {
-            tracing::info!("  blobs    local fs (set ZIM_HUB_S3_* for object storage)");
-            zim::ServiceState::boot(&config.data_dir).await
-        }
-    };
-    let service = match service {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::error!("failed to boot embedded peer: {e}");
-            std::process::exit(3);
-        }
-    };
-
-    // Hub-local state DB. Co-located with the peer's data dir but in
-    // its own file so a `rm state/hub.db` only wipes hub-app state
-    // (users, peers, escrow) and leaves the vault mirror intact.
-    // URL form so the same code accepts `postgres://…` when we go
-    // multi-node.
+    // Hub-local state DB — built **first** because the embedded peer's
+    // acceptance policy gates on it. Co-located with the peer's data dir
+    // but in its own file so a `rm state/hub.db` only wipes hub-app state
+    // (users, peers, escrow) and leaves the vault mirror intact. URL form
+    // so the same code accepts `postgres://…` when we go multi-node.
     let state_dir = config.data_dir.join("state");
     if let Err(e) = std::fs::create_dir_all(&state_dir) {
         tracing::error!("failed to create state dir {}: {e}", state_dir.display());
         std::process::exit(4);
     }
-    let hub_db_path = state_dir.join("hub.db");
-    // sqlx's SqliteConnectOptions::from_url wants `sqlite:<path>`.
-    // We canonicalize via `std::fs::canonicalize` so the URL has an
-    // absolute path; if the file doesn't exist yet, canonicalize the
-    // parent and re-append the filename.
+    // sqlx's SqliteConnectOptions::from_url wants an absolute `sqlite:<path>`,
+    // so canonicalize the (now-existing) parent and re-append the filename.
     let abs_path = match std::fs::canonicalize(&state_dir) {
         Ok(parent) => parent.join("hub.db"),
         Err(e) => {
@@ -162,7 +144,6 @@ async fn main() {
         }
     };
     tracing::info!("hub db at {}", abs_path.display());
-    let _ = hub_db_path; // silence unused warning
     let db = match zim_hub::Database::connect(&db_url).await {
         Ok(d) => d,
         Err(e) => {
@@ -170,6 +151,55 @@ async fn main() {
             std::process::exit(4);
         }
     };
+
+    // The embedded peer accepts an inbound sync only for a hosted
+    // recipient from a controlled sender — gated on `user_peers`, not the
+    // daemon's (empty) contacts. See `zim_hub::accept::HubAcceptPolicy`.
+    let accept: std::sync::Arc<dyn zim_peer::AcceptPolicy> =
+        std::sync::Arc::new(zim_hub::accept::HubAcceptPolicy::new(db.clone()));
+
+    // Blob store: S3/minio when configured, else a local fs store.
+    let blobs = match &config.s3 {
+        Some(s3) => {
+            tracing::info!("  blobs    s3 {} bucket={}", s3.endpoint, s3.bucket);
+            let index_path = config.data_dir.join("blob-index.sqlite");
+            match zim_peer::object_store::s3_provider(
+                &index_path,
+                &s3.endpoint,
+                &s3.access_key,
+                &s3.secret_key,
+                &s3.bucket,
+                s3.region.as_deref(),
+            )
+            .await
+            {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::error!("failed to open s3 blob store: {e}");
+                    std::process::exit(3);
+                }
+            }
+        }
+        None => {
+            tracing::info!("  blobs    local fs (set ZIM_HUB_S3_* for object storage)");
+            match zim_core::blobs::BlobsProvider::legacy_fs(&config.data_dir.join("blobs")).await {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::error!("failed to open local blob store: {e}");
+                    std::process::exit(3);
+                }
+            }
+        }
+    };
+
+    let service =
+        match zim::ServiceState::boot_with_blobs(&config.data_dir, blobs, Some(accept)).await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("failed to boot embedded peer: {e}");
+                std::process::exit(3);
+            }
+        };
 
     banner(&config);
 

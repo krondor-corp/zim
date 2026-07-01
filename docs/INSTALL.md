@@ -39,6 +39,27 @@ If you see `command not found`, add cargo's bin dir to your PATH:
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
+## Debug vs release profile
+
+The dev install (`--dev`, a debug build) and the release install behave differently by design — keyed on `debug_assertions`, so it's automatic, no flags. This keeps a dev binary from clobbering a real install's state:
+
+| | Release (`./bin/install`) | Debug (`./bin/install --dev`) |
+|---|---|---|
+| Default data dir | `~/.config/zim` | `~/.config/zim/debug` |
+| Default log level | `info` | `debug` |
+| `zim clean` command | absent | present |
+
+Only the *default* location is nested under `debug/` — an explicit `--config-path` or `$ZIM_HOME` is always used verbatim, so `./bin/dev`'s per-peer homes are unaffected.
+
+`zim clean` wipes the resolved data dir (the `debug/` one on a dev binary). It's a dry run by default — it lists what would be removed — and only deletes with `--yes`:
+
+```bash
+zim clean          # dry run: shows ~/.config/zim/debug and its contents
+zim clean --yes    # actually delete it
+```
+
+It exists only in debug builds, so a release binary can never use it to nuke real data.
+
 ## First run
 
 The daemon owns the runtime; the CLI is a thin client that POSTs to it.

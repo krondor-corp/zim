@@ -564,7 +564,8 @@ td code { font-size: 0.75rem; }
 /* App-specific spacing — tighter, less marketing-y. */
 .app-main h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
 .app-main h2 { font-size: 1.1rem; margin-top: 1.5rem; margin-bottom: 0.5rem; }
-.app-main .page-eyebrow {
+.app-main .page-eyebrow,
+.settings-main .page-eyebrow {
   display: block;
   font-size: 0.7rem;
   font-weight: 600;
@@ -573,7 +574,8 @@ td code { font-size: 0.75rem; }
   color: hsl(var(--muted-foreground));
   margin-bottom: 0.5rem;
 }
-.app-main .page-lead {
+.app-main .page-lead,
+.settings-main .page-lead {
   font-size: 0.95rem;
   color: hsl(var(--muted-foreground));
   max-width: 640px;
@@ -606,4 +608,196 @@ td code { font-size: 0.75rem; }
   .sidebar { width: var(--sidebar-icon-col); }
   .sidebar--pinned { width: var(--sidebar-icon-col); }
   .app-main { margin-left: var(--sidebar-icon-col); padding: calc(var(--header-h) + 1.25rem) 1.25rem; }
+}
+
+/* ── Onboarding shell — standalone centered layout (no app nav) ───────── */
+.onb {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.onb__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid hsl(var(--border));
+}
+.onb__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+.onb__who {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  font-size: 0.8rem;
+}
+.onb__signout {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  color: hsl(var(--muted-foreground));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.onb__signout:hover { color: hsl(var(--foreground)); }
+.onb__main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2.5rem 1.5rem;
+}
+.onb__inner {
+  width: 100%;
+  max-width: 600px;
+}
+
+/* ── Settings shell — standalone layout (own grouped nav, no app rail) ── */
+.settings-shell { display: flex; min-height: 100vh; }
+
+.settings-nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 15rem;
+  height: 100vh;
+  border-right: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
+  padding: 1.25rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  overflow-y: auto;
+}
+.settings-nav__back {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.85rem;
+  color: hsl(var(--muted-foreground));
+  text-decoration: none;
+  padding: 0.4rem 0.6rem;
+  margin-bottom: 1rem;
+}
+.settings-nav__back:hover { color: hsl(var(--foreground)); text-decoration: none; }
+.settings-group {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+  padding: 0.65rem 0.6rem 0.3rem;
+}
+.settings-link {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  color: hsl(var(--muted-foreground));
+  text-decoration: none;
+  transition: background-color 0.12s, color 0.12s;
+}
+.settings-link:hover {
+  color: hsl(var(--foreground));
+  text-decoration: none;
+  background: hsl(var(--muted));
+}
+.settings-link--active { color: hsl(var(--foreground)); background: hsl(var(--muted)); }
+.settings-link__icon { width: 1.1rem; text-align: center; flex-shrink: 0; }
+
+.settings-main {
+  flex: 1;
+  margin-left: 15rem;
+  padding: 3rem 2.5rem 3.5rem;
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+}
+.settings-main__inner { width: 100%; max-width: 680px; }
+.settings-main h1 { font-size: 1.4rem; margin-bottom: 0.4rem; }
+.settings-main h2 { font-size: 1.05rem; margin: 0; color: hsl(var(--foreground)); }
+
+.settings-card {
+  border: 1px solid hsl(var(--border));
+  border-radius: calc(var(--radius) * 2);
+  background: hsl(var(--card));
+  margin-top: 1.5rem;
+  overflow: hidden;
+}
+.settings-card__head { padding: 1.25rem 1.5rem 0.5rem; }
+.settings-card__head p {
+  font-size: 0.85rem;
+  color: hsl(var(--muted-foreground));
+  margin: 0.35rem 0 0;
+}
+.settings-card__body { padding: 1rem 1.5rem 1.25rem; }
+.settings-card__body .field:last-child { margin-bottom: 0; }
+.settings-card__foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.85rem 1.5rem;
+  border-top: 1px solid hsl(var(--border));
+  background: hsl(var(--muted) / 0.35);
+}
+
+.field-copy { display: flex; gap: 0.4rem; align-items: stretch; }
+.field-copy input { flex: 1; min-width: 0; }
+.field-copy__btn { padding: 0 0.7rem; flex-shrink: 0; }
+.field input.mono { font-family: var(--font-mono); font-size: 0.8rem; }
+
+/* Devices debug list (rows inside a settings-card) */
+.device-list { display: flex; flex-direction: column; }
+.device-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.9rem 1.5rem;
+  border-top: 1px solid hsl(var(--border));
+}
+.device-row:first-child { border-top: none; }
+.device-row__icon { font-size: 1.1rem; line-height: 1.4; flex-shrink: 0; }
+.device-row__main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.device-row__title { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.device-row__label { font-size: 0.9rem; font-weight: 600; color: hsl(var(--foreground)); }
+.device-row__badge {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--muted));
+  border-radius: var(--radius);
+  padding: 0.05rem 0.4rem;
+}
+.device-row__badge--master {
+  color: hsl(var(--primary-foreground));
+  background: hsl(var(--primary));
+}
+.device-row__key { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
+.device-row__key code {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: hsl(var(--muted-foreground));
+  word-break: break-all;
+  background: none;
+  padding: 0;
+}
+.device-row__key .field-copy__btn { padding: 0 0.45rem; font-size: 0.75rem; align-self: flex-start; }
+.device-row__meta { font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
+.device-row__remove { padding: 0.15rem 0.6rem; font-size: 0.75rem; flex-shrink: 0; }
+
+@media (max-width: 768px) {
+  .settings-nav { width: var(--sidebar-icon-col); padding: 0.75rem 0.4rem; }
+  .settings-nav .settings-link span:not(.settings-link__icon),
+  .settings-nav__back span:not(.settings-link__icon),
+  .settings-group { display: none; }
+  .settings-main { margin-left: var(--sidebar-icon-col); padding: 1.5rem 1.25rem; }
 }

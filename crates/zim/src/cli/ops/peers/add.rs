@@ -25,6 +25,11 @@ pub struct Add {
     /// Optional free-form note attached to the entry.
     #[arg(long)]
     pub notes: Option<String>,
+    /// Mark this contact trusted — auto-shared into the vaults you own.
+    /// Off by default: untrusted contacts are shareable but opt-in per
+    /// vault.
+    #[arg(long)]
+    pub trust: bool,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -59,6 +64,7 @@ impl Op for Add {
             .call(AddRequest {
                 nick: self.nick.clone(),
                 did,
+                trusted: self.trust,
                 notes: self.notes.clone(),
             })
             .await?;

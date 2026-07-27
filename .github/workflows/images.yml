@@ -1,0 +1,61 @@
+# Build + publish the hub image (Dockerfile.hub — hub server with
+# embedded SPA) to ghcr.io/krondor-corp/zim-hub.
+#
+# Tags: `latest` on main, the version on `zim-v*` release tags, and the
+# commit sha always. Deployment stays manual (zim-iac pulls by tag with
+# `kamal deploy --skip-push`); this workflow only publishes.
+#
+# NOTE: the first push creates the package as private — flip
+# ghcr.io/krondor-corp/zim-hub to public once in the GitHub package
+# settings. (The marketing site is GitHub Pages — see pages.yml.)
+
+name: Hub Image
+
+on:
+  push:
+    branches: [main]
+    tags: ["zim-v*"]
+  workflow_dispatch:
+
+jobs:
+  image:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - name: zim-hub
+            dockerfile: Dockerfile.hub
+            context: .
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=match,pattern=zim-v(.*),group=1
+            type=sha
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,scope=${{ matrix.name }},mode=max

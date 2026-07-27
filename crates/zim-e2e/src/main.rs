@@ -31,6 +31,9 @@ struct Opts {
     keep: bool,
     skip_fuse: bool,
     deadline: Duration,
+    /// `Some(rounds)` — run the tight concurrent-fork repro loop
+    /// instead of the full suite.
+    fork_rounds: Option<u32>,
 }
 
 fn parse_args() -> Result<Opts> {
@@ -38,6 +41,7 @@ fn parse_args() -> Result<Opts> {
         keep: false,
         skip_fuse: false,
         deadline: Duration::from_secs(60),
+        fork_rounds: None,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -51,8 +55,15 @@ fn parse_args() -> Result<Opts> {
                     .parse()?;
                 opts.deadline = Duration::from_secs(secs);
             }
+            "--fork-rounds" => {
+                let n: u32 = args
+                    .next()
+                    .ok_or_else(|| anyhow!("--fork-rounds needs a count"))?
+                    .parse()?;
+                opts.fork_rounds = Some(n);
+            }
             "--help" | "-h" => {
-                println!("zim-e2e [--keep] [--skip-fuse] [--deadline SECS]");
+                println!("zim-e2e [--keep] [--skip-fuse] [--deadline SECS] [--fork-rounds N]");
                 std::process::exit(0);
             }
             other => return Err(anyhow!("unknown arg: {other}")),
@@ -112,6 +123,10 @@ fn run() -> Result<()> {
 
     println!("[2/6] wire: address books + direct NodeAddr introduction");
     harness.wire_peers()?;
+
+    if let Some(rounds) = opts.fork_rounds {
+        return verify::fork_loop(&harness, rounds, opts.deadline);
+    }
 
     let fuse_ok = !opts.skip_fuse && harness.fuse_available();
     println!(

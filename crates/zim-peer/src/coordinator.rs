@@ -456,7 +456,7 @@ where
         // (greater link wins): the side holding the SMALLER link does
         // the merge; the greater side stands pat and adopts the merge
         // commit when it arrives as a strictly-higher head.
-        if self.log.exists(vault_id).await? {
+        let ours_before = if self.log.exists(vault_id).await? {
             let ours = self.log.head(vault_id, None).await?;
             if ours.height > target.height
                 || (ours.height == target.height && ours.link >= target.link)
@@ -464,7 +464,10 @@ where
                 tracing::debug!(%vault_id, our_height = ours.height, target_height = target.height, "already up to date");
                 return Ok(());
             }
-        }
+            Some(ours)
+        } else {
+            None
+        };
 
         let sample = self.log.exponential_sample(vault_id).await?;
         let probe = self
@@ -472,6 +475,27 @@ where
             .send_probe(peer_id, ProbeRequest { vault_id, sample })
             .await?;
         let ancestor = probe.highest.map(|h| h.link);
+
+        // FAST-FORWARD ADOPTION. If we have no history, or our head is
+        // the common ancestor, the remote chain strictly extends ours:
+        // append it to the log (`apply_chain` below) and STOP. The old
+        // behavior always ran the merge + `save()`, re-authoring an
+        // identical tree as a brand-new commit — so two live peers
+        // "adopted" each other's heads by minting fresh siblings,
+        // announcing them, and re-forking forever (a merge treadmill we
+        // watched alternate heights indefinitely). Authoring is only
+        // for TRUE divergence.
+        let fast_forward = match (&ours_before, &ancestor) {
+            (None, _) => true,
+            (Some(ours), Some(anc)) => &ours.link == anc,
+            (Some(_), None) => false,
+        };
+        if fast_forward {
+            return self
+                .sync_vault(vault_id, target, vec![peer_id])
+                .await
+                .map_err(|e| anyhow::anyhow!("fast-forward sync: {e}"));
+        }
 
         // Open fresh from the log's current head. If the vault is
         // already in the log (the shareholder happy path), `Vault::open`
@@ -519,14 +543,34 @@ where
         self.apply_chain(vault_id, target, ancestor.clone(), vec![peer_id])
             .await?;
 
+        // The probe's ancestor is a LOG intersection, and logs contain
+        // both sides' sibling heads (apply_chain appends them) — so the
+        // probe can hand back a link that is in both logs but on
+        // NEITHER lineage. `collect_ops_since` walks previous-links and
+        // never meets such an "ancestor", silently widening the replay
+        // window to genesis: ancient ops re-collide (spurious @conflict
+        // files) and resolutions differ per side. The merge must use an
+        // ancestor that both LINEAGES actually pass through.
+        let ours_link = ours_before
+            .as_ref()
+            .map(|h| h.link.clone())
+            .expect("divergence branch requires local history");
+        let ancestor = self
+            .lineage_ancestor(&ours_link, &target_link, peer_id)
+            .await?;
+        tracing::debug!(
+            %vault_id,
+            ancestor = ?ancestor.as_ref().map(|a| a.hash()),
+            "lineage-true merge ancestor"
+        );
+
         // Self-heal chain gaps before merging. The merge replays ops by
         // walking BOTH chains down to the ancestor — including our own
         // history, which is assumed local but isn't guaranteed to be: a
         // transiently failed download during an earlier pull can leave
         // log rows whose manifest/ops blobs never landed. Without this,
         // one lost blob poisons every future pull of the vault.
-        let ours_link = self.log.head(vault_id, None).await.ok().map(|h| h.link);
-        for start in [Some(&target_link), ours_link.as_ref()].into_iter().flatten() {
+        for start in [&target_link, &ours_link] {
             self.ensure_chain_local(start, ancestor.as_ref(), peer_id)
                 .await?;
         }
@@ -674,6 +718,66 @@ where
         }
 
         Ok(())
+    }
+
+    /// Find a link that BOTH lineages pass through, by walking
+    /// previous-links from each head (downloading any manifest we don't
+    /// hold from `provider`). Unlike the log-intersection probe, the
+    /// result is guaranteed reachable from both heads, so replay
+    /// windows are exact. Bounded; `None` on no common link (full
+    /// replay from genesis, the safe fallback).
+    async fn lineage_ancestor(
+        &self,
+        ours: &Link,
+        theirs: &Link,
+        provider: PublicKey,
+    ) -> anyhow::Result<Option<Link>> {
+        const MAX_WALK: usize = 1024;
+        let mut their_lineage = std::collections::BTreeSet::new();
+        let mut cur = theirs.clone();
+        for _ in 0..MAX_WALK {
+            their_lineage.insert(cur.clone());
+            let manifest = self.manifest_or_fetch(&cur, provider).await?;
+            let prev = manifest.previous().clone();
+            if prev == Link::default() {
+                break;
+            }
+            cur = prev;
+        }
+        let mut cur = ours.clone();
+        for _ in 0..MAX_WALK {
+            if their_lineage.contains(&cur) {
+                return Ok(Some(cur));
+            }
+            let manifest = self.manifest_or_fetch(&cur, provider).await?;
+            let prev = manifest.previous().clone();
+            if prev == Link::default() {
+                break;
+            }
+            cur = prev;
+        }
+        Ok(None)
+    }
+
+    /// Local manifest read, downloading from `provider` on a miss.
+    async fn manifest_or_fetch(
+        &self,
+        link: &Link,
+        provider: PublicKey,
+    ) -> anyhow::Result<Manifest> {
+        match self.blobs.get_cbor(link).await {
+            Ok(m) => Ok(m),
+            Err(_) => {
+                self.blobs
+                    .download_hash(link.hash(), vec![provider], &self.endpoint)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("fetch manifest {link}: {e}"))?;
+                self.blobs
+                    .get_cbor(link)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("fetched manifest unreadable {link}: {e}"))
+            }
+        }
     }
 
     /// Walk a manifest chain from `from` down to `ancestor` (or

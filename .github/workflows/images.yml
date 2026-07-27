@@ -56,6 +56,10 @@ jobs:
           file: ${{ matrix.dockerfile }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          # Kamal refuses to run images without a `service` label matching
+          # its service name (zim-iac deploys with --skip-push).
+          labels: |
+            ${{ steps.meta.outputs.labels }}
+            service=${{ matrix.name }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,scope=${{ matrix.name }},mode=max

@@ -4,3 +4,4 @@ jig.local.toml
 .jig
 .env
 !.env.example
+.coord/

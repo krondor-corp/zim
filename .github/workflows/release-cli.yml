@@ -172,13 +172,17 @@ jobs:
             | Platform | Binary | FUSE Mount Support |
             |----------|--------|--------------------|
             | macOS (Apple Silicon) | `zim-darwin-arm64-${{ steps.version.outputs.version }}` | No |
-            | macOS (Apple Silicon + FUSE) | `zim-darwin-arm64-fuse-${{ steps.version.outputs.version }}` | Yes (requires [macFUSE](https://osxfuse.github.io/)) |
+            | macOS (Apple Silicon + FUSE) | `zim-darwin-arm64-fuse-${{ steps.version.outputs.version }}` | Yes (requires [macFUSE](https://macfuse.github.io/)) |
             | Linux (x86_64) | `zim-linux-x64-${{ steps.version.outputs.version }}` | No |
             | Linux (x86_64 + FUSE) | `zim-linux-x64-fuse-${{ steps.version.outputs.version }}` | Yes (requires libfuse3) |
 
             ### Install
 
-            See [install.sh](../../install.sh) at the repository root for the one-line installer (the URL stabilises once the GitHub repo is published under its zim name).
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/krondor-corp/zim/main/install.sh | sh
+            ```
+
+            Pass `-s -- --fuse` for the FUSE variant. Already installed? `zim update`.
 
             ### Verify
 

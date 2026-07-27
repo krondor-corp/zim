@@ -37,7 +37,7 @@ while [ $# -gt 0 ]; do
       echo ""
       echo "Options:"
       echo "  --version VERSION  Install a specific version (default: latest)"
-      echo "  --fuse             Install FUSE variant (macOS Apple Silicon only)"
+      echo "  --fuse             Install FUSE variant (needs macFUSE / libfuse3)"
       echo "  --no-fuse          Install without FUSE support (skip prompt)"
       echo ""
       echo "Environment:"
@@ -75,9 +75,10 @@ detect_arch() {
   esac
 }
 
-# Check if FUSE is supported on this platform
+# Check if a FUSE build exists for this platform (matches the release matrix:
+# zim-darwin-arm64-fuse and zim-linux-x64-fuse).
 fuse_supported() {
-  [ "$OS" = "darwin" ] && [ "$ARCH" = "arm64" ]
+  { [ "$OS" = "darwin" ] && [ "$ARCH" = "arm64" ]; } || { [ "$OS" = "linux" ] && [ "$ARCH" = "x64" ]; }
 }
 
 OS="$(detect_os)"
@@ -93,14 +94,14 @@ fi
 # Handle FUSE variant selection
 if [ "$FUSE" = "yes" ]; then
   if ! fuse_supported; then
-    echo "Error: FUSE builds are only available for macOS Apple Silicon." >&2
+    echo "Error: FUSE builds are only available for macOS Apple Silicon and Linux x86_64." >&2
     echo "Your platform: ${OS}/${ARCH}" >&2
     exit 1
   fi
 elif [ -z "$FUSE" ] && fuse_supported; then
   # No flag provided and platform supports FUSE — prompt if interactive
   if [ -t 0 ] && [ -t 1 ]; then
-    printf "FUSE mount support is available for your platform (requires macFUSE).\n"
+    printf "FUSE mount support is available for your platform (requires macFUSE / libfuse3).\n"
     printf "Install FUSE variant? [y/N] "
     read -r answer
     case "$answer" in

@@ -6,6 +6,7 @@ members = [
     "crates/zim-core",
     "crates/zim-crypto",
     "crates/zim-did",
+    "crates/zim-e2e",
     "crates/zim-hub",
     "crates/zim-peer",
     "crates/zim-hub/wasm",

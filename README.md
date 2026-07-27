@@ -8,6 +8,10 @@
 >
 > This software has NOT been audited by security professionals and is NOT production-ready. The cryptographic implementation and protocol design have not undergone formal security review. Do not use this software to protect sensitive, confidential, or production data. Use at your own risk.
 
+> **STABILITY DISCLAIMER**
+>
+> The published crates (`zim-cli`, `zim-peer`, `zim-core`, `zim-api`, `zim-did`, `zim-crypto`) are pre-1.0 and **not API-stable**: breaking changes land without deprecation cycles while the protocol settles, and published releases are **liable to be yanked** at a later date. Pin exact versions if you build against them, and expect churn.
+
 ## Overview
 
 Zim organizes data into **vaults**: encrypted, versioned filesystems that synchronize between authorized devices. Hubs can retain and relay ciphertext without becoming vault shareholders.
@@ -16,7 +20,7 @@ Zim organizes data into **vaults**: encrypted, versioned filesystems that synchr
 
 ```bash
 # From crates.io
-cargo install zim
+cargo install zim-cli
 
 # Or via the install script
 curl -fsSL https://raw.githubusercontent.com/zim/zim/main/install.sh | sh

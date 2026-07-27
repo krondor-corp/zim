@@ -41,11 +41,13 @@ with its own `$ZIM_HOME` under `data/<nick>/`.
 
 ## E2E Test Flow (Track A — local p2p, no docker)
 
-**Fast path: `make e2e`** runs this whole track as a one-shot with a
-PASS/FAIL exit code — clean start, daemons, fixtures, and poll-based
-cross-node verification (peers are cross-introduced directly, so no DHT
-wait). Use the manual steps below when you need to inspect intermediate
-state; the checks are the same.
+**Fast path: `make e2e`** runs the `zim-e2e` crate: a hermetic one-shot
+with a PASS/FAIL exit code — its own daemons on the 1722x band (fresh
+homes under `data/e2e/`, the interactive env is untouched), fixtures
+through the real CLI, and poll-based cross-node verification (peers
+cross-introduced directly, so no DHT wait). Use the manual steps below
+when you need to inspect intermediate state in the *interactive* env;
+the checks are the same.
 
 
 1. `./bin/dev kill --force && ./bin/dev clean` — clean start

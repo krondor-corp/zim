@@ -30,3 +30,9 @@ publish = false
 name = "zim-hub-wasm"
 release = false
 publish = false
+
+# Dev tooling — never versioned, released, or published.
+[[package]]
+name = "zim-e2e"
+release = false
+publish = false

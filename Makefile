@@ -17,7 +17,8 @@ help: ## Show this help message
 	@echo '  dev            Spawn 2 daemons in tmux for local sync testing.'
 	@echo '                 Subcommands pass through: `make dev hub up`,'
 	@echo '                 `make dev status`; flags via ARGS="-b --fuse".'
-	@echo '  e2e            One-shot e2e: clean start, fixtures, sync checks.'
+	@echo '  e2e            Hermetic e2e verdict (zim-e2e crate): daemons on'
+	@echo '                 1722x, fixtures, sync convergence. Exit code = result.'
 	@echo ''
 	@echo 'Build / test:'
 	@echo '  build          cargo build --workspace'
@@ -40,8 +41,9 @@ dev: ## Start the local dev environment (2 daemons in tmux)
 	./bin/dev $(DEV_ARGS) $(ARGS)
 
 .PHONY: e2e
-e2e: ## One-shot end-to-end test over the dev harness
-	./bin/dev e2e
+e2e: ## One-shot hermetic e2e run (zim-e2e crate; own ports, own data)
+	cargo build -p zim-cli --features hub,fuse
+	cargo run -q -p zim-e2e
 
 .PHONY: up
 up: ## The whole dev stack: daemons + hub + minio + fixtures + enroll

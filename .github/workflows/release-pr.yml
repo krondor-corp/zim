@@ -181,7 +181,7 @@ jobs:
           - zim-core v$CORE_VERSION
           - zim-api v$API_VERSION
           - zim-peer v$PEER_VERSION
-          - zim-cli v$ZIM_VERSION (installs the `zim` binary)
+          - zim-cli v$ZIM_VERSION (installs the \`zim\` binary)
 
           ### What happens when merged:
           1. Tags will be created automatically

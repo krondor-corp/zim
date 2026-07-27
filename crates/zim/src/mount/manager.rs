@@ -166,10 +166,17 @@ impl MountManager {
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "zim".to_string());
+        // Stable per-vault volume identity (see spawn_mount): first 3 bytes
+        // of the vault id, clamped away from macFUSE's reserved 0/0xFFFFFF.
+        let fsid = {
+            let b = record.vault_id.as_bytes();
+            let raw = u32::from_be_bytes([0, b[0], b[1], b[2]]);
+            raw.clamp(1, 0xFF_FFFE)
+        };
         // Clear any dead mount a previous hard-killed daemon left here, or the
         // fresh mount fails with EAGAIN ("Resource temporarily unavailable").
         force_unmount_stale(&mountpoint);
-        let session = spawn_mount(fs, &mountpoint, record.read_only, &volname)
+        let session = spawn_mount(fs, &mountpoint, record.read_only, &volname, fsid)
             .map_err(|e| anyhow::anyhow!("mount {}: {e}", mountpoint.display()))?;
 
         // Reconcile with remote sync: the long-lived handle's in-memory tree

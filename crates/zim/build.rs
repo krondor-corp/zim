@@ -17,8 +17,11 @@ fn report_build_profile() {
 fn report_repository_version() {
     let version = match env::var("CI_BUILD_REF") {
         Ok(val) if !val.is_empty() => val,
+        // `--exclude '*'` keeps describe off the tag names so a build at
+        // a `zim-v*` tag still stamps the commit sha (short_hash() takes
+        // the first 7 chars — a tag name there renders as "zim-v0.").
         _ => match Command::new("git")
-            .args(["describe", "--always", "--dirty", "--long", "--tags"])
+            .args(["describe", "--always", "--dirty", "--exclude", "*"])
             .output()
         {
             Ok(output) if output.status.success() => String::from_utf8(output.stdout)

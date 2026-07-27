@@ -118,11 +118,21 @@ impl ServiceState {
                 as Arc<dyn AcceptPolicy>
         });
 
+        // The reconcile sweep period is a config.toml knob: it's the
+        // healing interval for lost fire-and-forget announces.
+        let sync_interval = std::time::Duration::from_secs(
+            crate::context::config::AppConfig::load(home)
+                .map(|c| c.sync_interval_secs)
+                .unwrap_or(300)
+                .max(1),
+        );
+
         let peer = Peer::builder()
             .with_secret(secret)
             .with_log(log)
             .with_accept_policy(accept)
             .with_blobs(blobs)
+            .with_sync_interval(Some(sync_interval))
             // Without discovery, peers can't dial each other by
             // pubkey alone — the announce effect would fail with
             // "connect to peer …". pkarr DHT gets us peer→addr

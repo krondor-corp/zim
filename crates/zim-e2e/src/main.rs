@@ -23,8 +23,9 @@ use anyhow::{anyhow, Result};
 mod apply;
 mod fixtures;
 mod harness;
+mod verify;
 
-use harness::{until, Harness};
+use harness::Harness;
 
 struct Opts {
     keep: bool,
@@ -106,15 +107,15 @@ fn run() -> Result<()> {
     let nicks = node_nicks(&root)?;
     let fixtures = fixtures::load(&root.join("bin/dev_/fixtures.toml"))?;
 
-    println!("[1/4] boot: {} daemons on the 1722x band", nicks.len());
-    let harness = Harness::boot(&zim_bin, &nicks, &root.join("data/e2e"), opts.keep)?;
+    println!("[1/6] boot: {} daemons on the 1722x band", nicks.len());
+    let mut harness = Harness::boot(&zim_bin, &nicks, &root.join("data/e2e"), opts.keep)?;
 
-    println!("[2/4] wire: address books + direct NodeAddr introduction");
+    println!("[2/6] wire: address books + direct NodeAddr introduction");
     harness.wire_peers()?;
 
     let fuse_ok = !opts.skip_fuse && harness.fuse_available();
     println!(
-        "[3/4] fixtures ({} entries, FUSE: {})",
+        "[3/6] fixtures ({} entries, FUSE: {})",
         fixtures.len(),
         if fuse_ok { "enabled" } else { "skipped" }
     );
@@ -127,44 +128,19 @@ fn run() -> Result<()> {
         );
     }
 
-    println!("[4/4] cross-node sync convergence");
-    let a = &harness.nodes[0];
-    let b = harness.nodes.get(1).unwrap_or(a);
-    let bin = &harness.zim_bin;
+    println!("[4/6] cross-node convergence + isolation");
+    verify::convergence(&harness, opts.deadline)?;
 
-    until(&format!("{} sees demo", b.nick), opts.deadline, || {
-        b.cli(bin, &["vault", "list"], None)
-            .map(|out| out.split_whitespace().any(|w| w == "demo"))
-            .unwrap_or(false)
-    })?;
-    until(
-        &format!("{} reads {}'s /readme.md", b.nick, a.nick),
-        opts.deadline,
-        || {
-            b.cli(bin, &["vault", "cat", "demo", "/readme.md"], None)
-                .map(|out| out.contains("hello from alice"))
-                .unwrap_or(false)
-        },
-    )?;
-    until(
-        &format!("{} reads the moved /guide.md", b.nick),
-        opts.deadline,
-        || {
-            b.cli(bin, &["vault", "cat", "demo", "/guide.md"], None).is_ok()
-        },
-    )?;
-    // Round-trip the other way — the one check fixtures can't express.
-    let note = format!("hi from {}", b.nick);
-    b.cli(bin, &["vault", "add", "demo", "/b.md"], Some(note.as_bytes()))?;
-    until(
-        &format!("{} reads {}'s /b.md", a.nick, b.nick),
-        opts.deadline,
-        || {
-            a.cli(bin, &["vault", "cat", "demo", "/b.md"], None)
-                .map(|out| out.trim_end() == note)
-                .unwrap_or(false)
-        },
-    )?;
+    println!("[5/6] mutations: round-trip, deletion, concurrent forks");
+    verify::mutations(&harness, opts.deadline)?;
+
+    if fuse_ok {
+        println!("[5b/6] FUSE across nodes (replica mount)");
+        verify::fuse_cross_node(&harness, opts.deadline)?;
+    }
+
+    println!("[6/6] durability: restart survives + still syncs");
+    verify::durability(&mut harness, opts.deadline)?;
 
     if opts.keep {
         println!("\n--keep: environment left running under {}", harness.data_root.display());

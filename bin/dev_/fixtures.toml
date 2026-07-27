@@ -9,7 +9,8 @@
 #   dir          - Create a directory in a vault
 #   share        - Share a vault with a peer (peer = node nick)
 #   mv           - Move/rename a file or directory in a vault
-#   vault_read   - Read a vault path via the CLI (optionally verify content)
+#   vault_read   - Read a vault path via the CLI (optionally verify content;
+#                  `requires = "fuse"` ties it to the FUSE block's skip gate)
 #   mount        - Mount a vault via FUSE
 #   mount_verify - Verify the FUSE mount is accessible
 #   unmount      - Unmount a FUSE-mounted vault
@@ -135,12 +136,15 @@ content = "hello from fuse"
 
 # …and cross-check it committed to the encrypted vault (API↔FUSE
 # coherence: the CLI read must route through the mount's writer).
+# `requires = "fuse"` — this read only makes sense if the fuse_write
+# above actually ran; it skips with the rest of the FUSE block.
 [[fixture]]
 type = "vault_read"
 vault = "demo"
 path = "/.fuse-test.txt"
 content = "hello from fuse"
 node = "alice"
+requires = "fuse"
 
 # --- Move within mount (regression: create-then-rename must not ENOENT) ---
 [[fixture]]

@@ -35,14 +35,14 @@ fix_mount_point() {
 # consumers via `echo -e` / `printf '%b'`).
 parse_fixtures() {
     local in_fixture=false in_multiline=false
-    local type="" vault="" name="" path="" content="" source="" node="" peer="" from="" to="" mount_point=""
+    local type="" vault="" name="" path="" content="" source="" node="" peer="" from="" to="" mount_point="" requires=""
     local multiline_content=""
 
     # Always returns 0 — a bare nonzero here would trip bin/dev's
     # `set -e` on the first [[fixture]] header (nothing to emit yet).
     flush() {
         if $in_fixture && [[ -n "$type" ]]; then
-            echo "$type|$vault|$name|$path|$content|$source|$node|$peer|$from|$to|$mount_point"
+            echo "$type|$vault|$name|$path|$content|$source|$node|$peer|$from|$to|$mount_point|$requires"
         fi
         return 0
     }
@@ -51,7 +51,7 @@ parse_fixtures() {
         if [[ "$line" =~ ^\[\[fixture\]\]$ ]]; then
             flush
             in_fixture=true in_multiline=false
-            type="" vault="" name="" path="" content="" source="" node="" peer="" from="" to="" mount_point=""
+            type="" vault="" name="" path="" content="" source="" node="" peer="" from="" to="" mount_point="" requires=""
             multiline_content=""
             continue
         fi
@@ -94,6 +94,7 @@ parse_fixtures() {
                 from)        from="$value" ;;
                 to)          to="$value" ;;
                 mount_point) mount_point="$value" ;;
+                requires)    requires="$value" ;;
             esac
         fi
     done < "$FIXTURES_FILE"
@@ -387,7 +388,7 @@ cmd_fuse_check() {
 fixtures_list() {
     echo -e "${GREEN}Fixtures to apply:${NC} ($FIXTURES_FILE)"
     echo ""
-    parse_fixtures | while IFS='|' read -r type vault name path content source node peer from to mount_point; do
+    parse_fixtures | while IFS='|' read -r type vault name path content source node peer from to mount_point requires; do
         case "$type" in
             vault)        echo "  [vault]        name=$name node=$node" ;;
             file)         echo "  [file]         vault=$vault path=$path node=$node" ;;
@@ -405,7 +406,8 @@ fixtures_list() {
 }
 
 # Is this fixture type part of the FUSE block?
-is_fuse_fixture() {
+is_fuse_fixture() { # $1=type $2=requires
+    [[ "${2:-}" == "fuse" ]] && return 0
     case "$1" in
         mount|mount_verify|unmount|fuse_*) return 0 ;;
         *) return 1 ;;
@@ -425,10 +427,10 @@ fixtures_apply() {
     echo ""
 
     local errors=0 skipped=0
-    while IFS='|' read -r type vault name path content source node peer from to mount_point; do
+    while IFS='|' read -r type vault name path content source node peer from to mount_point requires; do
         node="${node:-$(fix_default_node)}"
 
-        if is_fuse_fixture "$type" && ! $fuse_ok; then
+        if is_fuse_fixture "$type" "$requires" && ! $fuse_ok; then
             skipped=$((skipped + 1))
             continue
         fi

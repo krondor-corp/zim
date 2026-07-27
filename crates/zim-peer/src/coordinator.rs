@@ -186,6 +186,15 @@ where
                     continue;
                 }
             };
+            // Heal content holes: `download_pins` during a pull is
+            // best-effort, and once heads converge the up-to-date gate
+            // means no pull ever retries a pin that got away. The sweep
+            // is the retry. Cheap when whole: `download_hash` stats
+            // local presence before dialing anyone.
+            if let Err(e) = self.download_pins(&manifest, &[]).await {
+                tracing::debug!(%vault_id, "reconcile: pin heal: {e}");
+            }
+
             // Re-announce our head to every shareholder (push retry: the
             // share-time announce is fire-and-forget, so a recipient that
             // was unreachable would otherwise never learn the vault
@@ -437,10 +446,21 @@ where
             return Ok(());
         };
 
-        // No-op if we're already at or past their height.
+        // No-op if we're strictly ahead, or level on the SAME head.
+        //
+        // Equal height with a DIFFERENT link is a fork (two authors
+        // committed on the same parent). Exactly ONE side must resolve
+        // it, or the two merge concurrently and re-fork at every
+        // height — a livelock we've watched climb 14 heights in
+        // seconds. The tiebreak is the same one canonical-head uses
+        // (greater link wins): the side holding the SMALLER link does
+        // the merge; the greater side stands pat and adopts the merge
+        // commit when it arrives as a strictly-higher head.
         if self.log.exists(vault_id).await? {
             let ours = self.log.head(vault_id, None).await?;
-            if ours.height >= target.height {
+            if ours.height > target.height
+                || (ours.height == target.height && ours.link >= target.link)
+            {
                 tracing::debug!(%vault_id, our_height = ours.height, target_height = target.height, "already up to date");
                 return Ok(());
             }
@@ -498,8 +518,50 @@ where
         let target_link = target.link.clone();
         self.apply_chain(vault_id, target, ancestor.clone(), vec![peer_id])
             .await?;
-        self.merge_vault(&mut vault, &target_link, ancestor.as_ref())
+
+        // Self-heal chain gaps before merging. The merge replays ops by
+        // walking BOTH chains down to the ancestor — including our own
+        // history, which is assumed local but isn't guaranteed to be: a
+        // transiently failed download during an earlier pull can leave
+        // log rows whose manifest/ops blobs never landed. Without this,
+        // one lost blob poisons every future pull of the vault.
+        let ours_link = self.log.head(vault_id, None).await.ok().map(|h| h.link);
+        for start in [Some(&target_link), ours_link.as_ref()].into_iter().flatten() {
+            self.ensure_chain_local(start, ancestor.as_ref(), peer_id)
+                .await?;
+        }
+
+        let (_result, merged_link) = self
+            .merge_vault(&mut vault, &target_link, ancestor.as_ref())
             .await?;
+
+        // A merge commit is new information the rest of the network
+        // doesn't have. Announce it, or the fork's other author only
+        // discovers the resolution at the next reconcile sweep — until
+        // then the two logs disagree on the canonical head.
+        if merged_link != target_link {
+            let head = self.log.head(vault_id, None).await?;
+            let self_pk = self.secret.public();
+            for (client, share) in vault.manifest().shares().iter() {
+                let Some(dial) = share.reach() else {
+                    continue;
+                };
+                if dial == self_pk {
+                    continue;
+                }
+                if let Err(e) = self
+                    .submit(Effect::AnnounceHead {
+                        peer_id: dial,
+                        vault_id,
+                        head: Box::new(head.clone()),
+                        recipient: *client,
+                    })
+                    .await
+                {
+                    tracing::debug!(%vault_id, "post-merge announce: {e}");
+                }
+            }
+        }
         Ok(())
     }
 
@@ -611,6 +673,55 @@ where
             self.download_pins(manifest, &peer_ids).await?;
         }
 
+        Ok(())
+    }
+
+    /// Walk a manifest chain from `from` down to `ancestor` (or
+    /// genesis), downloading any manifest or ops blob that isn't in the
+    /// local store from `provider`. Repairs holes left by transiently
+    /// failed downloads in earlier pulls.
+    async fn ensure_chain_local(
+        &self,
+        from: &Link,
+        ancestor: Option<&Link>,
+        provider: PublicKey,
+    ) -> anyhow::Result<()> {
+        let mut cur = from.clone();
+        loop {
+            if Some(&cur) == ancestor {
+                break;
+            }
+            let manifest: Manifest = match self.blobs.get_cbor(&cur).await {
+                Ok(m) => m,
+                Err(_) => {
+                    tracing::info!(
+                        link = %cur,
+                        "chain gap: re-downloading missing manifest blob"
+                    );
+                    self.blobs
+                        .download_hash(cur.hash(), vec![provider], &self.endpoint)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("heal manifest {cur}: {e}"))?;
+                    self.blobs
+                        .get_cbor(&cur)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("healed manifest unreadable {cur}: {e}"))?
+                }
+            };
+            let ops = manifest.ops().clone();
+            if ops != Link::default() && self.blobs.get(&ops.hash()).await.is_err() {
+                tracing::info!(link = %ops, "chain gap: re-downloading missing ops blob");
+                self.blobs
+                    .download_hash(ops.hash(), vec![provider], &self.endpoint)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("heal ops {ops}: {e}"))?;
+            }
+            let prev = manifest.previous().clone();
+            if prev == Link::default() {
+                break;
+            }
+            cur = prev;
+        }
         Ok(())
     }
 

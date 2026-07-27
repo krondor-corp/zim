@@ -1,6 +1,6 @@
 [package]
 name = "zim-cli"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -30,11 +30,11 @@ fuse = ["dep:fuser", "dep:moka", "dep:libc"]
 hub = []
 
 [dependencies]
-zim-api = { path = "../zim-api", version = "0.1.0", features = ["hub"] }
-zim-core = { path = "../zim-core", version = "0.1.0" }
+zim-api = { path = "../zim-api", version = "0.1.1", features = ["hub"] }
+zim-core = { path = "../zim-core", version = "0.1.1" }
 zim-crypto = { path = "../zim-crypto", version = "0.1.0" }
 zim-did = { path = "../zim-did", version = "0.1.0" }
-zim-peer = { path = "../zim-peer", version = "0.1.0" }
+zim-peer = { path = "../zim-peer", version = "0.1.1" }
 # FUSE deps (feature `fuse`) — see src/fuse/.
 # - abi-7-31: parse RENAME2 (and newer ops) so macOS `mv` dispatches to our
 #   rename instead of returning ENOSYS.

@@ -24,7 +24,9 @@ git_tag_name = "zim-v{{ version }}"
 [[package]]
 name = "zim-hub"
 release = false
+publish = false
 
 [[package]]
 name = "zim-hub-wasm"
 release = false
+publish = false

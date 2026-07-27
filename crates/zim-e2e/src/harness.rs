@@ -178,8 +178,8 @@ impl Harness {
                     break;
                 }
                 if start.elapsed() > deadline {
-                    let log = std::fs::read_to_string(node.home.join("daemon.log"))
-                        .unwrap_or_default();
+                    let log =
+                        std::fs::read_to_string(node.home.join("daemon.log")).unwrap_or_default();
                     let tail: Vec<_> = log.lines().rev().take(10).collect();
                     return Err(anyhow!(
                         "daemon {} never became healthy; log tail:\n{}",

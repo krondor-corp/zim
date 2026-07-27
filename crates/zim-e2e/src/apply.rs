@@ -138,8 +138,7 @@ fn apply_one(harness: &Harness, fixture: &Fixture, default_nick: &str) -> Result
         }
         Fixture::MountVerify { mount_point: mp } => {
             let mp = mount_point(harness, mp);
-            std::fs::read_dir(&mp)
-                .map_err(|e| anyhow!("mount_verify {}: {e}", mp.display()))?;
+            std::fs::read_dir(&mp).map_err(|e| anyhow!("mount_verify {}: {e}", mp.display()))?;
             println!("  mount_verify {}: accessible", mp.display());
         }
         Fixture::Unmount { vault, node } => {
@@ -147,7 +146,10 @@ fn apply_one(harness: &Harness, fixture: &Fixture, default_nick: &str) -> Result
             node.cli(bin, &["mount", "stop", vault], None)?;
             println!("  unmount {vault}: ok");
         }
-        Fixture::FuseLs { mount_point: mp, path } => {
+        Fixture::FuseLs {
+            mount_point: mp,
+            path,
+        } => {
             let full = mount_point(harness, mp).join(path);
             std::fs::read_dir(&full).map_err(|e| anyhow!("fuse_ls {}: {e}", full.display()))?;
             println!("  fuse_ls {path}: ok");

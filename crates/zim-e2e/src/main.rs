@@ -158,7 +158,10 @@ fn run() -> Result<()> {
     verify::durability(&mut harness, opts.deadline)?;
 
     if opts.keep {
-        println!("\n--keep: environment left running under {}", harness.data_root.display());
+        println!(
+            "\n--keep: environment left running under {}",
+            harness.data_root.display()
+        );
     }
     Ok(())
 }

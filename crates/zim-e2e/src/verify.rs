@@ -80,7 +80,10 @@ pub fn convergence(harness: &Harness, deadline: Duration) -> Result<()> {
     until(
         &format!("{} reads the moved /guide.md", b.nick),
         deadline,
-        || b.cli(bin, &["vault", "cat", "demo", "/guide.md"], None).is_ok(),
+        || {
+            b.cli(bin, &["vault", "cat", "demo", "/guide.md"], None)
+                .is_ok()
+        },
     )?;
 
     // ISOLATION: `notes` was never shared — bob must not have it, and
@@ -92,7 +95,9 @@ pub fn convergence(harness: &Harness, deadline: Duration) -> Result<()> {
             b.nick
         ));
     }
-    if b.cli(bin, &["vault", "cat", "notes", "/index.md"], None).is_ok() {
+    if b.cli(bin, &["vault", "cat", "notes", "/index.md"], None)
+        .is_ok()
+    {
         return Err(anyhow!(
             "isolation violated: {} can read from the unshared vault 'notes'",
             b.nick
@@ -109,7 +114,11 @@ pub fn mutations(harness: &Harness, deadline: Duration) -> Result<()> {
 
     // Round-trip: the late joiner writes, the owner reads.
     let note = format!("hi from {}", b.nick);
-    b.cli(bin, &["vault", "add", "demo", "/b.md"], Some(note.as_bytes()))?;
+    b.cli(
+        bin,
+        &["vault", "add", "demo", "/b.md"],
+        Some(note.as_bytes()),
+    )?;
     until(
         &format!("{} reads {}'s /b.md", a.nick, b.nick),
         deadline,
@@ -126,7 +135,10 @@ pub fn mutations(harness: &Harness, deadline: Duration) -> Result<()> {
     until(
         &format!("{}'s rm of /b.md reaches {}", a.nick, b.nick),
         deadline,
-        || b.cli(bin, &["vault", "cat", "demo", "/b.md"], None).is_err(),
+        || {
+            b.cli(bin, &["vault", "cat", "demo", "/b.md"], None)
+                .is_err()
+        },
     )?;
     heads_converge(a, b, bin, "demo", deadline)?;
 
@@ -144,8 +156,10 @@ pub fn mutations(harness: &Harness, deadline: Duration) -> Result<()> {
     )?;
     until("both forks visible on both nodes", deadline, || {
         [a, b].iter().all(|n| {
-            n.cli(bin, &["vault", "cat", "demo", "/fork-a.md"], None).is_ok()
-                && n.cli(bin, &["vault", "cat", "demo", "/fork-b.md"], None).is_ok()
+            n.cli(bin, &["vault", "cat", "demo", "/fork-a.md"], None)
+                .is_ok()
+                && n.cli(bin, &["vault", "cat", "demo", "/fork-b.md"], None)
+                    .is_ok()
         })
     })?;
     heads_converge(a, b, bin, "demo", deadline)?;
@@ -270,8 +284,10 @@ pub fn fork_loop(harness: &Harness, rounds: u32, deadline: Duration) -> Result<(
             } else {
                 "DIVERGED: heads differ at deadline — sync incomplete (timing?)"
             };
-            println!("
-================ POST-MORTEM (round {round}) ================");
+            println!(
+                "
+================ POST-MORTEM (round {round}) ================"
+            );
             println!("verdict: {verdict}");
             for n in [a, b] {
                 println!("--- {}:", n.nick);
@@ -300,8 +316,10 @@ pub fn fork_loop(harness: &Harness, rounds: u32, deadline: Duration) -> Result<(
             return Err(e).map_err(|e| anyhow!("{e} [{verdict}]"));
         }
     }
-    println!("
-{rounds} fork rounds clean");
+    println!(
+        "
+{rounds} fork rounds clean"
+    );
     Ok(())
 }
 

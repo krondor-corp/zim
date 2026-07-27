@@ -109,6 +109,7 @@ fn apply_one(harness: &Harness, fixture: &Fixture, default_nick: &str) -> Result
             path,
             content,
             node,
+            requires: _,
         } => {
             let node = harness.node(&nick(node))?;
             let actual = node.cli(bin, &["vault", "cat", vault, path], None)?;

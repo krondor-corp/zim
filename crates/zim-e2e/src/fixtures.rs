@@ -53,6 +53,10 @@ pub enum Fixture {
         #[serde(default)]
         content: Option<String>,
         node: Option<String>,
+        /// `requires = "fuse"` gates this read on the FUSE block having
+        /// run (e.g. verifying a fuse_write landed in the vault).
+        #[serde(default)]
+        requires: Option<String>,
     },
     Mount {
         vault: String,
@@ -105,6 +109,9 @@ impl Fixture {
     /// Is this fixture part of the FUSE block (skipped when FUSE is
     /// unavailable — a skip, never a failure)?
     pub fn is_fuse(&self) -> bool {
+        if let Fixture::VaultRead { requires, .. } = self {
+            return requires.as_deref() == Some("fuse");
+        }
         matches!(
             self,
             Fixture::Mount { .. }

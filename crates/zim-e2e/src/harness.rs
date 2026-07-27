@@ -91,6 +91,41 @@ impl Harness {
     /// Boot one daemon per nick under `data_root`, wiping any previous
     /// run's state first.
     pub fn boot(zim_bin: &Path, nicks: &[String], data_root: &Path, keep: bool) -> Result<Self> {
+        // The 1722x band is harness-owned: anything already listening
+        // there is a stale run (e.g. a previous --keep). Kill it, or
+        // this run's daemons die on bind while health checks happily
+        // talk to the wrong (old-binary, old-state) processes.
+        // Probe by CONNECT, not bind: TIME_WAIT remnants of our own
+        // health checks block a plain bind() long after the listener
+        // is gone (std doesn't set SO_REUSEADDR on unix).
+        let alive = |port: u16| {
+            std::net::TcpStream::connect_timeout(
+                &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+                Duration::from_millis(300),
+            )
+            .is_ok()
+        };
+        for i in 0..nicks.len() {
+            let port = E2E_PORT_BASE + i as u16;
+            if alive(port) {
+                eprintln!("  clearing stale process on :{port}");
+                // SIGKILL: these are harness-owned throwaways, and
+                // SIGTERM triggers the daemon's graceful drain (with
+                // its request-grace sleep) — slower than our patience.
+                let _ = Command::new("pkill")
+                    .args(["-9", "-f", &format!("daemon run --port {port}")])
+                    .status();
+                let start = Instant::now();
+                while alive(port) {
+                    if start.elapsed() > Duration::from_secs(5) {
+                        return Err(anyhow!(
+                            "port {port} still occupied after clearing — free it and retry"
+                        ));
+                    }
+                    std::thread::sleep(Duration::from_millis(300));
+                }
+            }
+        }
         if data_root.exists() {
             std::fs::remove_dir_all(data_root).ok();
         }
@@ -101,11 +136,15 @@ impl Harness {
             std::fs::create_dir_all(&home)?;
             std::fs::write(
                 home.join("config.toml"),
-                format!("api_port = {port}\nlog_level = \"info\"\n"),
+                // Fast reconcile sweeps: announces are fire-and-forget, so
+                // the sweep is the retry — 2s heals lost pushes well
+                // inside assertion deadlines.
+                format!("api_port = {port}\nlog_level = \"info\"\nsync_interval_secs = 2\n"),
             )?;
             let log = std::fs::File::create(home.join("daemon.log"))?;
             let child = Command::new(zim_bin)
                 .env("ZIM_HOME", &home)
+                .env("ZIM_LOG", "zim=debug,zim_peer=debug")
                 .args(["daemon", "run", "--port", &port.to_string()])
                 .stdout(Stdio::from(log.try_clone()?))
                 .stderr(Stdio::from(log))
@@ -152,6 +191,33 @@ impl Harness {
             }
         }
         Ok(())
+    }
+
+    /// Kill and respawn one node's daemon on the same home + port.
+    /// The caller must re-run `wire_peers` afterwards: the fresh iroh
+    /// endpoint binds new sockets, so prior introductions are stale.
+    pub fn restart(&mut self, nick: &str) -> Result<()> {
+        let node = self
+            .nodes
+            .iter_mut()
+            .find(|n| n.nick == nick)
+            .ok_or_else(|| anyhow!("restart: unknown node '{nick}'"))?;
+        if let Some(mut child) = node.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        let log = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(node.home.join("daemon.log"))?;
+        let child = Command::new(&self.zim_bin)
+            .env("ZIM_HOME", &node.home)
+            .args(["daemon", "run", "--port", &node.port.to_string()])
+            .stdout(Stdio::from(log.try_clone()?))
+            .stderr(Stdio::from(log))
+            .spawn()?;
+        node.child = Some(child);
+        self.wait_healthy(Duration::from_secs(30))
     }
 
     pub fn node(&self, nick: &str) -> Result<&Node> {

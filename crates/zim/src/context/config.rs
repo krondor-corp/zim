@@ -22,6 +22,11 @@ pub struct AppConfig {
     pub api_port: u16,
     /// `tracing` log level used by the daemon's request tracing layer.
     pub log_level: String,
+    /// Seconds between reconcile sweeps (re-announce heads + pull from
+    /// every reach target). Announces are fire-and-forget, so this is
+    /// the healing period for any lost push. 300s suits daemons at
+    /// rest; test harnesses set it low for fast convergence.
+    pub sync_interval_secs: u64,
 }
 
 /// Default `log_level` baked into a fresh `config.toml`. Debug builds
@@ -38,6 +43,7 @@ impl Default for AppConfig {
         Self {
             api_port: DEFAULT_API_PORT,
             log_level: DEFAULT_LOG_LEVEL.to_string(),
+            sync_interval_secs: 300,
         }
     }
 }

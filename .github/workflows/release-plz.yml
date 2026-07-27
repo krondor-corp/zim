@@ -1,0 +1,87 @@
+name: Release PR
+
+# The smart release train (see release-plz.toml):
+#
+#   push to main            → `release-pr` keeps a standing release PR
+#                             up to date (version bump + changelog).
+#   merge that PR           → `release` tags `zim-v<version>`, then
+#                             dispatches the builders against the tag.
+#
+# The explicit dispatches exist because tags created with the workflow's
+# GITHUB_TOKEN never trigger `on: push: tags:` workflows (GitHub's
+# recursion guard) — release-cli.yml and images.yml must be kicked by
+# API. Both already accept workflow_dispatch.
+#
+# Known limitation (no PAT configured, deliberately): CI does not run on
+# the bot-opened release PR itself. Main is already green post-merge of
+# whatever it contains; add a fine-grained PAT as RELEASE_PLZ_TOKEN if
+# release-PR CI ever matters.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-plz-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write # dispatch release-cli.yml / images.yml
+
+jobs:
+  # On merge to main: tag any untagged version, then kick the builders.
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: release-plz release
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Dispatch builders for the new tag
+        run: |
+          TAG=$(git tag --points-at HEAD 'zim-v*' | head -1)
+          if [ -z "$TAG" ]; then
+            # `git tag` only knows local tags; release-plz pushes via API.
+            git fetch --tags --quiet
+            TAG=$(git tag --points-at HEAD 'zim-v*' | head -1)
+          fi
+          if [ -n "$TAG" ]; then
+            VERSION="${TAG#zim-v}"
+            echo "released $TAG — dispatching release-cli + images"
+            gh workflow run release-cli.yml --ref "$TAG" -f version="$VERSION"
+            gh workflow run images.yml --ref "$TAG"
+          else
+            echo "no new release tag on this commit — nothing to dispatch"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # On every main push: create/refresh the standing release PR.
+  release-pr:
+    runs-on: ubuntu-latest
+    needs: release # serialize: never race the tagger
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: release-plz release-pr
+        uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}

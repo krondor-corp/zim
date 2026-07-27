@@ -49,7 +49,9 @@ use std::path::{Path, PathBuf};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-const DEFAULT_LISTEN: &str = "127.0.0.1:8080";
+// Dev port convention: all zim dev services live in the 17xxx band;
+// the hub owns 1719x (see bin/dev_/nodes.toml for the band map).
+const DEFAULT_LISTEN: &str = "127.0.0.1:17190";
 const DEFAULT_HOME: &str = "./data/zim-hub";
 const CONFIG_FILE: &str = "hub-config.toml";
 
@@ -66,7 +68,7 @@ pub struct Config {
     ///
     /// Examples:
     /// - prod: `ZIM_HUB_HOST=hub.example.com` → `did:web:hub.example.com`
-    /// - dev:  unset, listening on `127.0.0.1:8080` → `did:web:127.0.0.1%3A8080`
+    /// - dev:  unset, listening on `127.0.0.1:17190` → `did:web:127.0.0.1%3A17190`
     pub host: String,
     pub auth: AuthConfig,
     /// S3-compatible blob-store backend. `None` → local filesystem

@@ -3,7 +3,7 @@
 #
 # Boots `zim-hub` in a tmux window alongside the daemons, with dev
 # defaults. When `confit` is installed it resolves *real* Google OAuth
-# credentials (like `bin/hub`) so the web view is usable; otherwise it
+# credentials so the web view is usable; otherwise it
 # falls back to dummy creds (web login disabled, daemon<->hub sync
 # still works — that path is pure iroh and never touches OAuth).
 #
@@ -21,14 +21,14 @@
 #   ./bin/dev hub did      Print the hub's did:web (for `peers add`)
 #   ./bin/dev hub down     Kill the hub window
 
-HUB_PORT="${HUB_PORT:-8080}"
+HUB_PORT="${HUB_PORT:-17190}"
 HUB_HOME="$DATA_DIR/zim-hub"
 HUB_BIN="$PROJECT_ROOT/target/debug/zim-hub"
 # The hub runs under `cargo watch` too, watching the shared sync crates — so an
 # edit to e.g. `zim-peer` (the wire protocol) rebuilds the hub *and* the
 # daemons together, never leaving them on skewed protocol versions. (The SPA
-# bundle is separate: `bin/build-web` / `trunk watch`.)
-HUB_WATCH_DIRS="-w crates/zim-hub/src -w crates/zim/src -w crates/zim-peer/src -w crates/zim-core/src -w crates/zim-crypto/src -w crates/zim-did/src -w crates/zim-runtime/src"
+# bundle is separate: `make build-web` / `trunk watch`.)
+HUB_WATCH_DIRS="-w crates/zim-hub/src -w crates/zim-peer/src -w crates/zim-core/src -w crates/zim-crypto/src -w crates/zim-did/src"
 HUB_WINDOW="hub"
 # Web user the hub seeds + enrolls daemons under. Override with the env var.
 SEED_EMAIL="${ZIM_DEV_SEED_EMAIL:-al@krondor.org}"
@@ -55,7 +55,10 @@ hub_up() {
     }
 
     echo -e "${BLUE}Building web SPA…${NC}"
-    "$PROJECT_ROOT/bin/build-web" || {
+    # `ARGS=` neutralizes make's command-line-variable propagation: with
+    # `make dev ARGS="--hub"`, the sub-make would otherwise inherit
+    # ARGS=--hub and hand it to trunk.
+    make -C "$PROJECT_ROOT" build-web ARGS= || {
         echo -e "${RED}web SPA build failed${NC}"
         exit 1
     }
@@ -83,7 +86,7 @@ ZIM_HUB_LISTEN='127.0.0.1:$HUB_PORT' \
 ZIM_HUB_HOME='$HUB_HOME' \
 ZIM_HUB_HOST='127.0.0.1%3A$HUB_PORT' \
 ZIM_HUB_ADMIN_EMAILS='${ZIM_HUB_ADMIN_EMAILS:-$SEED_EMAIL}' \
-ZIM_HUB_S3_ENDPOINT='http://localhost:9000' \
+ZIM_HUB_S3_ENDPOINT="http://localhost:${MINIO_API_PORT:-17180}" \
 ZIM_HUB_S3_ACCESS_KEY='minioadmin' \
 ZIM_HUB_S3_SECRET_KEY='minioadmin' \
 ZIM_HUB_S3_BUCKET='zim-blobs'"
@@ -165,6 +168,11 @@ hub_enroll() {
         home="$(get_data_dir "$n")"
         printf '{\n  "hub_url": "%s",\n  "enrolled_pubkey": "%s",\n  "enrolled_at": "%s"\n}\n' \
             "$(hub_url)" "$pk" "$now" > "$home/hub-session.json"
+        # The hub itself must be a contact — its pushes (browser-side
+        # writes fanned out over iroh) are gated by ContactsAcceptPolicy,
+        # and `hub peers sync` only adds roster *devices*. A real
+        # `zim hub login` does this; the dev stand-in must too.
+        seed_cli "$n" peers add hub "did:web:127.0.0.1%3A$HUB_PORT" >/dev/null 2>&1 || true
         seed_cli "$n" hub peers sync >/dev/null 2>&1 \
             && echo -e "  ${GREEN}$n${NC} synced peer book from hub roster" \
             || echo -e "  ${YELLOW}$n${NC} hub peers sync failed (is the hub up?)"

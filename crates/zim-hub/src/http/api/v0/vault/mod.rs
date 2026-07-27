@@ -1,4 +1,4 @@
-//! `/api/v0/v/{vault_id}/...` — per-vault ciphertext + log endpoints.
+//! `/api/v0/vaults/{vault_id}/...` — per-vault ciphertext + log endpoints.
 
 pub mod head;
 pub mod log;

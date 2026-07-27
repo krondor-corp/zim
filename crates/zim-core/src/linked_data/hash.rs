@@ -106,19 +106,3 @@ impl<'de> Deserialize<'de> for Hash {
         }
     }
 }
-
-// Native-only: zero-copy conversions between our Hash and iroh_blobs::Hash.
-// iroh_blobs::Hash is also a [u8; 32] newtype with from_bytes / as_bytes.
-#[cfg(feature = "native")]
-impl From<iroh_blobs::Hash> for Hash {
-    fn from(h: iroh_blobs::Hash) -> Self {
-        Hash(*h.as_bytes())
-    }
-}
-
-#[cfg(feature = "native")]
-impl From<Hash> for iroh_blobs::Hash {
-    fn from(h: Hash) -> Self {
-        iroh_blobs::Hash::from_bytes(h.0)
-    }
-}

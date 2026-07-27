@@ -10,9 +10,9 @@
 
 use bytes::Bytes;
 
-use zim_core::blobs::BlobsProvider;
 use zim_core::fs::AbsPath;
 use zim_crypto::PrivateKey;
+use zim_peer::BlobsProvider;
 use zim_peer::{MemoryVaultLog, Vault, VaultLog};
 
 use zim_peer::{Effect, Peer};

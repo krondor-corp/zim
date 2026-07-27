@@ -10,28 +10,28 @@
 
 ## Overview
 
-Zim organizes data into **buckets** — encrypted containers that sync directly between authorized devices. Each bucket has its own 256-bit secret; per-file and per-directory keys are split into shares and wrapped to each device's public key. No server holds plaintext.
+Zim organizes data into **vaults**: encrypted, versioned filesystems that synchronize between authorized devices. Hubs can retain and relay ciphertext without becoming vault shareholders.
 
 ## Install
 
 ```bash
 # From crates.io
-cargo install zim-peer
+cargo install zim
 
 # Or via the install script
 curl -fsSL https://raw.githubusercontent.com/zim/zim/main/install.sh | sh
 ```
 
-See [docs/INSTALL.md](docs/INSTALL.md) for system-package and source builds.
+See [source installation](docs/dx/install.md) for system-package and source builds.
 
 ## Quick start
 
 ```bash
-zim init                          # one-time: generate identity + state dir
-zim daemon                        # foreground; ctrl-c to stop
-zim bucket create my-bucket       # in another shell
-zim bucket add my-bucket ./file.txt
-zim bucket ls my-bucket
+zim init                           # one-time: generate identity + state dir
+zim daemon run                     # foreground; ctrl-c to stop
+zim vault create my-vault          # in another shell
+zim vault my-vault add /file.txt < ./file.txt
+zim vault my-vault ls /
 ```
 
 ## Workspace layout
@@ -39,27 +39,26 @@ zim bucket ls my-bucket
 | Crate | Description |
 |-------|-------------|
 | [`zim-crypto`](crates/zim-crypto/) | Ed25519/X25519 keys, ChaCha20-Poly1305, secret sharing |
-| [`zim-core`](crates/zim-core/) | Core: filesystem, content store, linked data, iroh abstraction |
-| [`zim-protocol`](crates/zim-protocol/) | Wire protocol: peer messaging, sync jobs, append-only bucket log |
-| [`zim-runtime`](crates/zim-runtime/) | Service trait + ShutdownHandle (shared lifecycle) |
-| [`zim-peer`](crates/zim-peer/) | System daemon binary (`zim`) + HTTP API + FUSE + database |
-| [`zim-hub`](crates/zim-hub/) | Web gateway with embedded peer, Askama + Datastar, Google OAuth identity vault |
-| [`zim-wasm`](crates/zim-wasm/) | Browser-side WASM client (client-side decryption) |
+| [`zim-did`](crates/zim-did/) | `did:key` and `did:web` identities and resolution |
+| [`zim-core`](crates/zim-core/) | Vault data model, filesystem, and linked data |
+| [`zim-api`](crates/zim-api/) | Shared HTTP contracts and typed clients |
+| [`zim-peer`](crates/zim-peer/) | Peer sync, storage, iroh transport, and runtime |
+| [`zim`](crates/zim/) | Daemon, CLI, HTTP API, and FUSE mounts |
+| [`zim-hub`](crates/zim-hub/) | Ciphertext mirror, web gateway, browser SDK, and web app |
 
-See [docs/CRATES.md](docs/CRATES.md) for the dependency graph and module conventions.
+See [architecture](docs/architecture/index.md) for dependency direction and subsystem boundaries.
 
 ## Documentation
 
-- **Users** — [wiki/](wiki/) (Jekyll-built; serve locally with `cd wiki && bundle exec jekyll serve`).
+- **Users** — [web/](web/) (Jekyll-built; serve locally with `make -C web dev`).
 - **Contributors** — [docs/](docs/):
-  - [PROJECT_LAYOUT.md](docs/PROJECT_LAYOUT.md) — crate-by-crate module map
-  - [PATTERNS.md](docs/PATTERNS.md) — Rust conventions
-  - [CONTRIBUTING.md](docs/CONTRIBUTING.md) — workflow, commits, tests
-  - [DEVELOPMENT.md](docs/DEVELOPMENT.md) — local dev environment
-  - [CLI.md](docs/CLI.md) — Op pattern, formatting boundary
-  - [API.md](docs/API.md) — HTTP API reference
-  - [RELEASE.md](docs/RELEASE.md) — release process
-  - [concepts/](docs/concepts/) — data model, crypto, sync, conflict resolution, security, FUSE
+  - [Documentation index](docs/index.md) — contributor documentation map
+  - [Product](docs/product/) — vault capabilities, cryptography, access, identity, and security
+  - [Architecture](docs/architecture/) — subsystem boundaries, data relationships, and flows
+  - [Patterns](docs/patterns/) — Rust conventions, CLI boundaries, and HTTP contracts
+  - [Developer experience](docs/dx/) — setup, local development, and contribution
+  - [UI](docs/ui/) — browser and WASM architecture
+  - [DevOps](docs/devops/) — release and operational workflows
 
 ## License
 

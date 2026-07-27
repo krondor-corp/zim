@@ -9,8 +9,8 @@ use clap::Args;
 use crate::cli::op::Op;
 use crate::cli::ui;
 use crate::context::{ApiContext, ContextError};
-use crate::http_server::api::client::ApiError;
-use crate::http_server::api::v0::mounts::{AddRequest, MountInfo};
+use crate::daemon::api::client::ApiError;
+use crate::daemon::api::v0::mounts::{AddRequest, MountInfo};
 
 #[derive(Args, Debug, Clone)]
 pub struct Add {

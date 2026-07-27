@@ -7388,9 +7388,12 @@ dependencies = [
  "clap",
  "comfy-table",
  "dirs 5.0.1",
+ "fuser",
  "hex",
  "hostname",
  "http",
+ "libc",
+ "moka",
  "owo-colors",
  "reqwest",
  "serde",
@@ -7411,22 +7414,24 @@ dependencies = [
  "zim-core",
  "zim-crypto",
  "zim-did",
- "zim-fuse",
  "zim-peer",
- "zim-runtime",
 ]
 
 [[package]]
 name = "zim-api"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "base64",
  "chrono",
  "reqwest",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "tokio",
  "url",
+ "web-time",
+ "zim-core",
  "zim-crypto",
  "zim-did",
 ]
@@ -7437,28 +7442,20 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "bao-tree",
  "bincode",
  "blake3",
  "bytes",
  "chrono",
  "cid",
  "derive_more 2.1.1",
- "flume",
  "futures",
  "getrandom 0.2.17",
  "hex",
  "ipld-core",
- "iroh",
- "iroh-blobs",
- "irpc",
  "mime",
  "mime_guess",
  "mime_serde_shim",
  "multihash",
- "n0-future 0.2.0",
- "parking_lot",
- "range-collections",
  "ref-cast",
  "serde",
  "serde_ipld_dagcbor",
@@ -7507,27 +7504,13 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "hex",
+ "multibase",
  "percent-encoding",
- "reqwest",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
  "zim-crypto",
-]
-
-[[package]]
-name = "zim-fuse"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "fuser",
- "libc",
- "moka",
- "serde",
- "tokio",
- "tracing",
- "zim-core",
 ]
 
 [[package]]
@@ -7563,13 +7546,11 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
- "zim",
  "zim-api",
  "zim-core",
  "zim-crypto",
  "zim-did",
  "zim-peer",
- "zim-runtime",
 ]
 
 [[package]]
@@ -7599,6 +7580,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "web-sys",
+ "zim-api",
  "zim-core",
  "zim-crypto",
  "zim-did",
@@ -7614,7 +7596,9 @@ dependencies = [
  "bincode",
  "bytes",
  "chrono",
+ "flume",
  "futures",
+ "iroh",
  "iroh-blobs",
  "irpc",
  "object_store",
@@ -7633,17 +7617,6 @@ dependencies = [
  "zim-core",
  "zim-crypto",
  "zim-did",
- "zim-runtime",
-]
-
-[[package]]
-name = "zim-runtime"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "futures",
- "tokio",
- "tracing",
 ]
 
 [[package]]

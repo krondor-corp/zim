@@ -50,7 +50,7 @@ async fn list(State(state): State<AppState>, RequireUser(user): RequireUser) -> 
                     pubkey: r.peer_pubkey_hex().to_string(),
                     did: r
                         .peer_pubkey()
-                        .map(|pk| zim_did::Identity::Key(pk).to_did().to_string())
+                        .map(|pk| zim_did::Did::from_key(&pk).to_string())
                         .unwrap_or_default(),
                     label: r.label().map(str::to_string),
                     kind: r.kind().to_string(),

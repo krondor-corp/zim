@@ -14,14 +14,13 @@ use std::fmt;
 use async_trait::async_trait;
 use clap::Args;
 use zim_api::hub::{device_did, device_nick};
-use zim_did::Identity;
+use zim_did::Did;
 use zim_peer::{PeerStore, SqlitePeerStore};
 
 use crate::cli::op::Op;
 use crate::cli::ops::hub::{load_hub_client, HubSessionError};
 use crate::cli::ui;
-use crate::context::{paths, ApiContext};
-use crate::http_server::api::v0::peers::reconcile::ReconcileRequest;
+use crate::context::paths;
 
 #[derive(Args, Debug, Clone)]
 pub struct Sync {}
@@ -33,9 +32,6 @@ pub struct SyncOutput {
     pub added: Vec<(String, String)>,
     /// Count of roster devices already present in the book.
     pub already: usize,
-    /// Shares folded into owned vaults by the follow-up reconcile, if
-    /// the daemon was reachable. `None` when the daemon wasn't running.
-    pub reconciled_shares: Option<usize>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -69,11 +65,11 @@ impl Op for Sync {
         // the daemon reaches them *through* the hub, not by dialing the
         // browser. Best-effort: if it can't be fetched, web devices fall
         // back to direct (the old behaviour).
-        let hub_via: Option<Identity> = client
+        let hub_via: Option<Did> = client
             .did_doc("/.well-known/did.json")
             .await
             .ok()
-            .and_then(|doc| Identity::parse(&doc.id).ok());
+            .and_then(|doc| Did::parse(&doc.id).ok());
 
         let home = paths::home_dir(None)?;
         let store = SqlitePeerStore::open(&paths::log_file(&home))
@@ -94,7 +90,7 @@ impl Op for Sync {
                 continue;
             }
             let Some(did) = device_did(d) else { continue };
-            let Ok(identity) = Identity::parse(&did) else {
+            let Ok(identity) = Did::parse(&did) else {
                 continue;
             };
             let nick = device_nick(d);
@@ -126,24 +122,10 @@ impl Op for Sync {
             }
         }
 
-        // Your own devices are trusted, so a freshly-synced device should
-        // immediately get the vaults you own. Best-effort: if the daemon
-        // isn't running we just skip — `zim peers reconcile` re-fires it.
-        let reconciled_shares = match ApiContext::build(None) {
-            Ok(ctx) => ctx
-                .client
-                .call(ReconcileRequest {})
-                .await
-                .ok()
-                .map(|r| r.shares_added),
-            Err(_) => None,
-        };
-
         Ok(SyncOutput {
             hub_url: client.hub_url().to_string(),
             added,
             already,
-            reconciled_shares,
         })
     }
 }
@@ -173,15 +155,6 @@ impl fmt::Display for SyncOutput {
                 ui::num(self.added.len().to_string()),
                 self.already
             )?;
-        }
-        if let Some(n) = self.reconciled_shares {
-            if n > 0 {
-                write!(
-                    f,
-                    "\n  {} share(s) added to owned vaults",
-                    ui::num(n.to_string())
-                )?;
-            }
         }
         Ok(())
     }

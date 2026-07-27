@@ -9,8 +9,8 @@ use comfy_table::{Attribute, Cell};
 use crate::cli::op::Op;
 use crate::cli::ui;
 use crate::context::{ApiContext, ContextError};
-use crate::http_server::api::client::ApiError;
-use crate::http_server::api::v0::mounts::{ListRequest, MountInfo};
+use crate::daemon::api::client::ApiError;
+use crate::daemon::api::v0::mounts::{ListRequest, MountInfo};
 
 #[derive(Args, Debug, Clone)]
 pub struct List;

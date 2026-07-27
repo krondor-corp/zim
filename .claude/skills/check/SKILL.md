@@ -10,11 +10,15 @@ allowed-tools:
   - Grep
 ---
 
-Run the full success criteria checks for jax-bucket.
+Run Zim's full success criteria checks from the repository root.
 
 ## Steps
 
-1. Run all four checks sequentially from the project root. Stop on first failure:
+1. Read `docs/patterns/success-criteria.md` and confirm the commands below remain the
+   authoritative gate.
+
+2. Run all four checks sequentially from the project root. Stop on first
+   failure:
 
    ```bash
    cargo build
@@ -32,22 +36,14 @@ Run the full success criteria checks for jax-bucket.
    cargo fmt -- --check
    ```
 
-2. If formatting fails, auto-fix and report:
-   ```bash
-   cargo fmt
-   ```
-
-3. If clippy fails, try auto-fix:
-   ```bash
-   cargo clippy --fix --allow-dirty
-   ```
-
-4. Report a summary:
+3. Report a summary:
    - Build: PASS/FAIL
    - Tests: PASS/FAIL
    - Clippy: PASS/FAIL
-   - Format: PASS/FAIL (auto-fixed if applicable)
+   - Format: PASS/FAIL
 
-5. If any checks fail that cannot be auto-fixed, report what needs manual attention.
+4. If a check fails, report the command, relevant diagnostic, and affected
+   path. Do not run `cargo fmt` or `cargo clippy --fix` unless the user asks for
+   fixes; validation should not silently modify the worktree.
 
 This is the gate for all PRs — all checks must pass before merge.

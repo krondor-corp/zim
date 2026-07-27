@@ -6,14 +6,36 @@ set -o nounset
 
 # Get project root (parent of bin directory)
 PROJECT_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
-source "$PROJECT_ROOT/bin/utils"
+# Styled output via `confit log` (shared bin/utils is gone); the
+# ERRORS tally drives exit codes for multi-step commands.
+command -v confit >/dev/null 2>&1 || {
+    echo "confit not installed. Run:" >&2
+    echo "  curl -fsSL https://raw.githubusercontent.com/krondor-corp/confit/main/install.sh | bash" >&2
+    exit 1
+}
+ERRORS=0
+print_header() { confit log "=== $1 ==="; }
+check_result() {
+    local rc=$?
+    if [ $rc -eq 0 ]; then confit log --ok "$1 passed"
+    else confit log --err "$1 failed"; ERRORS=$((ERRORS + 1)); fi
+}
+print_summary() {
+    print_header "Summary"
+    if [ $ERRORS -eq 0 ]; then confit log --ok "$1"; return 0
+    else confit log --err "$ERRORS ${2:-check(s) failed}"; return 1; fi
+}
 
 # Configuration
 PROJECT_NAME="zim"
 MINIO_CONTAINER_NAME="${PROJECT_NAME}-minio"
 MINIO_VOLUME_NAME="${PROJECT_NAME}-minio-data"
-MINIO_API_PORT=9000
-MINIO_CONSOLE_PORT=9001
+# Dev ports follow the project convention (see bin/dev_/nodes.toml):
+# everything lives in the 17xxx range so nothing collides with common
+# services (minio's native 9000 is ClickHouse's port, for one).
+# Daemons sit at 1717x, infra at 1718x, the hub at 1719x. Override via env if needed.
+MINIO_API_PORT=${MINIO_API_PORT:-17180}
+MINIO_CONSOLE_PORT=${MINIO_CONSOLE_PORT:-17181}
 MINIO_ROOT_USER=minioadmin
 MINIO_ROOT_PASSWORD=minioadmin
 MINIO_IMAGE_NAME=minio/minio:latest
@@ -73,7 +95,7 @@ fi
 # Verify the chosen runtime is actually usable
 function check_runtime {
     if ! bounded 5 $CONTAINER_RUNTIME ps &>/dev/null; then
-        echo -e "${RED}Error: no working container runtime.${NC}"
+        confit log --err "Error: no working container runtime."
         echo "  tried: $CONTAINER_RUNTIME (install/start docker or podman," >&2
         echo "  or force one with ZIM_CONTAINER_RUNTIME=docker)" >&2
         exit 1
@@ -88,9 +110,16 @@ function up {
 
     # Check if container exists (running or stopped)
     if $CONTAINER_RUNTIME ps -a --format '{{.Names}}' | grep -q "^${MINIO_CONTAINER_NAME}$"; then
+        # A container created before a port change keeps its old
+        # bindings forever — recreate it (the data volume survives).
+        local bound_port
+        bound_port=$($CONTAINER_RUNTIME inspect --format '{{(index (index .HostConfig.PortBindings "9000/tcp") 0).HostPort}}' $MINIO_CONTAINER_NAME 2>/dev/null || true)
+        if [[ -n "$bound_port" && "$bound_port" != "$MINIO_API_PORT" ]]; then
+            confit log "Container bound to :$bound_port but standard is :$MINIO_API_PORT — recreating (volume kept)..."
+            $CONTAINER_RUNTIME rm -f $MINIO_CONTAINER_NAME >/dev/null
         # Container exists - check if it's running
-        if $CONTAINER_RUNTIME ps --format '{{.Names}}' | grep -q "^${MINIO_CONTAINER_NAME}$"; then
-            echo -e "${GREEN}MinIO container is already running.${NC}"
+        elif $CONTAINER_RUNTIME ps --format '{{.Names}}' | grep -q "^${MINIO_CONTAINER_NAME}$"; then
+            confit log --ok "MinIO container is already running."
             verify_connection
             ensure_bucket
             return 0
@@ -103,7 +132,7 @@ function up {
             ensure_bucket
 
             echo ""
-            echo -e "${GREEN}MinIO started!${NC}"
+            confit log --ok "MinIO started!"
             show_connection_info
             return 0
         fi
@@ -114,7 +143,7 @@ function up {
     start_minio_container
 
     # Wait for MinIO to be ready
-    echo -e "${YELLOW}Waiting for MinIO to be ready...${NC}"
+    confit log "Waiting for MinIO to be ready..."
     sleep 3
 
     # Verify network connectivity to container
@@ -122,43 +151,43 @@ function up {
     ensure_bucket
 
     echo ""
-    echo -e "${GREEN}MinIO started!${NC}"
+    confit log --ok "MinIO started!"
     show_connection_info
 }
 
 # Helper function to display connection information
 function show_connection_info {
     echo ""
-    echo -e "${YELLOW}Set environment variables:${NC}"
+    confit log "Set environment variables:"
     echo "  export MINIO_ENDPOINT=http://localhost:${MINIO_API_PORT}"
     echo "  export MINIO_ROOT_USER=${MINIO_ROOT_USER}"
     echo "  export MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}"
     echo ""
-    echo -e "${YELLOW}MinIO Console (Web UI):${NC}"
+    confit log "MinIO Console (Web UI):"
     echo "  http://localhost:${MINIO_CONSOLE_PORT}"
     echo ""
-    echo -e "${YELLOW}S3 API Endpoint:${NC}"
+    confit log "S3 API Endpoint:"
     echo "  http://localhost:${MINIO_API_PORT}"
     echo ""
-    echo -e "${YELLOW}S3 URL for zim init:${NC}"
+    confit log "S3 URL for zim init:"
     echo "  s3://minioadmin:minioadmin@localhost:${MINIO_API_PORT}/zim-blobs"
 }
 
 # Verify connection to MinIO
 function verify_connection {
-    echo -e "${YELLOW}Verifying container status...${NC}"
+    confit log "Verifying container status..."
     $CONTAINER_RUNTIME logs --tail 10 $MINIO_CONTAINER_NAME
 
     echo "Testing connection from host to container..."
     if command -v curl &>/dev/null; then
         if curl -f -s -o /dev/null http://localhost:${MINIO_API_PORT}/minio/health/live; then
-            echo -e "${GREEN}API connection successful!${NC}"
+            confit log --ok "API connection successful!"
         else
-            echo -e "${RED}API connection test failed. See troubleshooting tips below.${NC}"
+            confit log --err "API connection test failed. See troubleshooting tips below."
             show_troubleshooting
         fi
     else
-        echo -e "${YELLOW}curl not found. Install curl to test connectivity.${NC}"
+        confit log "curl not found. Install curl to test connectivity."
         show_troubleshooting
     fi
 }
@@ -169,10 +198,10 @@ function ensure_bucket {
     # Set up mc alias and create bucket if it doesn't exist
     $CONTAINER_RUNTIME exec $MINIO_CONTAINER_NAME mc alias set local http://localhost:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD >/dev/null 2>&1
     if $CONTAINER_RUNTIME exec $MINIO_CONTAINER_NAME mc ls local/${MINIO_BUCKET_NAME} >/dev/null 2>&1; then
-        echo -e "${GREEN}Bucket '${MINIO_BUCKET_NAME}' already exists.${NC}"
+        confit log --ok "Bucket '${MINIO_BUCKET_NAME}' already exists."
     else
         $CONTAINER_RUNTIME exec $MINIO_CONTAINER_NAME mc mb local/${MINIO_BUCKET_NAME}
-        echo -e "${GREEN}Created bucket '${MINIO_BUCKET_NAME}'.${NC}"
+        confit log --ok "Created bucket '${MINIO_BUCKET_NAME}'."
     fi
 }
 
@@ -238,7 +267,7 @@ function endpoint {
     if $CONTAINER_RUNTIME ps -a | grep $MINIO_CONTAINER_NAME &>/dev/null; then
         echo "http://localhost:${MINIO_API_PORT}"
     else
-        echo -e "${RED}MinIO container is not running. Start it with: $0 up${NC}" >&2
+        confit log --err "MinIO container is not running. Start it with: $0 up"
         exit 1
     fi
 }
@@ -247,7 +276,7 @@ function console {
     check_runtime
     if $CONTAINER_RUNTIME ps | grep -q "$MINIO_CONTAINER_NAME"; then
         local console_url="http://localhost:${MINIO_CONSOLE_PORT}"
-        echo -e "${GREEN}Opening MinIO Console...${NC}"
+        confit log --ok "Opening MinIO Console..."
         echo "URL: $console_url"
         echo "Username: $MINIO_ROOT_USER"
         echo "Password: $MINIO_ROOT_PASSWORD"
@@ -258,10 +287,10 @@ function console {
         elif command -v open &>/dev/null; then
             open "$console_url" 2>/dev/null || true
         else
-            echo -e "${YELLOW}Please open the URL manually in your browser${NC}"
+            confit log "Please open the URL manually in your browser"
         fi
     else
-        echo -e "${RED}MinIO container is not running. Start it with: $0 up${NC}" >&2
+        confit log --err "MinIO container is not running. Start it with: $0 up"
         exit 1
     fi
 }
@@ -271,30 +300,30 @@ function status {
     print_header "MinIO Status"
 
     if $CONTAINER_RUNTIME ps | grep -q "$MINIO_CONTAINER_NAME"; then
-        echo -e "${GREEN}MinIO container is running.${NC}"
+        confit log --ok "MinIO container is running."
         echo ""
-        echo -e "${YELLOW}Recent logs:${NC}"
+        confit log "Recent logs:"
         $CONTAINER_RUNTIME logs --tail 20 $MINIO_CONTAINER_NAME
         echo ""
 
         if command -v curl &>/dev/null; then
-            echo -e "${YELLOW}Connection status:${NC}"
+            confit log "Connection status:"
             if curl -f -s -o /dev/null http://localhost:${MINIO_API_PORT}/minio/health/live; then
-                echo -e "${GREEN}API connection active${NC}"
-                echo -e "${GREEN}Console available at http://localhost:${MINIO_CONSOLE_PORT}${NC}"
+                confit log --ok "API connection active"
+                confit log --ok "Console available at http://localhost:${MINIO_CONSOLE_PORT}"
             else
-                echo -e "${RED}Connection failed${NC}"
+                confit log --err "Connection failed"
             fi
         fi
     else
-        echo -e "${RED}MinIO container is not running.${NC}"
+        confit log --err "MinIO container is not running."
         echo ""
         echo "Start it with: $0 up"
     fi
 }
 
 function help {
-    echo -e "${YELLOW}MinIO Container Manager${NC}"
+    confit log "MinIO Container Manager"
     echo ""
     echo "Usage: $0 [command]"
     echo ""
@@ -311,7 +340,7 @@ function help {
     echo ""
     echo "Example usage with zim:"
     echo "  $0 up"
-    echo "  zim init --blob-store s3 --s3-url 's3://minioadmin:minioadmin@localhost:9000/zim-blobs'"
+    echo "  zim init --blob-store s3 --s3-url \"s3://minioadmin:minioadmin@localhost:${MINIO_API_PORT}/zim-blobs\""
 }
 
 # Process command
@@ -323,7 +352,7 @@ up | down | endpoint | console | status | help)
     $CMD "$@"
     ;;
 *)
-    echo -e "${RED}Unknown command: $CMD${NC}"
+    confit log --err "Unknown command: $CMD"
     help
     exit 1
     ;;

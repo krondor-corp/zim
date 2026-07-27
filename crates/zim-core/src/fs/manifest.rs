@@ -15,7 +15,6 @@
 //! - **Content pointers** — [`Link`] to the root dir body, [`Pins`] of
 //!   blobs that live outside this manifest, inline
 //!   [`Metadata`](super::content_store::Metadata) pack of dir bodies,
-//!   [`Published`] map.
 //! - **History** — `previous` link to the prior version, `height` in the
 //!   chain, encrypted ops-log link, and the Lamport clock at save time.
 //! - **Author + signature** — Ed25519 over [`Manifest::signable_bytes`].
@@ -32,13 +31,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::linked_data::{BlockEncoded, CodecError, Link};
 use zim_crypto::{PrivateKey, PublicKey, SecretShare, Signature};
-use zim_did::Identity;
+use zim_did::Did;
 
-use super::abs_path::AbsPath;
 use super::content_store::Metadata;
-use super::entry::Entry;
 use super::pins::Pins;
-use super::published::Published;
 use super::share::Share;
 
 /// Version type for manifest bookkeeping (kept as a string alias).
@@ -85,7 +81,7 @@ impl Shares {
     /// Mutable `(public_key, share)` iterator. The save loop uses
     /// this to re-mint each share's encrypted secret against the
     /// stored pubkey — no need to fish a pubkey back out of the
-    /// share's `Identity`.
+    /// share's `Did`.
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (&PublicKey, &mut Share)> {
         self.0.iter_mut()
     }
@@ -160,8 +156,6 @@ pub struct Manifest {
     #[serde(default)]
     metadata: Metadata,
     /// Paths publicly served by the gateway.
-    #[serde(default, skip_serializing_if = "Published::is_empty")]
-    published: Published,
     author: PublicKey,
     /// Ed25519 signature over the manifest contents.
     /// Covers all fields except `signature` itself (see [`Manifest::signable_bytes`]).
@@ -184,7 +178,7 @@ impl Manifest {
             name,
             shares: {
                 let mut s = Shares::new();
-                s.insert(owner, Share::new(share, Identity::Key(owner), None));
+                s.insert(owner, Share::new(share, Did::from_key(&owner), None));
                 s
             },
             root,
@@ -195,7 +189,6 @@ impl Manifest {
             ops: Link::default(),
             ops_clock: 0,
             metadata: Metadata::new(),
-            published: BTreeMap::new(),
             author: secret_key.public(),
             signature: Signature::from_bytes(&[0u8; 64]),
         };
@@ -304,7 +297,7 @@ impl Manifest {
     /// Insert a share keyed by `pubkey`. The caller resolves the
     /// share recipient's identity to a concrete pubkey (the share's
     /// SecretShare is encrypted to it); we don't reach back into
-    /// `share.identity()` for that — `Identity::Web` shares wouldn't
+    /// `share.identity()` for that — `did:web` shares wouldn't
     /// carry one and this method has no business doing DID
     /// resolution.
     pub fn add_share(&mut self, pubkey: PublicKey, share: Share) {
@@ -321,7 +314,7 @@ impl Manifest {
     pub fn is_via(&self, public_key: &PublicKey) -> bool {
         self.shares
             .iter()
-            .any(|(_, s)| s.via().and_then(|v| v.pubkey()) == Some(public_key))
+            .any(|(_, s)| s.via().and_then(|v| v.pubkey()).as_ref() == Some(public_key))
     }
 
     pub fn metadata(&self) -> &Metadata {
@@ -330,22 +323,6 @@ impl Manifest {
 
     pub fn set_metadata(&mut self, metadata: Metadata) {
         self.metadata = metadata;
-    }
-
-    pub fn published(&self) -> &Published {
-        &self.published
-    }
-
-    pub fn published_mut(&mut self) -> &mut Published {
-        &mut self.published
-    }
-
-    pub fn publish(&mut self, path: AbsPath, leaf: Entry) {
-        self.published.insert(path, leaf);
-    }
-
-    pub fn unpublish(&mut self, path: &AbsPath) -> bool {
-        self.published.remove(path).is_some()
     }
 
     /* Signing */
@@ -409,7 +386,7 @@ mod tests {
         use serde_ipld_dagcbor::codec::DagCborCodec;
 
         let public_key = zim_crypto::PrivateKey::generate().public();
-        let share = Share::new(SecretShare::default(), Identity::Key(public_key), None);
+        let share = Share::new(SecretShare::default(), Did::from_key(&public_key), None);
 
         let encoded = DagCborCodec::encode_to_vec(&share).unwrap();
         let decoded: Share = DagCborCodec::decode_from_slice(&encoded).unwrap();

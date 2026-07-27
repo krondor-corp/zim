@@ -3,7 +3,7 @@ name: Release CLI
 on:
   push:
     tags:
-      - "zim-peer-v*"
+      - "zim-v*"
     branches:
       - main
     paths:
@@ -31,28 +31,28 @@ jobs:
             runner: macos-latest
             target: aarch64-apple-darwin
             fuse: false
-            features: "--no-default-features"
+            features: "--features hub"
             artifact: zim-darwin-arm64
 
           - name: macOS Apple Silicon (FUSE)
             runner: macos-latest
             target: aarch64-apple-darwin
             fuse: true
-            features: ""
+            features: "--features hub,fuse"
             artifact: zim-darwin-arm64-fuse
 
           - name: Linux x86_64
             runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             fuse: false
-            features: "--no-default-features"
+            features: "--features hub"
             artifact: zim-linux-x64
 
           - name: Linux x86_64 (FUSE)
             runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             fuse: true
-            features: ""
+            features: "--features hub,fuse"
             artifact: zim-linux-x64-fuse
 
     steps:
@@ -90,7 +90,7 @@ jobs:
             ${{ runner.os }}-${{ matrix.target }}-${{ matrix.fuse }}-cli-release-build-
 
       - name: Build release binary
-        run: cargo build --release --package zim-peer --target ${{ matrix.target }} ${{ matrix.features }}
+        run: cargo build --release --package zim --target ${{ matrix.target }} ${{ matrix.features }}
 
       - name: Get version
         id: version
@@ -99,7 +99,7 @@ jobs:
             echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
           else
             TAG="${GITHUB_REF#refs/tags/}"
-            VERSION="${TAG#zim-peer-v}"
+            VERSION="${TAG#zim-v}"
             echo "version=$VERSION" >> $GITHUB_OUTPUT
           fi
 
@@ -134,10 +134,10 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-            echo "tag=zim-peer-v${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+            echo "tag=zim-v${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
           else
             TAG="${GITHUB_REF#refs/tags/}"
-            VERSION="${TAG#zim-peer-v}"
+            VERSION="${TAG#zim-v}"
             echo "version=$VERSION" >> $GITHUB_OUTPUT
             echo "tag=$TAG" >> $GITHUB_OUTPUT
           fi

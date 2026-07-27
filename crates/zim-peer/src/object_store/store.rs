@@ -3,8 +3,8 @@ use std::path::Path;
 use bytes::Bytes;
 use tracing::{debug, info, warn};
 
-use zim_core::blobs::{IROH_BLOCK_SIZE, OUTBOARD_THRESHOLD};
-use zim_core::iroh::Hash;
+use crate::blobs::{IROH_BLOCK_SIZE, OUTBOARD_THRESHOLD};
+use crate::iroh::Hash;
 
 use super::database::{BlobMetadata, BlobState, Database};
 use super::error::Result;

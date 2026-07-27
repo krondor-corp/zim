@@ -54,7 +54,7 @@ jobs:
             ${{ runner.os }}-${{ matrix.variant }}-cargo-build-target-
 
       - name: Run quality checks
-        run: bash bin/check
+        run: make check
         env:
           CARGO_FEATURES: ${{ matrix.cargo-features }}
 
@@ -106,7 +106,7 @@ jobs:
             ${{ runner.os }}-${{ matrix.variant }}-cargo-build-target-
 
       - name: Run tests
-        run: bash bin/test
+        run: make test
         env:
           CARGO_FEATURES: ${{ matrix.cargo-features }}
 
@@ -158,6 +158,6 @@ jobs:
             ${{ runner.os }}-${{ matrix.variant }}-cargo-build-target-
 
       - name: Build project
-        run: bash bin/build
+        run: make build
         env:
           CARGO_FEATURES: ${{ matrix.cargo-features }}

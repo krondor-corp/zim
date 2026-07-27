@@ -135,6 +135,24 @@ impl Did {
     pub fn identifier(&self) -> &str {
         &self.raw[self.method_end + 1..]
     }
+
+    /// The concrete ed25519 pubkey when this DID *is* one — i.e. a
+    /// `did:key`, whose identifier [`Did::parse`] already validated as
+    /// decodable. `None` for every other method: those name a key
+    /// *set* the caller must resolve (see `resolver`).
+    pub fn pubkey(&self) -> Option<zim_crypto::PublicKey> {
+        match self.method() {
+            DidMethod::Key => crate::did_key::did_key_decode(self.identifier()).ok(),
+            _ => None,
+        }
+    }
+
+    /// The `did:key` for an ed25519 pubkey — the identity type for a
+    /// directly-dialable peer (a daemon, or a hub's own peer key).
+    pub fn from_key(pk: &zim_crypto::PublicKey) -> Self {
+        Self::parse(&format!("did:key:{}", crate::did_key::did_key_encode(pk)))
+            .expect("did:key encode produces a valid DID")
+    }
 }
 
 impl fmt::Display for Did {

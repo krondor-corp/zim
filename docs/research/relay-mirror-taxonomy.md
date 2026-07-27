@@ -10,7 +10,7 @@ the distinction isn't lost.
 > is a hosted `did:web`**, where the DID's host *is* the via. There is no
 > separate `Relay` struct or `via` field — the DID method carries it, and
 > resolution returns the full relay form (client key + via key). See
-> **`docs/concepts/identity.md` → "DID forms (identities)"** for the canonical
+> **`docs/product/identity.md` → "DID forms (identities)"** for the canonical
 > model. The "mirror" (sync-only, no recipient) and the device-enrollment gate
 > below are still the open/deferred pieces.
 

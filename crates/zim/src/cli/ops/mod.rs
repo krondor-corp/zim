@@ -10,8 +10,8 @@ pub mod id;
 pub mod init;
 pub mod mount;
 pub mod peers;
+pub mod update;
 pub mod vault;
-pub mod vaults;
 pub mod version;
 
 #[cfg(debug_assertions)]
@@ -24,6 +24,6 @@ pub use id::Id;
 pub use init::Init;
 pub use mount::Mount;
 pub use peers::Peers;
+pub use update::Update;
 pub use vault::Vault;
-pub use vaults::Vaults;
 pub use version::Version;

@@ -10,8 +10,10 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde::Serialize;
 use uuid::Uuid;
+// Shared wire types — mirrored by `zim_api::hub::{AdminUsersRequest,
+// AdminActionRequest}`.
+use zim_api::hub::{AdminUser, AdminUsers};
 
 use crate::database::models::{User, UserPatch};
 use crate::http::auth::RequireAdmin;
@@ -27,26 +29,9 @@ pub fn router(state: AppState) -> Router<AppState> {
         .with_state(state)
 }
 
-#[derive(Serialize)]
-struct AdminUser {
-    id: String,
-    email: String,
-    name: String,
-    role: String,
-    is_admin: bool,
-    is_authorized: bool,
-}
-
-#[derive(Serialize)]
-struct UsersResponse {
-    /// So the SPA can disable self-modifying buttons.
-    current_admin_id: String,
-    users: Vec<AdminUser>,
-}
-
 async fn list(RequireAdmin(admin): RequireAdmin, State(state): State<AppState>) -> Response {
     match User::list(&state.db).await {
-        Ok(rows) => Json(UsersResponse {
+        Ok(rows) => Json(AdminUsers {
             current_admin_id: admin.id().to_string(),
             users: rows
                 .iter()

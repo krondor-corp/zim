@@ -17,7 +17,6 @@ path = "src/lib.rs"
 zim-core = { path = "../zim-core", version = "0.1.0" }
 zim-crypto = { path = "../zim-crypto", version = "0.1.0" }
 zim-did = { path = "../zim-did", version = "0.1.0" }
-zim-runtime = { path = "../zim-runtime", version = "0.1.0" }
 
 anyhow = { workspace = true }
 async-trait = { workspace = true }
@@ -37,7 +36,9 @@ serde = { workspace = true }
 # object_store backend (moved from zim-core): S3/local blob storage
 # bridged into iroh-blobs via the store actor.
 object_store = { version = "0.11", features = ["aws"] }
+iroh = { workspace = true }
 iroh-blobs = { workspace = true }
+flume = "0.11"
 irpc = { version = "0.9.0", features = ["rpc", "stream", "derive"], default-features = false }
 bao-tree = { version = "0.15.1", features = ["experimental-mixed", "serde"], default-features = false }
 range-collections = { version = "0.4.6", features = ["serde"] }

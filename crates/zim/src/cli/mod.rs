@@ -5,4 +5,4 @@ pub mod op;
 pub mod ops;
 pub mod ui;
 
-pub use ops::{Daemon, Health, Id, Init, Peers, Vault, Vaults, Version};
+pub use ops::{Daemon, Health, Id, Init, Peers, Vault, Version};

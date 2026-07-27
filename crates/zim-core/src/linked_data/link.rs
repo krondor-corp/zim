@@ -61,31 +61,6 @@ impl From<&Link> for Hash {
     }
 }
 
-// Native-only: conversion to iroh_blobs transport types.
-#[cfg(feature = "native")]
-impl From<Link> for iroh_blobs::HashAndFormat {
-    fn from(val: Link) -> Self {
-        iroh_blobs::HashAndFormat {
-            hash: iroh_blobs::Hash::from(val.hash()),
-            format: iroh_blobs::BlobFormat::Raw,
-        }
-    }
-}
-
-#[cfg(feature = "native")]
-impl From<Link> for iroh_blobs::Hash {
-    fn from(val: Link) -> Self {
-        iroh_blobs::Hash::from(val.hash())
-    }
-}
-
-#[cfg(feature = "native")]
-impl From<&Link> for iroh_blobs::Hash {
-    fn from(val: &Link) -> Self {
-        iroh_blobs::Hash::from(val.hash())
-    }
-}
-
 impl Link {
     pub fn new(codec: u64, hash: Hash) -> Self {
         let mh = Multihash::wrap(BLAKE3_HASH_CODE, hash.as_bytes()).expect("valid blake3 hash");
@@ -105,20 +80,5 @@ impl Link {
 
     pub fn cid(&self) -> &Cid {
         &self.0
-    }
-
-    /// Iroh-blobs ticket for peer-to-peer transfer. Native only.
-    #[cfg(feature = "native")]
-    pub fn ticket(
-        &self,
-        source: zim_crypto::PublicKey,
-        format: Option<iroh_blobs::BlobFormat>,
-    ) -> iroh_blobs::ticket::BlobTicket {
-        let node_addr = iroh::NodeAddr::new(crate::iroh::to_iroh_public_key(&source));
-        iroh_blobs::ticket::BlobTicket::new(
-            node_addr,
-            iroh_blobs::Hash::from(self.hash()),
-            format.unwrap_or(iroh_blobs::BlobFormat::Raw),
-        )
     }
 }

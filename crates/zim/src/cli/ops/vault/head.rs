@@ -8,12 +8,12 @@ use zim_core::vault::VaultId;
 use crate::cli::op::Op;
 use crate::cli::ui;
 use crate::context::{ApiContext, ContextError};
-use crate::http_server::api::client::ApiError;
-use crate::http_server::api::v0::vault::head::HeadRequest;
+use crate::daemon::api::client::ApiError;
+use crate::daemon::api::v0::vault::head::HeadRequest;
 
 #[derive(Args, Debug, Clone)]
 pub struct Head {
-    #[arg(skip)]
+    /// Vault id or name.
     pub target: String,
 }
 

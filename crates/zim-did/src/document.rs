@@ -1,23 +1,27 @@
 //! DID document types — the shape returned by a [`DidResolver`].
 //!
-//! Matches the W3C DID Core spec at the field level for the bits we
-//! care about. Unknown top-level keys deserialize unchanged but get
-//! dropped; that's fine for our needs (we only inspect
-//! `verificationMethod`).
+//! **Deliberately minimal, and NOT a claim of W3C DID Core
+//! conformance.** Zim uses a DID document for exactly one thing:
+//! *identifier → current key list*. We keep the spec's field names
+//! (`verificationMethod`, `publicKeyMultibase`) so the shape stays
+//! recognizable, but we neither emit nor honor the spec's semantic
+//! surface — no `controller` (delegation), no `type` (suite
+//! conformance), no `authentication`/`assertionMethod` (verification
+//! relationships), no `@context` (JSON-LD). Those imply security
+//! guarantees zim does not ship: the trust model is simply "the host
+//! serving the document is trusted for the roster" (see
+//! `docs/product/security.md`). Spec-shaped documents from other
+//! producers still parse — unknown fields are ignored.
 //!
-//! Field naming follows the spec: `verificationMethod`,
-//! `publicKeyMultibase`. `type` is renamed to `vm_type` in Rust to
-//! dodge the keyword conflict.
+//! [`DidResolver`]: crate::DidResolver
 
 use serde::{Deserialize, Serialize};
 use zim_crypto::PublicKey;
 
 use crate::did_key::did_key_decode;
 
-/// Resolved DID document. Only the fields we actually consume are
-/// modeled — the spec allows many more keys at the document level
-/// (`@context`, `controller`, `authentication`, etc.) which we
-/// happily ignore.
+/// Resolved DID document: the identifier + its current keys. Every
+/// other document-level key is ignored on parse and never emitted.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DidDocument {
     /// The document's canonical DID. Should equal the URL the caller
@@ -29,20 +33,19 @@ pub struct DidDocument {
     pub verification_method: Vec<VerificationMethod>,
 }
 
+/// One key. Just a human-addressable name and the key material —
+/// no controller/type/relationship semantics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerificationMethod {
-    /// e.g. `"did:web:hub.example.com#peer"`.
+    /// e.g. `"did:web:hub.example.com#key-0"` — a display/reference
+    /// handle, nothing more.
+    #[serde(default)]
     pub id: String,
-
-    /// Controller DID — the entity allowed to update the key.
-    pub controller: String,
-
-    #[serde(rename = "type")]
-    pub vm_type: String,
 
     /// Multibase-encoded public key. Format matches the bytes after
     /// `did:key:` (multibase-prefixed multicodec + key bytes), so
-    /// [`did_key_decode`] is the bridge.
+    /// [`did_key_decode`] is the bridge — the multicodec prefix already
+    /// says "ed25519", which is why there's no `type` field.
     #[serde(rename = "publicKeyMultibase")]
     pub public_key_multibase: String,
 }
@@ -65,30 +68,29 @@ mod tests {
             "id": "did:web:hub.example.com",
             "verificationMethod": [{
                 "id": "did:web:hub.example.com#key-0",
-                "controller": "did:web:hub.example.com",
-                "type": "Ed25519VerificationKey2020",
                 "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
             }]
         }"#;
         let doc: DidDocument = serde_json::from_str(body).unwrap();
         assert_eq!(doc.id, "did:web:hub.example.com");
         assert_eq!(doc.verification_method.len(), 1);
-        let vm = &doc.verification_method[0];
-        assert_eq!(vm.vm_type, "Ed25519VerificationKey2020");
-        assert!(vm.pubkey().is_ok());
+        assert!(doc.verification_method[0].pubkey().is_ok());
     }
 
     #[test]
-    fn unknown_fields_are_ignored() {
+    fn spec_shaped_documents_still_parse_with_extras_ignored() {
+        // A W3C-conformant producer's doc: @context, controller, type,
+        // authentication all present — and all ignored.
         let body = r##"{
+            "@context": ["https://www.w3.org/ns/did/v1"],
             "id": "did:web:x",
             "verificationMethod": [{
                 "id": "#a",
                 "controller": "did:web:x",
                 "type": "Ed25519VerificationKey2020",
-                "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
-                "purpose": "legacy-field-ignored"
-            }]
+                "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+            }],
+            "authentication": ["#a"]
         }"##;
         let doc: DidDocument = serde_json::from_str(body).unwrap();
         assert!(doc.verification_method[0].pubkey().is_ok());

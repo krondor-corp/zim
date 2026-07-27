@@ -6,36 +6,21 @@
 
 use axum::extract::State;
 use axum::Json;
-use serde::Serialize;
+// Shared wire types — mirrored by `zim_api::hub::VaultsRequest`.
+use zim_api::hub::{VaultItem, VaultsResponse};
 
 use crate::access::{can_access_vault_via_db, read_manifest_meta};
 use crate::http::auth::RequireOnboardedUser;
 use crate::state::AppState;
 
-#[derive(Debug, Serialize)]
-pub struct VaultItem {
-    pub vault_id: String,
-    pub name: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct VaultsResponse {
-    pub vaults: Vec<VaultItem>,
-}
-
 pub async fn handler(
     State(state): State<AppState>,
     RequireOnboardedUser(user): RequireOnboardedUser,
 ) -> Json<VaultsResponse> {
-    let listings = state
-        .service
-        .peer()
-        .list_vaults()
-        .await
-        .unwrap_or_else(|e| {
-            tracing::warn!("list_vaults failed: {e}");
-            Vec::new()
-        });
+    let listings = state.peer.list_vaults().await.unwrap_or_else(|e| {
+        tracing::warn!("list_vaults failed: {e}");
+        Vec::new()
+    });
 
     let mut vaults = Vec::new();
     for v in listings {

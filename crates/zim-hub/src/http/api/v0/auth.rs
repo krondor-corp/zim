@@ -233,13 +233,8 @@ fn decode_signature(s: &str) -> Option<[u8; 64]> {
 
 // ─── Browser approval (SPA `/device` page) ────────────────────────────
 
-#[derive(Debug, Serialize)]
-struct GrantInfo {
-    /// "pending" | "approved" | "expired" | "not_found"
-    status: &'static str,
-    label: String,
-    pubkey: String,
-}
+// Shared wire type — mirrored by `zim_api::hub::GrantInfoRequest`.
+use zim_api::hub::GrantInfo;
 
 /// `GET /api/v0/auth/device-code/:code` — the grant a user is about to
 /// approve. RequireUser so only a signed-in human can read it.
@@ -258,14 +253,14 @@ async fn device_code_info(
                 "pending"
             };
             Json(GrantInfo {
-                status,
+                status: status.to_string(),
                 label: g.label().to_string(),
                 pubkey: g.pubkey_hex().to_string(),
             })
             .into_response()
         }
         Ok(None) => Json(GrantInfo {
-            status: "not_found",
+            status: "not_found".to_string(),
             label: String::new(),
             pubkey: String::new(),
         })

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  {% include head.html %}
+</head>
+<body>
+  {% include header.html %}
+  <main class="home">
+
+    <section class="hero">
+      <div class="hero-content">
+        <span class="hero-eyebrow">End-to-end encrypted peer-to-peer storage</span>
+        <h1 class="hero-title">Zim</h1>
+        <p class="hero-tagline">Your files, encrypted and synced directly between your devices. No cloud accounts, no servers in the middle, no one else can read your data.</p>
+        <div class="hero-install" id="hero-install">
+          <code>curl -fsSL https://raw.githubusercontent.com/krondor-corp/zim/main/install.sh | sh</code>
+          <button class="copy-btn copy-btn-visible" onclick="navigator.clipboard.writeText('curl -fsSL https://raw.githubusercontent.com/krondor-corp/zim/main/install.sh | sh').then(function(){var b=document.querySelector('#hero-install .copy-btn');b.textContent='copied';setTimeout(function(){b.textContent='copy'},1500)})">copy</button>
+        </div>
+        <div class="hero-links">
+          <a href="{{ '/docs/quickstart/' | relative_url }}" class="hero-cta">Get started</a>
+          <a href="https://github.com/krondor-corp/zim" class="hero-link">View on GitHub</a>
+        </div>
+      </div>
+      <div class="hero-logo">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="128" height="128" aria-label="Zim logo"><rect x="0" y="0" width="10" height="10" rx="2" fill="currentColor" opacity="0.55"/><rect x="13" y="0" width="10" height="10" rx="2" fill="currentColor" opacity="0.55"/><rect x="26" y="0" width="10" height="10" rx="2" fill="currentColor"/><rect x="0" y="13" width="10" height="10" rx="2" fill="currentColor" opacity="0.15"/><rect x="13" y="13" width="10" height="10" rx="2" fill="currentColor"/><rect x="26" y="13" width="10" height="10" rx="2" fill="currentColor" opacity="0.15"/><rect x="0" y="26" width="10" height="10" rx="2" fill="currentColor"/><rect x="13" y="26" width="10" height="10" rx="2" fill="currentColor" opacity="0.55"/><rect x="26" y="26" width="10" height="10" rx="2" fill="currentColor" opacity="0.55"/></svg>
+      </div>
+    </section>
+
+    <section class="features">
+      <h2 class="section-heading">What you get</h2>
+      <p class="section-description">A small set of strong primitives for storing files that move between your devices without trusting a server.</p>
+      <div class="feature-grid">
+        <div class="feature">
+          <h3>Encrypt</h3>
+          <p>Every file and directory has its own ChaCha20-Poly1305 key. Content is encrypted before it leaves the device; the network and disk never see plaintext.</p>
+        </div>
+        <div class="feature">
+          <h3>Share</h3>
+          <p>Bucket secrets are split into per-owner shares using X25519 ECDH + AES-KW. Add or revoke a device by adding or removing a share &mdash; no key rotation required.</p>
+        </div>
+        <div class="feature">
+          <h3>Sync</h3>
+          <p>Content-addressed blobs replicate over iroh's QUIC transport. Local-first: every operation works offline and converges when peers reconnect.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="home-bottom">
+      <p>Zim is an experimental project built for learning. The cryptography and protocol have not been independently audited. Do not use it to protect data you cannot afford to lose. Built on <a href="https://iroh.computer/">iroh</a> and <a href="https://www.rust-lang.org/">Rust</a>.</p>
+    </section>
+
+  </main>
+  {% include footer.html %}
+</body>
+</html>

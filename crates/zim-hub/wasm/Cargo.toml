@@ -45,12 +45,15 @@ serde_bytes = "0.11"
 # Console diagnostics from the SDK (e.g. how many devices a new vault shared to).
 web-sys = { version = "0.3", features = ["console"] }
 
-# zim-core without the native (iroh) feature — FS types, crypto, content-addressing only.
-zim-core = { path = "../../zim-core", default-features = false }
+# zim-core is iroh-free and wasm-clean by construction (no features).
+zim-core = { path = "../../zim-core" }
 zim-crypto = { path = "../../zim-crypto" }
+# Shared wire types for the hub's vault mirror surface (head/log/blob) —
+# the same definitions the hub server serializes.
+zim-api = { path = "../../zim-api", features = ["hub", "vault"] }
 # did:key decode for resolving a user's DID document to its pubkey set.
-# default-features = false keeps the reqwest/tokio HTTP resolver out of wasm.
-zim-did = { path = "../../zim-did", default-features = false }
+# (zim-did is pure — no HTTP stack — so no feature gymnastics needed.)
+zim-did = { path = "../../zim-did" }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"

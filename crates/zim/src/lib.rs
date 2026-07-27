@@ -6,28 +6,25 @@
 //! - [`cli`] — clap args + `Op` trait + per-command ops + UI helpers
 //! - [`context`] — XDG-aware paths, persistent config, typed
 //!   per-command contexts
-//! - [`http_server`] — axum API + health, plus the typed
-//!   [`http_server::api::client::ApiClient`]
-//! - [`service_config`] / [`service_state`] — daemon runtime
+//! - [`daemon`] — runtime state + axum API + health, plus the typed
+//!   [`daemon::api::client::ApiClient`]
 //! - [`version`] — `BuildInfo` populated by `build.rs`
 //!
 //! The `command_enum!` macro at the crate root is exported from
 //! [`cli::op`] for `main.rs` to wire up the top-level `Command` enum.
 
-pub mod accept;
 pub mod cli;
 pub mod context;
-pub mod http_server;
+pub mod daemon;
+#[cfg(feature = "fuse")]
+pub mod fuse;
 #[cfg(feature = "fuse")]
 pub mod mount;
-pub mod reconcile;
-pub mod service_config;
-pub mod service_state;
 pub mod version;
 
 // Re-export so handler files can use `crate::ServiceState` (matches
 // the `_zim-peer` convention).
-pub use service_state::ServiceState;
+pub use daemon::state::ServiceState;
 
 use crate::cli::ops;
 
@@ -38,9 +35,9 @@ crate::command_enum! {
     (Id,      ops::Id),
     (Health,  ops::Health),
     (Version, ops::Version),
+    (Update,  ops::Update),
     #[command(subcommand)] (Peers,   ops::Peers),
-    #[command(subcommand)] (Vaults,  ops::Vaults),
-    (Vault,   ops::Vault),
+    #[command(subcommand)] (Vault,   ops::Vault),
     #[command(subcommand)] (Mount,   ops::Mount),
     // Debug-only: wipes the (debug-nested) data dir. Absent from
     // release builds. The macro's optional `#[cfg(...)]` slot gates the

@@ -8,12 +8,12 @@ use clap::Args;
 use crate::cli::op::Op;
 use crate::cli::ui;
 use crate::context::{ApiContext, ContextError};
-use crate::http_server::api::client::ApiError;
-use crate::http_server::api::v0::vault::share::ShareRequest;
+use crate::daemon::api::client::ApiError;
+use crate::daemon::api::v0::vault::share::ShareRequest;
 
 #[derive(Args, Debug, Clone)]
 pub struct Add {
-    #[arg(skip)]
+    /// Vault id or name.
     pub target: String,
     /// Peer nick (from `zim peers list`) or DID URL
     /// (`did:key:z…` / `did:web:…`). Browser-resident keys are

@@ -1,9 +1,8 @@
+# Keep the hub image build context lean — Kamal ships this whole repo
+# as context (zim-iac builds with context ../zim).
 target/
+crates/zim-hub/web/target/
+crates/zim-hub/web/dist/
 data/
+web/_site/
 .git/
-.github/
-*.md
-!README.md
-.gitignore
-.env
-*.log

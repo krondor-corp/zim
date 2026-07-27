@@ -133,6 +133,16 @@ fn path_of(stack: &[String]) -> String {
         format!("/{}", stack.join("/"))
     }
 }
+/// Abbreviate a 64-char hex vault id for display: `01fc44f0\u{2026}405e38`.
+/// The full id is in the Details panel.
+fn short_id(id: &str) -> String {
+    if id.len() > 20 {
+        format!("{}\u{2026}{}", &id[..8], &id[id.len() - 6..])
+    } else {
+        id.to_string()
+    }
+}
+
 fn child_of(stack: &[String], name: &str) -> String {
     if stack.is_empty() {
         format!("/{name}")
@@ -162,28 +172,61 @@ async fn cat(fs: &FsHandle, path: String) -> Result<Vec<u8>, String> {
     f.cat(path).await.map_err(|e| jserr(e.into()))
 }
 
-async fn add_and_save(fs: &FsHandle, path: String, bytes: Vec<u8>) -> Result<(), String> {
+/// Sync the open vault to the hub's head if another device advanced it.
+/// Best-effort: a failed refresh (offline, transient) keeps the current
+/// view rather than breaking navigation.
+async fn refresh(fs: &FsHandle) {
+    let mut guard = fs.borrow_mut();
+    if let Some(f) = guard.as_mut() {
+        let _ = f.refresh().await;
+    }
+}
+
+/// Run `op` + save; on a head conflict (another device wrote since we
+/// loaded — the hub answers 409), fast-forward and replay once.
+async fn save_with_retry<F>(fs: &FsHandle, op: F) -> Result<(), String>
+where
+    F: for<'a> AsyncFn(&'a mut WasmFs) -> Result<(), String>,
+{
     let mut guard = fs.borrow_mut();
     let f = guard.as_mut().ok_or("vault not open")?;
-    f.add_file(path, bytes).await.map_err(|e| jserr(e.into()))?;
-    f.save().await.map_err(|e| jserr(e.into()))?;
-    Ok(())
+    op(f).await?;
+    match f.save().await {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            let msg = jserr(e.into());
+            if !msg.contains("409") {
+                return Err(msg);
+            }
+            f.refresh().await.map_err(|e| jserr(e.into()))?;
+            op(f).await?;
+            f.save().await.map_err(|e| jserr(e.into()))?;
+            Ok(())
+        }
+    }
+}
+
+async fn add_and_save(fs: &FsHandle, path: String, bytes: Vec<u8>) -> Result<(), String> {
+    save_with_retry(fs, async |f: &mut WasmFs| {
+        f.add_file(path.clone(), bytes.clone())
+            .await
+            .map_err(|e| jserr(e.into()))
+    })
+    .await
 }
 
 async fn mkdir_and_save(fs: &FsHandle, path: String) -> Result<(), String> {
-    let mut guard = fs.borrow_mut();
-    let f = guard.as_mut().ok_or("vault not open")?;
-    f.mkdir(path).await.map_err(|e| jserr(e.into()))?;
-    f.save().await.map_err(|e| jserr(e.into()))?;
-    Ok(())
+    save_with_retry(fs, async |f: &mut WasmFs| {
+        f.mkdir(path.clone()).await.map_err(|e| jserr(e.into()))
+    })
+    .await
 }
 
 async fn rm_and_save(fs: &FsHandle, path: String) -> Result<(), String> {
-    let mut guard = fs.borrow_mut();
-    let f = guard.as_mut().ok_or("vault not open")?;
-    f.rm(path).await.map_err(|e| jserr(e.into()))?;
-    f.save().await.map_err(|e| jserr(e.into()))?;
-    Ok(())
+    save_with_retry(fs, async |f: &mut WasmFs| {
+        f.rm(path.clone()).await.map_err(|e| jserr(e.into()))
+    })
+    .await
 }
 
 #[function_component(VaultTree)]
@@ -215,6 +258,7 @@ pub fn vault_tree(props: &Props) -> Html {
             let error = error.clone();
             let meta = meta.clone();
             yew::platform::spawn_local(async move {
+                refresh(&fs).await;
                 match ls(&fs, path).await {
                     Ok(es) => entries.set(Some(es)),
                     Err(e) => error.set(e),
@@ -458,7 +502,13 @@ pub fn vault_tree(props: &Props) -> Html {
         for (i, seg) in stack.iter().enumerate() {
             let crumb = crumb.clone();
             let depth = i + 1;
-            items.push(html! { <span>{ " / " }</span> });
+            // The root "/" doubles as the leading separator, so only
+            // separate between segments.
+            if i > 0 {
+                items.push(html! { <span class="muted">{ " / " }</span> });
+            } else {
+                items.push(html! { <span>{ " " }</span> });
+            }
             items.push(html! {
                 <a href="#" onclick={Callback::from(move |e: MouseEvent| { e.prevent_default(); crumb.emit(depth); })}>{ seg.clone() }</a>
             });
@@ -471,7 +521,14 @@ pub fn vault_tree(props: &Props) -> Html {
             <span class="page-eyebrow">
                 <Link<Route> to={Route::Workspace}>{ "workspace" }</Link<Route>>{ " / vault" }
             </span>
-            <h1 style="font-size:1.1rem;"><code style="font-size:0.85rem;">{ props.vault_id.clone() }</code></h1>
+            <h1 style="font-size:1.1rem;">
+                {
+                    match &*meta {
+                        Some(m) if !m.name.is_empty() => html! { m.name.clone() },
+                        _ => html! { <code style="font-size:0.85rem;">{ short_id(&props.vault_id) }</code> },
+                    }
+                }
+            </h1>
 
             <div style="margin-top:0.5rem;">
                 <button type="button" class="btn" onclick={

@@ -27,7 +27,7 @@
 //! - [`object_store`] — SQLite-indexed local/S3 blob backend,
 //!   bridged into `BlobsProvider`.
 //! - [`peers`] — concrete `PeerStore` impls (trait lives in
-//!   `zim_core::peers`).
+//!   `crate::peers`).
 //!
 //! There's no peer-side vault wrapper anymore: [`Vault`] is a type
 //! alias for [`zim_core::vault::Vault`] over the daemon's
@@ -35,10 +35,12 @@
 //! on [`SyncCoordinator`], which owns one.
 
 pub mod accept;
+pub mod blobs;
 pub mod chain;
 pub mod coordinator;
 mod db;
 pub mod effect;
+pub mod iroh;
 pub mod iroh_transport;
 pub mod log;
 pub mod messages;
@@ -46,10 +48,14 @@ pub mod object_store;
 pub mod peer;
 pub mod peers;
 pub mod relay_pull;
+pub mod runtime;
 pub mod wire_protocol;
 
 /// Daemon-side vault: the core vault over the iroh-blobs provider.
-pub type Vault<L> = zim_core::vault::Vault<zim_core::blobs::BlobsProvider, L>;
+pub use blobs::BlobsProvider;
+pub use runtime::{Service, ShutdownHandle};
+
+pub type Vault<L> = zim_core::vault::Vault<blobs::BlobsProvider, L>;
 
 pub use accept::{AcceptAll, AcceptPolicy, IncomingSync};
 pub use coordinator::{run_effects, DaemonInfo, MemoryPeerSender, SentMessage, SyncCoordinator};

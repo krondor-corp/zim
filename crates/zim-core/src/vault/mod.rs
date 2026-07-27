@@ -29,10 +29,10 @@ pub use id::VaultId;
 pub use log::{Head, VaultLog, VaultLogError};
 
 use zim_crypto::{PrivateKey, PublicKey, Secret, SecretShare};
-use zim_did::Identity;
+use zim_did::Did;
 
 use crate::blobs::BlobStore;
-use crate::fs::{AbsPath, Fs, FsError, Manifest, Share};
+use crate::fs::{Fs, FsError, Manifest, Share};
 use crate::linked_data::Link;
 
 /// Versioned, encrypted file tree bound to a single UUID.
@@ -91,7 +91,7 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
     pub async fn init_with_shares(
         name: String,
         owner: &PrivateKey,
-        owner_via: Option<Identity>,
+        owner_via: Option<Did>,
         shares: &[PublicKey],
         blobs: B,
         log: L,
@@ -112,7 +112,7 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
             let owner_share = SecretShare::new(&secret, &owner_pubkey).map_err(FsError::from)?;
             manifest.add_share(
                 owner_pubkey,
-                Share::new(owner_share, Identity::Key(owner_pubkey), owner_via),
+                Share::new(owner_share, Did::from_key(&owner_pubkey), owner_via),
             );
         }
         for pk in shares {
@@ -120,7 +120,7 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
                 continue;
             }
             let secret_share = SecretShare::new(&secret, pk).map_err(FsError::from)?;
-            manifest.add_share(*pk, Share::new(secret_share, Identity::Key(*pk), None));
+            manifest.add_share(*pk, Share::new(secret_share, Did::from_key(pk), None));
         }
 
         // Snapshot the metadata pack so the genesis manifest is
@@ -176,7 +176,7 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
     /// lookup.
     ///
     /// Used when the head was learned out-of-band — e.g. the browser
-    /// fetched it from a hub's `/api/v0/v/{id}/head` and there's no
+    /// fetched it from a hub's `/api/v0/vaults/{id}/head` and there's no
     /// local log to query, or a remote peer pushed it in a
     /// `ShareOffered` wire message before the local log has any
     /// entries.
@@ -315,21 +315,6 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
         pins.insert(previous_link.hash());
         self.manifest.set_pins(pins);
 
-        // Auto-republish: refresh each published path's Entry against
-        // the new tree. Must happen after `set_root` so the tree
-        // lookups go against the fresh state.
-        let paths: Vec<AbsPath> = self.manifest.published().keys().cloned().collect();
-        for path in paths {
-            match self.fs.get_entry_at_path(&path).await? {
-                Some(entry) => {
-                    self.manifest.publish(path, entry);
-                }
-                None => {
-                    self.manifest.unpublish(&path);
-                }
-            }
-        }
-
         self.manifest.sign(&self.private_key)?;
         let new_link = self.fs.blobs().inner().put_cbor(&self.manifest).await?;
 
@@ -345,6 +330,50 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
 
         self.manifest_link = new_link.clone();
         Ok(new_link)
+    }
+
+    /// Fast-forward this handle to the log's current head.
+    ///
+    /// A long-lived open vault (a browser tab, a mount) goes stale when
+    /// another device advances the head — its next [`Self::save`] would
+    /// chain off the old head and be rejected (the hub answers 409).
+    /// `refresh` re-checks the log and, when the head moved,
+    /// re-materialises the tree at it. Returns `true` when the vault
+    /// changed, `false` when it was already current.
+    ///
+    /// Staged, unsaved mutations are discarded on a refresh that
+    /// changes the vault — save first, or replay them after.
+    pub async fn refresh(&mut self) -> Result<bool, VaultError<L::Error>> {
+        let head = self.log.head(self.id, None).await?;
+        if head.link == self.manifest_link {
+            return Ok(false);
+        }
+
+        let blobs = self.fs.blobs().inner().clone();
+        let manifest: Manifest = blobs.get_cbor(&head.link).await?;
+
+        let owner_pubkey = self.private_key.public();
+        let share = manifest
+            .get_share(&owner_pubkey)
+            .ok_or(crate::fs::FsError::ShareNotFound)?;
+        let secret = share
+            .secret_share()
+            .recover(&self.private_key)
+            .map_err(FsError::from)?;
+
+        self.fs = Fs::load_tree(
+            manifest.root(),
+            secret,
+            manifest.metadata().clone(),
+            manifest.pins().clone(),
+            manifest.ops_clock(),
+            owner_pubkey,
+            blobs,
+        )
+        .await?;
+        self.manifest = manifest;
+        self.manifest_link = head.link;
+        Ok(true)
     }
 
     // -- Manifest mutations --
@@ -364,13 +393,15 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
     pub fn add_share_via(
         &mut self,
         client: PublicKey,
-        via: Option<Identity>,
+        via: Option<Did>,
     ) -> Result<(), VaultError<L::Error>> {
         // Placeholder secret share — re-minted against the live vault
         // secret on the next `save`.
         let secret_share = SecretShare::new(&Secret::default(), &client).map_err(FsError::from)?;
-        self.manifest
-            .add_share(client, Share::new(secret_share, Identity::Key(client), via));
+        self.manifest.add_share(
+            client,
+            Share::new(secret_share, Did::from_key(&client), via),
+        );
         Ok(())
     }
 
@@ -380,7 +411,7 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
     /// `did:web` expands to several.
     #[allow(clippy::result_large_err)]
     pub fn add_reach(&mut self, reach: zim_did::Reach) -> Result<(), VaultError<L::Error>> {
-        let via = reach.via.map(|(_, host_key)| Identity::Key(host_key));
+        let via = reach.via.map(|(_, host_key)| Did::from_key(&host_key));
         self.add_share_via(reach.client, via)
     }
 
@@ -407,35 +438,6 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
             return Err(crate::fs::FsError::ShareNotFound.into());
         }
         Ok(self.manifest.shares_mut().remove(&recipient).is_some())
-    }
-
-    /// The hosted shares as `(recipient identity, via host)` pairs —
-    /// every share routed through an intermediary.
-    pub fn list_relays(&self) -> Vec<(Identity, Identity)> {
-        self.manifest
-            .shares()
-            .iter()
-            .filter_map(|(_, share)| {
-                share
-                    .via()
-                    .map(|via| (share.identity().clone(), via.clone()))
-            })
-            .collect()
-    }
-
-    /// Mark `path` as publicly served.
-    pub async fn publish(&mut self, path: &AbsPath) -> Result<(), VaultError<L::Error>> {
-        let leaf = self
-            .fs
-            .get_entry_at_path(path)
-            .await?
-            .ok_or_else(|| crate::fs::FsError::PathNotFound(path.clone()))?;
-        self.manifest.publish(path.clone(), leaf);
-        Ok(())
-    }
-
-    pub fn unpublish(&mut self, path: &AbsPath) -> bool {
-        self.manifest.unpublish(path)
     }
 
     // -- History --

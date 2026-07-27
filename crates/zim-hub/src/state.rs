@@ -17,7 +17,7 @@ pub struct AppState {
     /// Public hostname the hub answers as (host part of `did`).
     pub host: String,
     /// In-process peer (ciphertext mirror + sync).
-    pub service: zim::ServiceState,
+    pub peer: crate::peer::HubPeer,
     /// All persistent hub state — users, peer registrations,
     /// escrowed keys. Models are reached via
     /// `state.db.<Model>::<op>(...)`.
@@ -27,12 +27,12 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(config: &Config, service: zim::ServiceState, db: Database) -> Self {
+    pub fn new(config: &Config, peer: crate::peer::HubPeer, db: Database) -> Self {
         Self {
             listen_address: config.listen_address,
             did: config.did(),
             host: config.host.clone(),
-            service,
+            peer,
             db,
             auth: config.auth.clone(),
         }

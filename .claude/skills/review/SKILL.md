@@ -10,7 +10,7 @@ allowed-tools:
   - Grep
 ---
 
-Review the current branch's changes against jax-bucket conventions before merge.
+Review the current branch's changes against Zim conventions before merge.
 
 ## Steps
 
@@ -18,9 +18,9 @@ Review the current branch's changes against jax-bucket conventions before merge.
 
 Read project conventions:
 - `CLAUDE.md` — project guide and constraints
-- `docs/PATTERNS.md` — error handling, module org, method ordering, naming
-- `docs/CLI.md` — Op pattern, formatting boundary, ui module
-- `docs/CONTRIBUTING.md` — test readability, commit conventions, review checklist
+- `docs/patterns/conventions.md` — error handling, module organization, and naming
+- `docs/patterns/cli.md` — Op pattern and formatting boundary
+- `docs/dx/contributing.md` — test readability, commit conventions, review checklist
 
 ### 2. Collect Changes
 
@@ -56,24 +56,39 @@ Review the diff for:
 
 ### 5. Documentation Check
 
-- `docs/PROJECT_LAYOUT.md` — new files/modules added?
-- `docs/PATTERNS.md` — new patterns introduced?
+- `docs/_guidelines/index.md` — is content in the correct documentation home?
+- `docs/product/` — did domain behavior or security guarantees change?
+- `docs/architecture/` — did subsystem boundaries, relationships, or flows change?
+- `docs/patterns/` — did a cross-cutting contract or convention change?
+- `docs/ui/` — did browser or WASM architecture change?
+- `docs/dx/` — did commands or the local workflow change?
+- `docs/devops/` — did release or operational behavior change?
+- `web/` — did an end-user workflow change?
 - `CLAUDE.md` — project structure or constraints changed?
-- Issue tickets — status updates needed?
+- Related Linear issues — status or scope updates needed?
+- `docs/product/roadmap/` — did product direction or deferred constraints change?
 
 ### 6. Skills Check
 
 If behavior changed that affects skills in `.claude/skills/`:
 - `/check` — Did build, test, or lint commands change?
 - `/review` — Did review criteria or conventions change?
+- `/docs` — Did documentation layout or navigation change?
+- `/draft`, `/spawn`, `/issues` — Did collaboration workflow change?
 
-### 7. Issue Cross-Reference
+Skills must stay synchronized with actual project behavior.
 
-If `issues/` exists, check for related tickets — should any status be updated?
+### 7. Work Cross-Reference
+
+Check Linear for related work and update status or scope when requested. If the
+change alters deferred product direction, update `docs/product/roadmap/`.
 
 ## Output Format
 
 ```
+## Findings
+- [SEVERITY] path:line — actionable finding
+
 ## Commit Messages
 - [PASS/FAIL] Format and clarity
 - Issues: (list or "None")
@@ -97,4 +112,6 @@ If `issues/` exists, check for related tickets — should any status be updated?
 [Overall assessment and recommended actions before merge]
 ```
 
-Be specific — reference file paths and line numbers where relevant.
+Lead with findings ordered by severity. Be specific and reference file paths
+and line numbers. If there are no findings, say so and identify residual risks
+or checks not run.

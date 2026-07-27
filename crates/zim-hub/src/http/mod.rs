@@ -65,7 +65,7 @@ pub fn build_router(state: AppState) -> Router {
 }
 
 #[async_trait::async_trait]
-impl zim_runtime::Service for HttpServer {
+impl zim_peer::runtime::Service for HttpServer {
     type State = AppState;
 
     async fn run(state: Self::State, mut shutdown_rx: watch::Receiver<()>) {

@@ -12,7 +12,6 @@ use crate::cli::op::Op;
 pub mod add;
 pub mod list;
 pub mod ping;
-pub mod reconcile;
 pub mod rm;
 
 #[derive(Subcommand, Debug, Clone)]
@@ -26,8 +25,6 @@ pub enum Peers {
     /// Round-trip ping over the existing sync protocol: identity,
     /// version, uptime, RTT.
     Ping(ping::Ping),
-    /// Re-share the vaults you own with every trusted contact.
-    Reconcile(reconcile::Reconcile),
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -37,7 +34,6 @@ pub enum PeersOutput {
     Add(add::AddOutput),
     Rm(rm::RmOutput),
     Ping(ping::PingOutput),
-    Reconcile(reconcile::ReconcileOutput),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -50,8 +46,6 @@ pub enum PeersError {
     Rm(#[from] rm::RmError),
     #[error(transparent)]
     Ping(#[from] ping::PingError),
-    #[error(transparent)]
-    Reconcile(#[from] reconcile::ReconcileError),
 }
 
 #[async_trait]
@@ -70,7 +64,6 @@ impl Op for Peers {
             Peers::Add(c) => PeersOutput::Add(c.run(c.build_context().await?).await?),
             Peers::Rm(c) => PeersOutput::Rm(c.run(c.build_context().await?).await?),
             Peers::Ping(c) => PeersOutput::Ping(c.run(c.build_context().await?).await?),
-            Peers::Reconcile(c) => PeersOutput::Reconcile(c.run(c.build_context().await?).await?),
         })
     }
 }
@@ -82,7 +75,6 @@ impl fmt::Display for PeersOutput {
             PeersOutput::Add(o) => write!(f, "{o}"),
             PeersOutput::Rm(o) => write!(f, "{o}"),
             PeersOutput::Ping(o) => write!(f, "{o}"),
-            PeersOutput::Reconcile(o) => write!(f, "{o}"),
         }
     }
 }

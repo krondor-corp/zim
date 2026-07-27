@@ -1,4 +1,4 @@
-//! `GET /api/v0/v/{vault_id}/head` — current canonical head + height.
+//! `GET /api/v0/vaults/{vault_id}/head` — current canonical head + height.
 //!
 //! Gated by [`crate::access::can_access_vault`]: non-owners get 404.
 //! Reads from `coord.log()` directly — the hub holds ciphertext + the
@@ -9,20 +9,14 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use serde::Serialize;
-use zim_core::linked_data::Link;
 use zim_core::vault::VaultId;
 use zim_peer::VaultLog;
+// Shared wire type — mirrored by `zim_api::hub::vault::HeadRequest`.
+use zim_api::hub::vault::HeadResponse;
 
 use crate::access::can_access_vault;
 use crate::http::auth::RequireUser;
 use crate::state::AppState;
-
-#[derive(Debug, Serialize)]
-pub struct HeadResponse {
-    pub link: Link,
-    pub height: u64,
-}
 
 pub async fn handler(
     State(state): State<AppState>,
@@ -32,7 +26,7 @@ pub async fn handler(
     if !can_access_vault(&state, &user, vault_id).await {
         return (StatusCode::NOT_FOUND, "vault not found").into_response();
     }
-    let log = state.service.peer().coord().log();
+    let log = state.peer.coord().log();
     match log.head(vault_id, None).await {
         Ok(head) => (
             StatusCode::OK,

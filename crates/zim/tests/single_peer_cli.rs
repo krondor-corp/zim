@@ -2,8 +2,8 @@
 //!
 //! Spawns `zim daemon run` in a temp data dir with a known port
 //! written into `config.toml`, polls until the HTTP port is up, then
-//! runs the full CLI surface (`zim vaults create`, `zim id`,
-//! `zim vault <target> head`, etc.) as child processes and asserts
+//! runs the full CLI surface (`zim vault create`, `zim id`,
+//! `zim vault head <target>`, etc.) as child processes and asserts
 //! on stdout.
 //!
 //! The daemon is killed on test exit via a Drop guard.
@@ -147,30 +147,30 @@ fn single_peer_round_trip() {
     );
 
     // Empty registry → empty array.
-    let (vaults_empty, _) = run(&home, &["vaults", "list"]);
+    let (vaults_empty, _) = run(&home, &["vault", "list"]);
     let vaults0: Vec<serde_json::Value> =
         serde_json::from_str(vaults_empty.trim()).expect("vaults json");
     assert!(vaults0.is_empty(), "vaults: {vaults_empty}");
 
     // Create a vault — name comes back in the response.
-    let (create, _) = run(&home, &["vaults", "create", "demo"]);
+    let (create, _) = run(&home, &["vault", "create", "demo"]);
     let created: serde_json::Value = serde_json::from_str(create.trim()).expect("create json");
     assert_eq!(created["name"], "demo", "create: {create}");
 
     // Registry now lists it.
-    let (vaults_one, _) = run(&home, &["vaults", "list"]);
+    let (vaults_one, _) = run(&home, &["vault", "list"]);
     let vaults1: Vec<serde_json::Value> =
         serde_json::from_str(vaults_one.trim()).expect("vaults json");
     assert_eq!(vaults1.len(), 1, "vaults: {vaults_one}");
     assert_eq!(vaults1[0]["name"], "demo", "vaults: {vaults_one}");
 
     // Freshly-saved genesis — height 0.
-    let (head, _) = run(&home, &["vault", "demo", "head"]);
+    let (head, _) = run(&home, &["vault", "head", "demo"]);
     let head_json: serde_json::Value = serde_json::from_str(head.trim()).expect("head json");
     assert_eq!(head_json["height"], 0, "head: {head}");
 
     // Empty ls — items array empty.
-    let (ls, _) = run(&home, &["vault", "demo", "ls", "/"]);
+    let (ls, _) = run(&home, &["vault", "ls", "demo", "/"]);
     let ls_json: serde_json::Value = serde_json::from_str(ls.trim()).expect("ls json");
     assert!(
         ls_json["items"].as_array().unwrap().is_empty(),
@@ -178,21 +178,21 @@ fn single_peer_round_trip() {
     );
 
     // mkdir.
-    let (mkdir, _) = run(&home, &["vault", "demo", "mkdir", "/docs"]);
+    let (mkdir, _) = run(&home, &["vault", "mkdir", "demo", "/docs"]);
     let mkdir_json: serde_json::Value = serde_json::from_str(mkdir.trim()).expect("mkdir json");
     assert_eq!(mkdir_json["path"], "/docs", "mkdir: {mkdir}");
 
     // add from stdin.
     let (add, _) = run_with_stdin(
         &home,
-        &["vault", "demo", "add", "/docs/readme.md"],
+        &["vault", "add", "demo", "/docs/readme.md"],
         b"hello zim\n",
     );
     let add_json: serde_json::Value = serde_json::from_str(add.trim()).expect("add json");
     assert_eq!(add_json["path"], "/docs/readme.md", "add: {add}");
 
     // ls shows the file.
-    let (ls_docs, _) = run(&home, &["vault", "demo", "ls", "/docs"]);
+    let (ls_docs, _) = run(&home, &["vault", "ls", "demo", "/docs"]);
     let ls_docs_json: serde_json::Value = serde_json::from_str(ls_docs.trim()).expect("ls json");
     let items = ls_docs_json["items"].as_array().unwrap();
     assert_eq!(items.len(), 1, "ls /docs: {ls_docs}");
@@ -200,12 +200,12 @@ fn single_peer_round_trip() {
     assert_eq!(items[0]["kind"], "file", "ls /docs: {ls_docs}");
 
     // cat — `Bytes` serializes as a JSON array of byte values.
-    let (cat, _) = run(&home, &["vault", "demo", "cat", "/docs/readme.md"]);
+    let (cat, _) = run(&home, &["vault", "cat", "demo", "/docs/readme.md"]);
     let cat_bytes: Vec<u8> = serde_json::from_str(cat.trim()).expect("cat json");
     assert_eq!(cat_bytes, b"hello zim\n", "cat: {cat}");
 
     // Head height advanced.
-    let (head_after, _) = run(&home, &["vault", "demo", "head"]);
+    let (head_after, _) = run(&home, &["vault", "head", "demo"]);
     let head_after_json: serde_json::Value =
         serde_json::from_str(head_after.trim()).expect("head json");
     assert!(
@@ -214,10 +214,10 @@ fn single_peer_round_trip() {
     );
 
     // rm.
-    let (rm, _) = run(&home, &["vault", "demo", "rm", "/docs/readme.md"]);
+    let (rm, _) = run(&home, &["vault", "rm", "demo", "/docs/readme.md"]);
     let rm_json: serde_json::Value = serde_json::from_str(rm.trim()).expect("rm json");
     assert_eq!(rm_json["path"], "/docs/readme.md", "rm: {rm}");
-    let (ls_after_rm, _) = run(&home, &["vault", "demo", "ls", "/docs"]);
+    let (ls_after_rm, _) = run(&home, &["vault", "ls", "demo", "/docs"]);
     let ls_after_rm_json: serde_json::Value =
         serde_json::from_str(ls_after_rm.trim()).expect("ls json");
     assert!(

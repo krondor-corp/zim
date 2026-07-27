@@ -21,7 +21,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context};
 use futures::future::BoxFuture;
 
-use zim_core::iroh::{self, AcceptError, Connection, Endpoint, ProtocolHandler};
+use crate::iroh::{self, AcceptError, Connection, Endpoint, ProtocolHandler};
 use zim_crypto::PublicKey;
 
 use crate::coordinator::SyncCoordinator;

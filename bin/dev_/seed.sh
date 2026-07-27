@@ -1,11 +1,10 @@
 #!/bin/bash
-# Seed the dev environment with vaults + shares so syncing is testable
-# without a browser. Daemon-only — needs no docker/minio/hub.
+# Seed the dev environment: peer plumbing, then declarative fixtures.
 #
 # Cross-adds every peer to every other's address book (so `OfferShare`
-# passes the spam gate and dialing resolves), then the first node
-# ("alice") creates two vaults, drops some content, and shares `demo`
-# with every other peer. Idempotent — safe to re-run.
+# passes the spam gate and dialing resolves), then applies
+# `fixtures.toml` — vaults, content, shares, FUSE checks — via
+# fixtures.sh. Daemon-only — needs no docker/minio/hub. Idempotent.
 
 # Run zim against a node by nick (internal sibling of `cmd_cli`).
 seed_cli() {
@@ -19,10 +18,30 @@ node_id() {
     seed_cli "$1" id 2>/dev/null | tail -1
 }
 
+# Cross-introduce every daemon's iroh NodeAddr to every other, so
+# local dials go direct over loopback instead of waiting on pkarr/DHT
+# discovery. This is what makes seeded e2e runs deterministic and
+# hermetic — no public network in the local dial path.
+introduce_all() {
+    local nodes=("$@")
+    for a in "${nodes[@]}"; do
+        local a_port addr_json
+        a_port=$(get_api_port "$a")
+        addr_json=$(curl -sf -X POST "http://127.0.0.1:$a_port/api/v0/peers/addr" \
+            -H 'Content-Type: application/json' -d '{}') || continue
+        for b in "${nodes[@]}"; do
+            [[ "$a" == "$b" ]] && continue
+            local b_port
+            b_port=$(get_api_port "$b")
+            curl -sf -X POST "http://127.0.0.1:$b_port/api/v0/peers/introduce" \
+                -H 'Content-Type: application/json' -d "$addr_json" >/dev/null 2>&1 || true
+        done
+    done
+}
+
 # Wait until `from` can actually dial `to` (iroh discovery converged).
-# Fresh daemons take a few seconds to publish/resolve; sharing before
-# then means the fire-and-forget `OfferShare` is dropped. Returns
-# non-zero (with a warning) if it never becomes reachable.
+# With `introduce_all` this converges near-instantly; the loop remains
+# as a guard. Returns non-zero (with a warning) if never reachable.
 wait_dialable() {
     local from="$1" to="$2" tries=0
     until seed_cli "$from" peers ping "$to" >/dev/null 2>&1; do
@@ -51,9 +70,8 @@ cmd_seed() {
 
     local nodes
     nodes=($(get_node_names))
-    local owner="${nodes[0]}"
 
-    echo -e "${BLUE}Seeding dev vaults (owner: $owner)…${NC}"
+    echo -e "${BLUE}Seeding: peer plumbing…${NC}"
 
     # Bootstrap each peer's local state (idempotent).
     for n in "${nodes[@]}"; do
@@ -68,31 +86,14 @@ cmd_seed() {
         done
     done
 
-    # Owner creates a couple of vaults with content.
-    seed_cli "$owner" vaults create demo >/dev/null 2>&1 || true
-    printf 'hello from %s\n' "$owner" \
-        | seed_cli "$owner" vault demo add /readme.md >/dev/null 2>&1 || true
-    seed_cli "$owner" vaults create notes >/dev/null 2>&1 || true
-    printf '# notes\n\nseeded by ./bin/dev seed\n' \
-        | seed_cli "$owner" vault notes add /index.md >/dev/null 2>&1 || true
+    # Direct NodeAddr exchange: local dials skip DHT discovery entirely.
+    introduce_all "${nodes[@]}"
 
-    # Share `demo` with every other peer (direct `did:key`). The share
-    # is recorded on the owner regardless; we give discovery a short
-    # window to converge so the fire-and-forget OfferShare actually
-    # lands. If the peer's still unreachable, the share is set and will
-    # sync once discovery catches up (or on a re-run).
-    for b in "${nodes[@]:1}"; do
-        if wait_dialable "$owner" "$b"; then
-            seed_cli "$owner" vault demo shares add "$(node_id "$b")" >/dev/null 2>&1 \
-                && echo -e "  shared ${GREEN}demo${NC} → $b ${GREEN}(reachable)${NC}"
-        else
-            seed_cli "$owner" vault demo shares add "$(node_id "$b")" >/dev/null 2>&1 \
-                && echo -e "  shared ${GREEN}demo${NC} → $b ${YELLOW}(unreachable — syncs once discovery converges)${NC}"
-        fi
-    done
+    # Data + FUSE checks are declarative — see fixtures.toml.
+    fixtures_apply || return 1
 
     echo -e "${GREEN}Seeded.${NC} Verify sync propagated:"
-    local peer="${nodes[1]:-$owner}"
-    echo "  ./bin/dev cli $peer vaults list"
-    echo "  ./bin/dev cli $peer vault demo cat /readme.md"
+    local peer="${nodes[1]:-${nodes[0]}}"
+    echo "  ./bin/dev cli $peer vault list"
+    echo "  ./bin/dev cli $peer vault cat demo /readme.md"
 }

@@ -7,12 +7,12 @@ use zim_core::linked_data::Link;
 use crate::cli::op::Op;
 use crate::cli::ui;
 use crate::context::{ApiContext, ContextError};
-use crate::http_server::api::client::ApiError;
-use crate::http_server::api::v0::vault::mkdir::MkdirRequest;
+use crate::daemon::api::client::ApiError;
+use crate::daemon::api::v0::vault::mkdir::MkdirRequest;
 
 #[derive(Args, Debug, Clone)]
 pub struct Mkdir {
-    #[arg(skip)]
+    /// Vault id or name.
     pub target: String,
     pub path: String,
     #[arg(long, short = 'p')]

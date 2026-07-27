@@ -10,6 +10,8 @@ pub enum ApiError {
     UrlParse(#[from] url::ParseError),
     #[error("HTTP {0}: {1}")]
     HttpStatus(StatusCode, String),
+    #[error("decode response: {0}")]
+    Decode(#[from] serde_json::Error),
     #[error("{0}")]
     Other(String),
 }

@@ -2,7 +2,7 @@
 //!
 //! Owns the **long-lived vault handles** and their FUSE sessions. Each mount
 //! opens its vault exactly once into an `Arc<RwLock<Vault>>` and hands it to
-//! [`zim_fuse::FuseFs`], which serializes every mutation through the write lock
+//! [`crate::fuse::FuseFs`], which serializes every mutation through the write lock
 //! then `save()`s — a single in-process writer advancing the chain linearly.
 //! This is deliberately *unlike* the daemon's HTTP path (which re-opens per
 //! request and can fork the head under concurrency); see the FUSE plan.
@@ -26,15 +26,15 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::fuse::inode_table::InodeTable;
+use crate::fuse::{spawn_mount, BackgroundSession, FileCache, FileCacheConfig, FuseFs};
 use tokio::runtime::Handle;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
-use zim_core::blobs::BlobsProvider;
 use zim_core::fs::AbsPath;
 use zim_core::linked_data::Link;
 use zim_core::vault::{Vault, VaultId};
-use zim_fuse::inode_table::InodeTable;
-use zim_fuse::{spawn_mount, BackgroundSession, FileCache, FileCacheConfig, FuseFs};
+use zim_peer::BlobsProvider;
 use zim_peer::{Peer, SqliteVaultLog};
 
 use super::store::{MountRecord, MountStore};
@@ -239,6 +239,18 @@ impl MountManager {
     }
 
     /// Unmount a live mount (keeps its registration).
+    /// Unmount every live mount (registrations kept). Called on daemon
+    /// shutdown so mounts spin down with the process instead of lingering
+    /// as dead volumes; `start_auto` on the next boot brings the `--auto`
+    /// ones back.
+    pub fn stop_all(&self) {
+        let mut live = self.live.lock().unwrap();
+        for (mountpoint, _mount) in live.drain() {
+            // Dropping the LiveMount drops its BackgroundSession → unmount.
+            tracing::info!("unmounting {} (daemon shutdown)", mountpoint.display());
+        }
+    }
+
     pub fn stop(&self, mountpoint: &Path) -> anyhow::Result<()> {
         match self.live.lock().unwrap().remove(mountpoint) {
             Some(_) => Ok(()), // drop unmounts
@@ -247,6 +259,43 @@ impl MountManager {
     }
 
     /// Unmount (if live) and drop the registration.
+    /// Update a registration's `auto_mount` / `read_only` flags in
+    /// place. `read_only` changes on a live mount trigger a remount
+    /// (the FUSE session is created with the flag baked in).
+    pub async fn set(
+        &self,
+        mountpoint: &Path,
+        auto_mount: Option<bool>,
+        read_only: Option<bool>,
+    ) -> anyhow::Result<MountStatus> {
+        let mut record = self
+            .store
+            .load()
+            .into_iter()
+            .find(|r| r.mountpoint == mountpoint)
+            .ok_or_else(|| anyhow::anyhow!("no mount registered at {}", mountpoint.display()))?;
+        if let Some(auto) = auto_mount {
+            record.auto_mount = auto;
+        }
+        let ro_changed = matches!(read_only, Some(ro) if ro != record.read_only);
+        if let Some(ro) = read_only {
+            record.read_only = ro;
+        }
+        self.store.upsert(record.clone())?;
+        let was_live = self.live.lock().unwrap().contains_key(mountpoint);
+        if ro_changed && was_live {
+            self.stop(mountpoint)?;
+            self.start(record.clone()).await?;
+        }
+        Ok(MountStatus {
+            vault_id: record.vault_id,
+            mountpoint: record.mountpoint,
+            read_only: record.read_only,
+            auto_mount: record.auto_mount,
+            mounted: was_live,
+        })
+    }
+
     pub fn remove(&self, mountpoint: &Path) -> anyhow::Result<bool> {
         self.live.lock().unwrap().remove(mountpoint);
         Ok(self.store.remove(mountpoint)?)

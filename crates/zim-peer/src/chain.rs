@@ -80,7 +80,19 @@ pub async fn collect_ops_since<B: BlobStore>(
     all_logs.reverse();
     let mut merged = OpsLog::new();
     for log in all_logs {
-        merged.merge(&log);
+        let (_, collisions) = merged.merge_detecting(&log);
+        // An id collision here = a peer's Lamport clock regressed and
+        // re-minted a used (timestamp, peer) id. The union keeps the
+        // FIRST op and silently shadows the second — user-visible data
+        // loss. Scream so the harness catches it in the act.
+        for id in collisions {
+            tracing::error!(
+                op_timestamp = id.timestamp,
+                op_peer = %id.peer_id.to_hex(),
+                start = %start_link.hash(),
+                "OP ID COLLISION during chain collection — an op is being shadowed"
+            );
+        }
     }
     Ok(merged)
 }
@@ -133,8 +145,27 @@ pub async fn merge<B: BlobStore>(
     let incoming_ops =
         collect_ops_since(incoming_link, ancestor, blobs, secret_key, OpsLog::new()).await?;
 
+    tracing::debug!(
+        local = %local_link.hash(),
+        incoming = %incoming_link.hash(),
+        ancestor = ?ancestor.map(|a| a.hash()),
+        local_ops = local_ops.len(),
+        incoming_ops = incoming_ops.len(),
+        "chain merge: windows collected"
+    );
+
     let mut merged_ops = local_ops.clone();
     let merge_result = merged_ops.merge_with_resolver(&incoming_ops, &resolver, &local_peer_id);
+
+    for resolved in &merge_result.conflicts_resolved {
+        tracing::debug!(
+            path = %resolved.conflict.path,
+            resolution = ?std::mem::discriminant(&resolved.resolution),
+            base_ts = resolved.conflict.base.id.timestamp,
+            incoming_ts = resolved.conflict.incoming.id.timestamp,
+            "chain merge: conflict resolved"
+        );
+    }
 
     target.apply_ops(&merged_ops).await?;
 

@@ -104,6 +104,24 @@ impl OpsLog {
         self.operations.insert(id, op);
     }
 
+    /// Like [`OpsLog::merge`], but also reports id collisions: ops we
+    /// skipped as "already present" whose CONTENT differs from what we
+    /// hold under that id. Ids are (lamport, peer) — a collision means
+    /// some peer's clock regressed and re-minted a used id, silently
+    /// shadowing a real op. That's an invariant breach worth surfacing.
+    pub fn merge_detecting(&mut self, other: &OpsLog) -> (usize, Vec<OpId>) {
+        let mut collisions = Vec::new();
+        for (id, op) in &other.operations {
+            if let Some(existing) = self.operations.get(id) {
+                if existing != op {
+                    collisions.push(id.clone());
+                }
+            }
+        }
+        let added = self.merge(other);
+        (added, collisions)
+    }
+
     /// Simple merge: append all ops from `other` that we don't have.
     /// No conflict detection. Returns count of ops added.
     pub fn merge(&mut self, other: &OpsLog) -> usize {

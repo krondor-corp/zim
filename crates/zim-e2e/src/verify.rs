@@ -226,3 +226,88 @@ pub fn fuse_cross_node(harness: &Harness, deadline: Duration) -> Result<()> {
     b.cli(bin, &["mount", "stop", "demo"], None)?;
     Ok(())
 }
+
+/// Tight repro loop for the fork-drop bug (#17): minimal setup, then
+/// hammer concurrent-add rounds until one fails. On failure the
+/// verdict distinguishes DIVERGED (sync incomplete — maybe timing)
+/// from CONVERGED-WRONG (identical heads, missing content — a
+/// correctness bug), and dumps the post-mortem: heads, tree listings,
+/// and every collision/merge trace line from both daemon logs.
+pub fn fork_loop(harness: &Harness, rounds: u32, deadline: Duration) -> Result<()> {
+    let bin = &harness.zim_bin;
+    let a = &harness.nodes[0];
+    let b = &harness.nodes[1];
+
+    // Minimal world: one shared vault, converged.
+    a.cli(bin, &["vault", "create", "forky"], None)?;
+    a.cli(bin, &["vault", "add", "forky", "/seed.md"], Some(b"seed"))?;
+    let b_key = b.id(bin)?;
+    a.cli(bin, &["vault", "shares", "add", "forky", &b_key], None)?;
+    heads_converge(a, b, bin, "forky", deadline)?;
+    println!("seeded + converged; starting {rounds} fork rounds");
+
+    for round in 0..rounds {
+        let fa = format!("/r{round}-a.md");
+        let fb = format!("/r{round}-b.md");
+        a.cli(bin, &["vault", "add", "forky", &fa], Some(b"from a"))?;
+        b.cli(bin, &["vault", "add", "forky", &fb], Some(b"from b"))?;
+
+        let both = |n: &Node| {
+            n.cli(bin, &["vault", "cat", "forky", &fa], None).is_ok()
+                && n.cli(bin, &["vault", "cat", "forky", &fb], None).is_ok()
+        };
+        let converged = until(
+            &format!("round {round}: both files on both nodes"),
+            deadline,
+            || both(a) && both(b) && head_eq(a, b, bin, "forky"),
+        );
+
+        if let Err(e) = converged {
+            let ha = head(a, bin, "forky").unwrap_or_default();
+            let hb = head(b, bin, "forky").unwrap_or_default();
+            let verdict = if !ha.is_empty() && ha == hb {
+                "CONVERGED-WRONG: identical heads, content missing — correctness bug"
+            } else {
+                "DIVERGED: heads differ at deadline — sync incomplete (timing?)"
+            };
+            println!("
+================ POST-MORTEM (round {round}) ================");
+            println!("verdict: {verdict}");
+            for n in [a, b] {
+                println!("--- {}:", n.nick);
+                println!("  head: {}", head(n, bin, "forky").unwrap_or_default());
+                println!(
+                    "  ls /: {}",
+                    n.cli(bin, &["vault", "ls", "forky", "/"], None)
+                        .unwrap_or_default()
+                        .replace('\n', "  ")
+                );
+                let log = std::fs::read_to_string(n.home.join("daemon.log")).unwrap_or_default();
+                let interesting: Vec<&str> = log
+                    .lines()
+                    .filter(|l| {
+                        l.contains("OP ID COLLISION")
+                            || l.contains("conflict resolved")
+                            || l.contains("windows collected")
+                    })
+                    .collect();
+                let tail = interesting.len().saturating_sub(30);
+                println!("  merge trace ({} lines, last 30):", interesting.len());
+                for l in &interesting[tail..] {
+                    println!("    {l}");
+                }
+            }
+            return Err(e).map_err(|e| anyhow!("{e} [{verdict}]"));
+        }
+    }
+    println!("
+{rounds} fork rounds clean");
+    Ok(())
+}
+
+fn head_eq(a: &Node, b: &Node, bin: &std::path::Path, vault: &str) -> bool {
+    match (head(a, bin, vault), head(b, bin, vault)) {
+        (Some(ha), Some(hb)) => !ha.is_empty() && ha == hb,
+        _ => false,
+    }
+}

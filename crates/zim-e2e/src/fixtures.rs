@@ -131,8 +131,8 @@ impl Fixture {
 pub fn load(path: &std::path::Path) -> anyhow::Result<Vec<Fixture>> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("read {}: {e}", path.display()))?;
-    let file: FixtureFile = toml::from_str(&text)
-        .map_err(|e| anyhow::anyhow!("parse {}: {e}", path.display()))?;
+    let file: FixtureFile =
+        toml::from_str(&text).map_err(|e| anyhow::anyhow!("parse {}: {e}", path.display()))?;
     Ok(file.fixtures)
 }
 
@@ -146,8 +146,8 @@ mod tests {
     // recognized as skippable.
     #[test]
     fn the_shipped_fixtures_file_parses_and_reads_in_order() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../bin/dev_/fixtures.toml");
+        let root =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bin/dev_/fixtures.toml");
         let fixtures = load(&root).expect("shipped fixtures.toml must parse");
         assert!(fixtures.len() >= 10, "expected a real fixture set");
 

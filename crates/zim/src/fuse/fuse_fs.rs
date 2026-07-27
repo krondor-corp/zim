@@ -849,6 +849,7 @@ pub fn spawn_mount<B: BlobStore, L: VaultLog>(
     mountpoint: &std::path::Path,
     read_only: bool,
     volname: &str,
+    fsid: u32,
 ) -> std::io::Result<fuser::BackgroundSession> {
     use fuser::MountOption;
     let mut opts = vec![
@@ -861,12 +862,20 @@ pub fn spawn_mount<B: BlobStore, L: VaultLog>(
     #[cfg(target_os = "macos")]
     {
         opts.push(MountOption::CUSTOM(format!("volname={volname}")));
+        // macFUSE mints a fresh filesystem ID per mount by default, which
+        // kills Finder aliases/favorites/recents across remounts ("original
+        // item can't be found", OSStatus -43): they record the volume
+        // identity. A per-vault persistent 24-bit fsid keeps the volume
+        // recognisably "the same" so path-based alias fallback works.
+        // (Lookups *by file ID* — /.vol/dev/ino — stay unsupported; that's
+        // a macFUSE-wide limitation, same as sshfs.)
+        opts.push(MountOption::CUSTOM(format!("fsid={fsid}")));
         opts.push(MountOption::CUSTOM("local".to_string()));
         opts.push(MountOption::CUSTOM("noappledouble".to_string()));
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = volname;
+        let _ = (volname, fsid);
     }
     fuser::spawn_mount2(fs, mountpoint, &opts)
 }

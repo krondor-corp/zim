@@ -36,7 +36,6 @@ source "$DEV_DIR/nodes.sh"
 source "$DEV_DIR/hub.sh"
 source "$DEV_DIR/seed.sh"
 source "$DEV_DIR/fixtures.sh"
-source "$DEV_DIR/e2e.sh"
 
 cmd_help() {
     cat <<EOF
@@ -63,8 +62,6 @@ Commands:
   fixtures [apply|list]   Apply (or list) the declarative fixtures in
                           bin/dev_/fixtures.toml
   fuse-check              Report whether FUSE fixtures will run here
-  e2e                     One-shot e2e run: clean → daemons → fixtures →
-                          cross-node sync checks → PASS/FAIL exit code
   hub [up|enroll|did|down]
                           Run zim-hub in a tmux window (real OAuth via
                           confit + minio; needs docker). \`enroll\` seeds
@@ -104,7 +101,6 @@ case "${1:-run}" in
     seed)           cmd_seed ;;
     fixtures)       shift; cmd_fixtures "$@" ;;
     fuse-check)     shift; cmd_fuse_check "$@" ;;
-    e2e)            shift; cmd_e2e "$@" ;;
     # Bare flags (e.g. `./bin/dev --hub`, `--fuse`, `-b`) → run.
     -*)             cmd_run "$@" ;;
     *)              echo -e "${RED}Unknown command: $1${NC}"; cmd_help; exit 1 ;;

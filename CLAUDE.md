@@ -26,7 +26,8 @@ crates/
 ├── zim-api/       # Shared HTTP contract + typed client (daemon RPC + hub routes + JWT)
 ├── zim-peer/      # Peer machinery: sync coordinator, blob/log/contact stores, iroh transport, runtime
 ├── zim/           # Daemon binary `zim` + CLI + HTTP API + FUSE mounts (feature `fuse`)
-└── zim-hub/       # Hub server: ciphertext mirror + did:web identity (+ wasm/ browser SDK, web/ Yew SPA)
+├── zim-hub/       # Hub server: ciphertext mirror + did:web identity (+ wasm/ browser SDK, web/ Yew SPA)
+└── zim-e2e/       # E2E harness bin: hermetic daemons + fixtures + convergence verdicts (never published)
 
 docs/              # Contributor/agent documentation
 web/               # Site: homepage + end-user docs (Jekyll, pack-style)

@@ -1,0 +1,24 @@
+[package]
+name = "zim-e2e"
+version = "0.1.0"
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "End-to-end test harness: spawns real zim daemons and drives fixtures through the real CLI"
+
+# Dev tooling, never released. The harness is a workspace crate (not a
+# script) so that when the hub splits into its own repo it can dep this
+# crate and run the hub track against released zim-cli binaries — the
+# bash harness can't cross a repo boundary, a crate can.
+
+[[bin]]
+name = "zim-e2e"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde_json = "1"

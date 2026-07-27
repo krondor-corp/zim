@@ -38,7 +38,7 @@ api_port = 17173
 
 `make dev` is just `./bin/dev`, and subcommand words pass straight through: `make dev hub up`, `make dev status`, `make dev cli alice vault list`. Flags need the `ARGS` form (`make dev run ARGS="-b --fuse"`) because make claims leading dashes for itself; the "overriding commands" warning on colliding words (clean, hub, e2e) is expected and harmless.
 
-`make e2e` (= `./bin/dev e2e`) is the one-shot test run: clean start → daemons → fixtures → cross-node sync checks, exiting nonzero on failure. Peers are cross-introduced with direct NodeAddrs (`/api/v0/peers/{addr,introduce}`), so local dials skip DHT discovery — runs are hermetic and converge in seconds. Sync assertions poll until converged or `E2E_DEADLINE` (default 60s). The seeded environment is left running.
+`make e2e` runs the `zim-e2e` crate: a hermetic one-shot verdict — it spawns its own daemons on the 1722x band with fresh homes under `data/e2e/` (the interactive dev env on 1717x is untouched), wires peers with direct NodeAddrs (`/api/v0/peers/{addr,introduce}`, no DHT), applies `bin/dev_/fixtures.toml` through the real CLI, and polls cross-node convergence to a deadline (`--deadline`, default 60s). `--keep` leaves the throwaway env running; `--skip-fuse` forces the FUSE block off. Exit code is the verdict. The harness is a crate (not a script) so the hub repo can reuse it against released `zim-cli` binaries after the split.
 
 ### Per-peer shells
 

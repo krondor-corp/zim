@@ -49,10 +49,10 @@ Everything except `zim mount` works identically in the standard build.
 Needs a Rust toolchain ([rustup.rs](https://rustup.rs)):
 
 ```bash
-cargo install --locked --git https://github.com/krondor-corp/zim zim --features hub
+cargo install --locked zim-cli --features hub
 
 # with FUSE support too (needs libfuse3 / macFUSE headers)
-cargo install --locked --git https://github.com/krondor-corp/zim zim --features hub,fuse
+cargo install --locked zim-cli --features hub,fuse
 ```
 
 The `hub` feature compiles the `zim hub …` commands (enrolling with a

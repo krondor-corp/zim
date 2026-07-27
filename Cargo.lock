@@ -7378,7 +7378,7 @@ dependencies = [
 
 [[package]]
 name = "zim-api"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "base64",
@@ -7397,7 +7397,7 @@ dependencies = [
 
 [[package]]
 name = "zim-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7439,7 +7439,7 @@ dependencies = [
 
 [[package]]
 name = "zim-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7600,7 +7600,7 @@ dependencies = [
 
 [[package]]
 name = "zim-peer"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",

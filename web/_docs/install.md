@@ -3,249 +3,103 @@ title: Install
 order: 3
 ---
 
-## System Requirements
+## Supported platforms
 
-### Operating systems
+Prebuilt binaries:
 
-- **Linux** — any modern distribution (Ubuntu 20.04+, Debian 11+, Fedora 35+, etc.)
-- **macOS** — 10.15 (Catalina) or later
-- **Windows** — Windows 10/11 with WSL2 (native Windows is experimental)
+| Platform | Standard | FUSE mounts |
+|----------|----------|-------------|
+| macOS (Apple Silicon) | ✓ | ✓ (requires [macFUSE](https://macfuse.github.io/)) |
+| Linux (x86_64) | ✓ | ✓ (requires libfuse3) |
 
-### System libraries
-
-#### Linux (Ubuntu/Debian)
-
-```bash
-sudo apt update
-sudo apt install build-essential pkg-config libssl-dev libsqlite3-dev
-```
-
-#### Linux (Fedora/RHEL)
-
-```bash
-sudo dnf install gcc pkg-config openssl-devel sqlite-devel
-```
-
-#### Linux (Gentoo)
-
-```bash
-emerge -av dev-lang/rust dev-libs/openssl dev-db/sqlite sys-fs/fuse:3
-```
-
-Ensure your kernel has FUSE support (`CONFIG_FUSE_FS=y` or `CONFIG_FUSE_FS=m`). If built as a module: `modprobe fuse`. Add your user to the `fuse` group:
-
-```bash
-gpasswd -a YOUR_USERNAME fuse
-```
-
-#### macOS
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-brew install openssl sqlite3
-```
-
-### Hardware
-
-- **Minimum:** 2 cores, 2 GB RAM, 500 MB disk + space for your encrypted data.
-- **Recommended:** 4+ cores, 4+ GB RAM, 10+ GB disk, stable internet for P2P sync.
+Anything else (Linux ARM, Intel Macs, WSL2): build from source below.
 
 ## Install
 
-### From crates.io
+One line, latest release:
 
 ```bash
-cargo install zim-peer
+curl -fsSL https://raw.githubusercontent.com/krondor-corp/zim/main/install.sh | sh
 ```
 
-This installs the `zim` binary to `~/.cargo/bin/`.
-
-### From git
+Variants:
 
 ```bash
-cargo install --git https://github.com/zim/zim zim-peer
+# with FUSE mount support
+curl -fsSL https://raw.githubusercontent.com/krondor-corp/zim/main/install.sh | sh -s -- --fuse
+
+# a specific version
+curl -fsSL https://raw.githubusercontent.com/krondor-corp/zim/main/install.sh | sh -s -- --version 0.1.0
 ```
+
+The script installs to `~/.local/bin` (override with `ZIM_INSTALL_DIR`) and tells you if that's missing from your `PATH`.
+
+### FUSE variant
+
+The `-fuse` builds let you mount vaults as regular folders (`zim mount`). They need the platform FUSE library installed first:
+
+- **macOS** — [macFUSE](https://macfuse.github.io/)
+- **Linux (Debian/Ubuntu)** — `sudo apt install fuse3`
+- **Linux (Fedora)** — `sudo dnf install fuse3`
+
+Everything except `zim mount` works identically in the standard build.
 
 ### From source
 
+Needs a Rust toolchain ([rustup.rs](https://rustup.rs)):
+
 ```bash
-git clone https://github.com/zim/zim.git
-cd zim
-cargo build --release
-cargo install --path crates/zim-peer
+cargo install --locked --git https://github.com/krondor-corp/zim zim
+
+# with FUSE support (needs libfuse3 / macFUSE headers)
+cargo install --locked --git https://github.com/krondor-corp/zim zim --features fuse
 ```
 
 ### Verify
 
 ```bash
-zim --help
+zim version
 ```
 
-If the command isn't found, ensure `~/.cargo/bin` (or `~/.local/bin`) is in your `PATH`:
+## Updates
+
+The CLI updates itself from GitHub releases:
 
 ```bash
-export PATH="$HOME/.cargo/bin:$PATH"
+zim update --check   # report what's available
+zim update           # download, swap the binary, restart the daemon service if installed
 ```
 
-## Initial Setup
+## Run the daemon as a service
 
-### 1. Initialize
+The daemon manages its own OS service registration — no unit files to write:
 
 ```bash
-zim init
+zim daemon service install    # register with launchd (macOS) / systemd (Linux)
+zim daemon service start
+zim daemon service status
 ```
 
-Creates the local state directory with:
+`stop` and `uninstall` undo it. Logs: `zim daemon logs`.
 
-- `config.toml` — daemon configuration
-- `secret.pem` — your Ed25519 identity keypair (back this up — anyone with this file can decrypt your buckets and impersonate you)
-- a SQLite database for bucket metadata
-- `blobs/` — directory for encrypted blob storage
-
-### 2. Start the daemon
+To run it in the foreground instead (debugging, containers):
 
 ```bash
-zim daemon
+zim daemon run
 ```
 
-The daemon starts the HTTP API, the local Web UI, and an iroh P2P endpoint. Keep it running while you use the CLI in another shell.
-
-### 3. (Optional) Configure
-
-The default `config.toml` works out of the box. To customize ports or paths:
-
-```toml
-[node]
-secret_key_path = "secret.pem"
-blobs_path = "blobs"
-bind_port = 0  # 0 = random ephemeral port
-
-[database]
-path = "db.sqlite"
-
-[http_server]
-api_addr = "127.0.0.1:3000"
-html_addr = "127.0.0.1:8080"
-```
-
-## Running as a Background Service
-
-### Linux (systemd)
-
-`~/.config/systemd/user/zim.service`:
-
-```ini
-[Unit]
-Description=Zim P2P Storage Daemon
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=%h/.cargo/bin/zim daemon
-Restart=on-failure
-RestartSec=5s
-
-[Install]
-WantedBy=default.target
-```
-
-```bash
-systemctl --user enable zim
-systemctl --user start zim
-journalctl --user -u zim -f
-```
-
-### macOS (launchd)
-
-`~/Library/LaunchAgents/com.zim.daemon.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key><string>com.zim.daemon</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/Users/YOUR_USERNAME/.cargo/bin/zim</string>
-        <string>daemon</string>
-    </array>
-    <key>RunAtLoad</key><true/>
-    <key>KeepAlive</key><true/>
-    <key>StandardOutPath</key><string>/tmp/zim.log</string>
-    <key>StandardErrorPath</key><string>/tmp/zim.err</string>
-</dict>
-</plist>
-```
-
-```bash
-launchctl load ~/Library/LaunchAgents/com.zim.daemon.plist
-```
-
-### Linux (OpenRC / Gentoo)
-
-`/etc/init.d/zim`:
-
-```bash
-#!/sbin/openrc-run
-
-description="Zim P2P Storage Daemon"
-command="/home/YOUR_USERNAME/.cargo/bin/zim"
-command_args="daemon"
-command_user="YOUR_USERNAME:YOUR_USERNAME"
-command_background=true
-pidfile="/run/${RC_SVCNAME}.pid"
-output_log="/var/log/${RC_SVCNAME}.log"
-error_log="/var/log/${RC_SVCNAME}.err"
-
-depend() {
-    need net
-    after firewall
-}
-```
-
-```bash
-chmod +x /etc/init.d/zim
-rc-update add zim default
-rc-service zim start
-```
+The daemon listens on `127.0.0.1:17171` — loopback only. Override the port in `config.toml` (`api_port`) or with `zim daemon run --port`.
 
 ## Troubleshooting
 
-### "Command not found: zim"
-
-Ensure `~/.cargo/bin` (or `~/.local/bin`) is in your `PATH`.
-
-### "Permission denied" on the secret key
+**`command not found: zim`** — add the install dir to your `PATH`:
 
 ```bash
-chmod 600 <state-dir>/secret.pem
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-### "Database is locked"
+**Daemon won't start / port in use** — something else holds `17171`. Change `api_port` in `~/.config/zim/config.toml`, or find the squatter: `lsof -i :17171`.
 
-Only one `zim daemon` instance can run at a time:
+**FUSE mount fails** — make sure the platform library is present (macFUSE on macOS, `fuse3` on Linux) *and* you installed a `--fuse` build: `zim version` should say so, and `zim mount add` will tell you when support isn't compiled in.
 
-```bash
-pkill -f "zim daemon"
-```
-
-### "Failed to bind address"
-
-The HTTP port is already in use. Change it in `config.toml` or stop the conflicting service.
-
-### FUSE: "Permission denied" or "Transport endpoint is not connected"
-
-Ensure the FUSE kernel module is loaded and your user is in the `fuse` group:
-
-```bash
-modprobe fuse
-gpasswd -a YOUR_USERNAME fuse
-# Log out and back in for the group change to take effect.
-```
-
-On Gentoo, verify your kernel includes `CONFIG_FUSE_FS=y` or `CONFIG_FUSE_FS=m`:
-
-```bash
-zgrep FUSE /proc/config.gz
-```
+**Fresh start** — your data lives in `~/.config/zim` (or `$ZIM_HOME`). Stop the daemon, move that directory aside, and `zim init` again. `identity.key` in that directory is your device identity — back it up before deleting anything.

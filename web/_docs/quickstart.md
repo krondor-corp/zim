@@ -3,15 +3,15 @@ title: Quickstart
 order: 2
 ---
 
-From a fresh shell to a running daemon with one bucket in four commands.
+From a fresh shell to an encrypted, syncable vault in four steps.
 
 ## 1. Install the CLI
 
 ```bash
-cargo install zim-peer
+curl -fsSL https://raw.githubusercontent.com/krondor-corp/zim/main/install.sh | sh
 ```
 
-This installs the `zim` binary. See [Install]({{ '/docs/install/' | relative_url }}) for system-package, source, and FUSE variants.
+See [Install]({{ '/docs/install/' | relative_url }}) for the FUSE variant, source builds, and updates.
 
 ## 2. Initialize this device
 
@@ -19,46 +19,45 @@ This installs the `zim` binary. See [Install]({{ '/docs/install/' | relative_url
 zim init
 ```
 
-This creates a local state directory with:
+This creates your data directory (`~/.config/zim` by default) with:
 
+- `identity.key` — your Ed25519 device identity (back it up; never share it)
 - `config.toml` — daemon configuration
-- `secret.pem` — your Ed25519 identity (back this up, do not commit it)
-- a SQLite database for bucket metadata
-- `blobs/` — encrypted blob storage
+- `blobs/` — the encrypted content store
+- `state/` — the vault log and daemon state
 
-The public half of `secret.pem` is your Node ID.
+The command prints your device's public key — that's how other devices and peers will know this one.
 
 ## 3. Start the daemon
 
 ```bash
-zim daemon
+zim daemon service install   # register with launchd / systemd
+zim daemon service start
 ```
 
-The daemon starts:
+(Or run it in the foreground with `zim daemon run`.) The daemon listens on `127.0.0.1:17171` — loopback only, nothing is exposed off-host. Every other CLI command talks to it over this API.
 
-- HTTP API on `http://localhost:3000`
-- Web UI on `http://localhost:8080`
-- An iroh P2P endpoint that joins the DHT
-
-Keep the daemon running. The CLI in another shell talks to the same daemon over the HTTP API.
-
-## 4. Create and populate a bucket
+## 4. Create and use a vault
 
 ```bash
-zim bucket create my-bucket
-zim bucket add my-bucket ./README.md
-zim bucket ls my-bucket
+zim vault create notes
+echo "first note" | zim vault add notes /hello.md
+zim vault ls notes /
+zim vault cat notes /hello.md
 ```
 
-The first command writes the genesis manifest (with your share encrypting the bucket secret). The second encrypts the file and appends a new manifest version. The third lists the bucket's root directory.
+`create` writes the vault's genesis manifest, with the vault secret sealed to your device key. `add` encrypts the content and advances the vault by one version. Every change is a new head in a signed chain — history stays reachable.
 
 ## What just happened
 
-- **Identity**: An Ed25519 keypair was generated locally. Its public half is your Node ID.
-- **Bucket secret**: A 256-bit ChaCha20-Poly1305 key was generated for `my-bucket`. It was wrapped with X25519 ECDH + AES-KW against your identity key and stored as your share inside the manifest.
-- **File**: `README.md` was encrypted with its own per-file secret. The ciphertext was stored as a content-addressed blob. The bucket's directory tree (also encrypted) was updated to reference the new blob.
-- **Manifest chain**: Each operation advances the bucket by one version. Old versions remain reachable; the chain is the audit trail.
+- **Identity** — an Ed25519 keypair generated locally; its public half identifies this device.
+- **Vault secret** — a fresh symmetric key for `notes`, sealed to your device with X25519. Only keyholders can read the vault; anyone can mirror its ciphertext.
+- **Content** — your file was encrypted and stored as a content-addressed blob; the (encrypted) directory tree references it.
+- **Chain** — each save signs a new manifest that links to the previous one.
 
 ## Next steps
 
-- [Install]({{ '/docs/install/' | relative_url }}) for platform-specific notes, FUSE setup, and running as a background service.
+- Share a vault with another device or person: `zim vault shares add <vault> <key>`
+- Mount a vault as a folder (FUSE builds): `zim mount add <vault> <path>`
+- Keep a hub copy and browse from the web: `zim hub login`
+- [Install]({{ '/docs/install/' | relative_url }}) for FUSE, updates, and service management.

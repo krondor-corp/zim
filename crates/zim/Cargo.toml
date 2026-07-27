@@ -1,7 +1,6 @@
 [package]
-name = "zim"
+name = "zim-cli"
 version = "0.1.0"
-publish = false
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -15,13 +14,15 @@ build = "build.rs"
 name = "zim"
 path = "src/lib.rs"
 
+# Package is `zim-cli` (bare `zim` is taken on crates.io) but the
+# installed binary is still `zim`.
 [[bin]]
 name = "zim"
 path = "src/main.rs"
 
 [features]
 # Off by default so the daemon builds without libfuse/macFUSE. Release builds
-# for end users turn it on: `cargo build -p zim --features fuse`.
+# for end users turn it on: `cargo build -p zim-cli --features fuse`.
 default = []
 fuse = ["dep:fuser", "dep:moka", "dep:libc"]
 # Hub integration: the `zim hub` subcommand + the typed hub client.

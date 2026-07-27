@@ -90,7 +90,7 @@ jobs:
             ${{ runner.os }}-${{ matrix.target }}-${{ matrix.fuse }}-cli-release-build-
 
       - name: Build release binary
-        run: cargo build --release --package zim --target ${{ matrix.target }} ${{ matrix.features }}
+        run: cargo build --release --package zim-cli --target ${{ matrix.target }} ${{ matrix.features }}
 
       - name: Get version
         id: version

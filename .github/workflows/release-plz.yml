@@ -43,30 +43,27 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: release-plz release
+        id: release
         uses: release-plz/action@v0.5
         with:
           command: release
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
 
+      # The tag can land on an older commit (release-plz tags the last
+      # commit touching the package, not HEAD), so detect the release
+      # from the action's own outputs rather than `git tag --points-at`.
       - name: Dispatch builders for the new tag
+        if: steps.release.outputs.releases_created == 'true'
         run: |
-          TAG=$(git tag --points-at HEAD 'zim-v*' | head -1)
-          if [ -z "$TAG" ]; then
-            # `git tag` only knows local tags; release-plz pushes via API.
-            git fetch --tags --quiet
-            TAG=$(git tag --points-at HEAD 'zim-v*' | head -1)
-          fi
-          if [ -n "$TAG" ]; then
-            VERSION="${TAG#zim-v}"
-            echo "released $TAG — dispatching release-cli + images"
-            gh workflow run release-cli.yml --ref "$TAG" -f version="$VERSION"
-            gh workflow run images.yml --ref "$TAG"
-          else
-            echo "no new release tag on this commit — nothing to dispatch"
-          fi
+          TAG=$(echo "$RELEASES" | jq -r '.[0].tag')
+          VERSION="${TAG#zim-v}"
+          echo "released $TAG — dispatching release-cli + images"
+          gh workflow run release-cli.yml --ref "$TAG" -f version="$VERSION"
+          gh workflow run images.yml --ref "$TAG"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASES: ${{ steps.release.outputs.releases }}
 
   # On every main push: create/refresh the standing release PR.
   release-pr:

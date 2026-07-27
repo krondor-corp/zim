@@ -1,0 +1,30 @@
+# Release train (release-plz). Trunk-based: every merge to main
+# refreshes a standing release PR (version bumps + changelogs from
+# conventional commits — fix→patch, feat→minor, breaking→major, 0.x
+# rules respected). Merging that PR IS the release: release-plz tags
+# and publishes the workspace to crates.io in dependency order.
+#
+# Tags are pushed with PAT_TOKEN (see release-plz.yml), so the zim-v*
+# tag natively triggers release-cli.yml (binaries + GitHub Release)
+# and images.yml (GHCR version tag). GitHub Releases stay owned by
+# release-cli.yml, so git_release is off here.
+
+[workspace]
+git_release_enable = false # release-cli.yml owns the GitHub Release
+dependencies_update = false
+
+# The binary crate: published as `zim-cli` (bare `zim` is taken on
+# crates.io), tagged zim-v* — the tag the whole release pipeline keys
+# on (release-cli.yml, images.yml, `zim update`, install.sh).
+[[package]]
+name = "zim-cli"
+git_tag_name = "zim-v{{ version }}"
+
+# Deployed continuously via GHCR — never versioned/released here.
+[[package]]
+name = "zim-hub"
+release = false
+
+[[package]]
+name = "zim-hub-wasm"
+release = false

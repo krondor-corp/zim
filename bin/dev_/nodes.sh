@@ -134,7 +134,7 @@ ensure_zim_built() {
     # only ever sees the function definitions, never this build line.
     echo -e "${BLUE}Building zim ${features:+($features) }...${NC}" >&2
     # shellcheck disable=SC2086
-    (cd "$PROJECT_ROOT" && cargo build -p zim $features --quiet) || {
+    (cd "$PROJECT_ROOT" && cargo build -p zim-cli $features --quiet) || {
         echo -e "${RED}cargo build failed${NC}" >&2
         exit 1
     }
@@ -258,7 +258,7 @@ cmd_run() {
         local header="${GREEN}=== $node on :$port ===${NC}"
 
         tmux send-keys -t "$TMUX_SESSION:0.$i" \
-            "cd $PROJECT_ROOT && printf '%b\n' '$header' && ZIM_HOME='$home' ZIM_LOG='\${ZIM_LOG:-zim=info,zim_peer=info}' cargo watch $watch_dirs -x 'run -p zim $features -- daemon run --port $port'" \
+            "cd $PROJECT_ROOT && printf '%b\n' '$header' && ZIM_HOME='$home' ZIM_LOG='\${ZIM_LOG:-zim=info,zim_peer=info}' cargo watch $watch_dirs -x 'run -p zim-cli $features -- daemon run --port $port'" \
             C-m
     done
 
@@ -329,7 +329,7 @@ cmd_cli() {
     local features
     features="$(zim_build_features)"
     # shellcheck disable=SC2086
-    (cd "$PROJECT_ROOT" && ZIM_HOME="$home" cargo run -p zim $features --quiet -- "$@")
+    (cd "$PROJECT_ROOT" && ZIM_HOME="$home" cargo run -p zim-cli $features --quiet -- "$@")
 }
 
 # Seed each node's $ZIM_HOME with a config.toml that pins its
@@ -366,7 +366,7 @@ cmd_shell() {
         local home=$(get_data_dir "$node")
         # `cargo run` so a bare `alice …` reflects current source (the node
         # watchers keep it built). Subshell `cd` so it works from any dir.
-        printf '%s() { ( cd %q && ZIM_HOME=%q cargo run -p zim %s --quiet -- "$@" ); }\n' \
+        printf '%s() { ( cd %q && ZIM_HOME=%q cargo run -p zim-cli %s --quiet -- "$@" ); }\n' \
             "$node" "$PROJECT_ROOT" "$home" "$features"
     done
 }

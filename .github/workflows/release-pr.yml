@@ -64,7 +64,7 @@ jobs:
         run: |
           # Check if any crates are unpublished on crates.io using the API
           UNPUBLISHED=""
-          for crate in zim-crypto zim-did zim-core zim-api zim-peer; do
+          for crate in zim-crypto zim-did zim-core zim-api zim-peer zim-cli; do
             HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "User-Agent: zim-release-workflow" "https://crates.io/api/v1/crates/$crate")
             if [ "$HTTP_STATUS" = "404" ]; then
               echo "Crate $crate is not published on crates.io"
@@ -83,7 +83,7 @@ jobs:
           fi
 
           # Get the latest release tag (top of the published lib stack)
-          LATEST_TAG=$(git describe --tags --abbrev=0 --match "zim-peer-v*" 2>/dev/null || echo "")
+          LATEST_TAG=$(git describe --tags --abbrev=0 --match "zim-v*" 2>/dev/null || echo "")
 
           if [ -z "$LATEST_TAG" ]; then
             echo "No previous release found, will create initial release"
@@ -104,20 +104,7 @@ jobs:
             exit 0
           fi
 
-          # Also check if the zim binary has unreleased changes
-          # (smart-release can't detect these: it's publish=false)
-          LATEST_ZIM_TAG=$(git describe --tags --abbrev=0 --match "zim-v*" 2>/dev/null || echo "")
-          if [ -n "$LATEST_ZIM_TAG" ]; then
-            ZIM_CHANGES=$(git diff --name-only "$LATEST_ZIM_TAG"..HEAD -- crates/zim/ | wc -l | tr -d ' ')
-            if [ "$ZIM_CHANGES" -gt 0 ]; then
-              echo "Found $ZIM_CHANGES zim binary file changes since $LATEST_ZIM_TAG"
-              echo "needs_release=true" >> $GITHUB_OUTPUT
-              echo "reason=new_commits" >> $GITHUB_OUTPUT
-              exit 0
-            fi
-          fi
-
-          echo "No conventional commits or zim binary changes - skipping release PR"
+          echo "No conventional commits - skipping release PR"
           echo "needs_release=false" >> $GITHUB_OUTPUT
 
       - name: Create/update release branch
@@ -139,9 +126,7 @@ jobs:
         run: |
           # Execute release: updates files, creates commits, but NO TAGS
           # Tags will be created by publish workflow after PR is merged
-          # Note: the zim binary is publish=false so smart-release can't
-          # handle it; it gets bumped in the next step instead.
-          if cargo smart-release zim-peer \
+          if cargo smart-release zim-cli \
             --execute \
             --no-publish \
             --no-tag \
@@ -152,59 +137,6 @@ jobs:
             echo "smart-release found no crate changes to release"
             echo "has_changes=false" >> $GITHUB_OUTPUT
           fi
-
-      - name: Bump zim binary version if needed
-        id: zim-bump
-        if: steps.check.outputs.needs_release == 'true' && steps.check.outputs.reason != 'unpublished_crates'
-        run: |
-          # The zim binary is publish=false (name taken on crates.io), so
-          # cargo smart-release skips it. Bump its patch version when its
-          # files changed OR the libs it embeds were bumped.
-          LATEST_ZIM_TAG=$(git describe --tags --abbrev=0 --match "zim-v*" 2>/dev/null || echo "")
-
-          NEEDS_BUMP=false
-          if [ -z "$LATEST_ZIM_TAG" ]; then
-            echo "No previous zim release tag — will bump"
-            NEEDS_BUMP=true
-          else
-            # Check for zim-specific changes
-            ZIM_CHANGES=$(git diff --name-only "$LATEST_ZIM_TAG"..HEAD -- crates/zim/ | wc -l | tr -d ' ')
-            echo "zim file changes since $LATEST_ZIM_TAG: $ZIM_CHANGES"
-
-            # Check if the lib stack was bumped (zim embeds it)
-            LIBS_BUMPED=false
-            if git log --oneline "$LATEST_ZIM_TAG"..HEAD | grep -q "Bump zim-peer\|Bump zim-core\|Bump zim-crypto\|Bump zim-did\|Bump zim-api"; then
-              LIBS_BUMPED=true
-            fi
-            echo "Libs bumped since last zim release: $LIBS_BUMPED"
-
-            if [ "$ZIM_CHANGES" -gt 0 ] || [ "$LIBS_BUMPED" = "true" ]; then
-              NEEDS_BUMP=true
-            fi
-          fi
-
-          if [ "$NEEDS_BUMP" = "false" ]; then
-            echo "No zim-relevant changes — skipping bump"
-            echo "bumped=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          # Read current version and bump patch
-          CURRENT=$(grep '^version' crates/zim/Cargo.toml | head -1 | cut -d'"' -f2)
-          MAJOR=$(echo "$CURRENT" | cut -d. -f1)
-          MINOR=$(echo "$CURRENT" | cut -d. -f2)
-          PATCH=$(echo "$CURRENT" | cut -d. -f3)
-          NEW_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
-          echo "Bumping zim $CURRENT -> $NEW_VERSION"
-
-          sed -i "s/^version = \"$CURRENT\"/version = \"$NEW_VERSION\"/" crates/zim/Cargo.toml
-
-          # Update Cargo.lock to reflect the new version
-          cargo generate-lockfile
-
-          git add crates/zim/Cargo.toml Cargo.lock
-          git commit -m "Bump zim v$NEW_VERSION"
-          echo "bumped=true" >> $GITHUB_OUTPUT
 
       - name: Create marker commit (for unpublished crates)
         id: unpublished
@@ -218,13 +150,13 @@ jobs:
           echo "has_changes=true" >> $GITHUB_OUTPUT
 
       - name: Push release branch
-        if: steps.check.outputs.needs_release == 'true' && (steps.smart-release.outputs.has_changes == 'true' || steps.unpublished.outputs.has_changes == 'true' || steps.zim-bump.outputs.bumped == 'true')
+        if: steps.check.outputs.needs_release == 'true' && (steps.smart-release.outputs.has_changes == 'true' || steps.unpublished.outputs.has_changes == 'true')
         run: |
           # Push branch (no tags to push)
           git push -u origin release-automation --force
 
       - name: Create or update PR
-        if: steps.check.outputs.needs_release == 'true' && (steps.smart-release.outputs.has_changes == 'true' || steps.unpublished.outputs.has_changes == 'true' || steps.zim-bump.outputs.bumped == 'true')
+        if: steps.check.outputs.needs_release == 'true' && (steps.smart-release.outputs.has_changes == 'true' || steps.unpublished.outputs.has_changes == 'true')
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
@@ -249,7 +181,7 @@ jobs:
           - zim-core v$CORE_VERSION
           - zim-api v$API_VERSION
           - zim-peer v$PEER_VERSION
-          - zim v$ZIM_VERSION (binary — GitHub Release, not crates.io)
+          - zim-cli v$ZIM_VERSION (installs the `zim` binary)
 
           ### What happens when merged:
           1. Tags will be created automatically

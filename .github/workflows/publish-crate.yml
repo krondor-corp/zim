@@ -5,7 +5,7 @@ name: Publish to crates.io
 # zim-v* tag is pushed with the PAT, so it natively triggers
 # release-cli.yml (binaries) and images.yml (GHCR) — then publishes
 # the lib stack to crates.io in dependency order. The zim binary is
-# publish=false (name taken on crates.io); its tag is its release.
+# published as `zim-cli` (bare `zim` is taken); the binary stays `zim`.
 
 on:
   push:
@@ -18,7 +18,7 @@ jobs:
     name: Publish Crates
     runs-on: ubuntu-latest
     # Run when release PR is merged (version bump or initial publish) OR manual trigger
-    if: "github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, 'Bump zim-') || contains(github.event.head_commit.message, 'Bump zim ') || contains(github.event.head_commit.message, 'chore: initial publish of zim-')"
+    if: "github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, 'Bump zim-') || contains(github.event.head_commit.message, 'chore: initial publish of zim-')"
 
     steps:
       - name: Checkout code
@@ -155,6 +155,20 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
+      - name: Wait for crates.io indexing (peer)
+        run: |
+          echo "Waiting 90 seconds for crates.io to index zim-peer..."
+          sleep 90
+
+      - name: Publish zim-cli
+        run: |
+          cd crates/zim
+          echo "Publishing zim-cli..."
+          cargo publish --token $CARGO_REGISTRY_TOKEN || echo "zim-cli publish failed or already published"
+          cd ../..
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
       - name: Summary
         run: |
           CRYPTO_VERSION=$(grep "^version" crates/zim-crypto/Cargo.toml | cut -d'"' -f2)
@@ -169,7 +183,7 @@ jobs:
           echo "   - zim-core v$CORE_VERSION"
           echo "   - zim-api v$API_VERSION"
           echo "   - zim-peer v$PEER_VERSION"
-          echo "   - zim v$ZIM_VERSION (binaries via zim-v$ZIM_VERSION tag)"
+          echo "   - zim-cli v$ZIM_VERSION (binaries via zim-v$ZIM_VERSION tag)"
           echo ""
           echo "Check crates.io:"
           echo "   - https://crates.io/crates/zim-crypto"
@@ -177,3 +191,4 @@ jobs:
           echo "   - https://crates.io/crates/zim-core"
           echo "   - https://crates.io/crates/zim-api"
           echo "   - https://crates.io/crates/zim-peer"
+          echo "   - https://crates.io/crates/zim-cli"

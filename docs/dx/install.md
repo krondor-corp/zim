@@ -3,7 +3,7 @@
 Two install modes:
 
 - **Release** — `cargo install`-style. One shot, slow build, fast runtime.
-- **Dev (recommended for hacking)** — symlinks `~/.cargo/bin/zim` to the debug build. Edit code, `cargo build -p zim`, run `zim ...` immediately. No reinstall step.
+- **Dev (recommended for hacking)** — symlinks `~/.cargo/bin/zim` to the debug build. Edit code, `cargo build -p zim-cli`, run `zim ...` immediately. No reinstall step.
 
 Both put `zim` in `~/.cargo/bin/`, so make sure that's on your `$PATH`.
 
@@ -123,7 +123,7 @@ Node config: `bin/dev_/nodes.toml`. Add more nodes by appending sections.
 
 ```bash
 # Dev install: just rebuild — symlink stays current.
-cargo build -p zim
+cargo build -p zim-cli
 
 # Release install: re-run installer with --force.
 make install

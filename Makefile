@@ -66,10 +66,10 @@ install: ## Install the `zim` binary into ~/.cargo/bin (release)
 	@echo "Run 'zim --help' to see all commands."
 
 # Debug installs are isolated: data dir ~/.config/zim/debug, DEBUG logs,
-# `zim clean` to wipe. Iterate with `cargo build -p zim`, re-run `zim`.
+# `zim clean` to wipe. Iterate with `cargo build -p zim-cli`, re-run `zim`.
 .PHONY: install-dev
 install-dev: ## Symlink ~/.cargo/bin/zim to the debug build (fast iteration)
-	cargo build -p zim
+	cargo build -p zim-cli
 	@bin="$${CARGO_HOME:-$$HOME/.cargo}/bin"; mkdir -p "$$bin"; \
 	 rm -f "$$bin/zim"; ln -s "$(CURDIR)/target/debug/zim" "$$bin/zim"; \
 	 echo "Installed (dev symlink): $$bin/zim -> target/debug/zim"

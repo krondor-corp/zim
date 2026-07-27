@@ -7376,7 +7376,26 @@ dependencies = [
 ]
 
 [[package]]
-name = "zim"
+name = "zim-api"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "chrono",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "url",
+ "web-time",
+ "zim-core",
+ "zim-crypto",
+ "zim-did",
+]
+
+[[package]]
+name = "zim-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -7415,25 +7434,6 @@ dependencies = [
  "zim-crypto",
  "zim-did",
  "zim-peer",
-]
-
-[[package]]
-name = "zim-api"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "base64",
- "chrono",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "url",
- "web-time",
- "zim-core",
- "zim-crypto",
- "zim-did",
 ]
 
 [[package]]

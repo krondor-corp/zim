@@ -24,9 +24,10 @@ use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, put};
 use axum::{body::Bytes, Json, Router};
-use serde::Serialize;
 use zim_core::blobs::BlobStore;
 use zim_core::linked_data::Hash;
+// Shared wire type — mirrored by `zim_api::hub::vault::PutBlobRequest`.
+use zim_api::hub::blob::WriteBlobResponse;
 
 use crate::http::auth::RequireUser;
 use crate::state::AppState;
@@ -45,17 +46,12 @@ pub fn router(state: AppState) -> Router<AppState> {
         .with_state(state)
 }
 
-#[derive(Debug, Serialize)]
-pub struct WriteBlobResponse {
-    pub hash: String,
-}
-
 async fn write(
     State(state): State<AppState>,
     RequireUser(_user): RequireUser,
     body: Bytes,
 ) -> Response {
-    let blobs = state.service.peer().coord().blobs();
+    let blobs = state.peer.coord().blobs();
     let len = body.len();
     match blobs.put(body.to_vec()).await {
         Ok(hash) => {
@@ -84,7 +80,7 @@ async fn read(
         Ok(h) => h,
         Err(_) => return (StatusCode::BAD_REQUEST, "invalid hash").into_response(),
     };
-    let blobs = state.service.peer().coord().blobs();
+    let blobs = state.peer.coord().blobs();
     match blobs.get(&hash).await {
         Ok(bytes) => (
             StatusCode::OK,

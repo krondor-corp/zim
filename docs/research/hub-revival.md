@@ -287,10 +287,10 @@ End-to-end demo:
 3. `zim vaults create demo && zim vault demo add hello.md`.
 4. `zim-hub` — hub up. Hub serves alice's DID doc back at `/u/alice/.well-known/did.json`.
 5. `zim vault demo relays add did:web:hub.example.com` — hub mirroring starts. Ciphertext lands in hub.
-6. Visit `localhost:8080`. Page detects no IndexedDB identity, offers "Set up browser" / "Restore".
+6. Visit `localhost:17190`. Page detects no IndexedDB identity, offers "Set up browser" / "Restore".
 7. Pick "Set up", choose passphrase, generate key, upload escrow. Page shows the `zim identity add-method <pubkey> --label laptop --purpose web` line.
 8. Run it on local daemon. Daemon updates alice's DID doc on the hub and re-saves the demo vault to include a SecretShare for `#browser-laptop`.
 9. Browser polls, detects its own pubkey in alice's DID doc, decrypts the demo vault. `hello.md` renders.
 10. Edit another file on local peer. Hub mirrors it within seconds. Browser refresh shows both.
 11. `/history` shows two rows with the right diff counts.
-12. Fresh browser profile. Visit `localhost:8080/restore`. Enter DID + passphrase. Restore succeeds, all vaults still accessible.
+12. Fresh browser profile. Visit `localhost:17190/restore`. Enter DID + passphrase. Restore succeeds, all vaults still accessible.

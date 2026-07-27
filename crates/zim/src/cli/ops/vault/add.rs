@@ -9,12 +9,12 @@ use zim_core::linked_data::Link;
 use crate::cli::op::Op;
 use crate::cli::ui;
 use crate::context::{ApiContext, ContextError};
-use crate::http_server::api::client::ApiError;
-use crate::http_server::api::v0::vault::add::AddRequest;
+use crate::daemon::api::client::ApiError;
+use crate::daemon::api::v0::vault::add::AddRequest;
 
 #[derive(Args, Debug, Clone)]
 pub struct Add {
-    #[arg(skip)]
+    /// Vault id or name.
     pub target: String,
     pub path: String,
 }

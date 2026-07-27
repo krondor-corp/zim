@@ -45,7 +45,7 @@ use tracing::{debug, error, info, trace, warn, Instrument};
 
 use super::database::BlobState;
 use super::store::ObjectStore;
-use zim_core::blobs::IROH_BLOCK_SIZE;
+use crate::blobs::IROH_BLOCK_SIZE;
 
 /// Result type for task operations
 enum TaskResult {

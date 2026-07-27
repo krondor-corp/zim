@@ -8,9 +8,9 @@ use std::sync::Arc;
 
 use zim_crypto::PublicKey;
 
-use zim_core::blobs::BlobsProvider;
 use zim_core::linked_data::{Hash, Link, LD_RAW_CODEC};
 use zim_core::vault::{Head, VaultId};
+use zim_peer::BlobsProvider;
 use zim_peer::{AcceptAll, AcceptPolicy, IncomingSync, MemoryVaultLog, VaultLog};
 
 use zim_peer::coordinator::{MemoryPeerSender, SentMessage};
@@ -61,8 +61,8 @@ async fn make_coordinator_with(
     let blobs = BlobsProvider::memory().await.unwrap();
     let log = MemoryVaultLog::new();
     let secret = zim_crypto::PrivateKey::generate();
-    let iroh_secret = zim_core::iroh::to_iroh_secret_key(&secret);
-    let endpoint = zim_core::iroh::Endpoint::builder()
+    let iroh_secret = zim_peer::iroh::to_iroh_secret_key(&secret);
+    let endpoint = zim_peer::iroh::Endpoint::builder()
         .secret_key(iroh_secret)
         .bind()
         .await

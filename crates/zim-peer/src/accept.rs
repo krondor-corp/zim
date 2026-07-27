@@ -40,6 +40,17 @@ pub struct IncomingSync {
 pub trait AcceptPolicy: Send + Sync + 'static {
     /// Accept this push? Returning `false` drops it silently.
     async fn accept_sync(&self, sync: &IncomingSync) -> bool;
+
+    /// Accept a raw blob-fetch connection from `sender`? This gates the
+    /// iroh-blobs ALPN itself — without it, anyone who can dial the
+    /// endpoint can fetch any blob this node holds by hash, bypassing
+    /// every higher-level check. Content is ciphertext either way; this
+    /// is resource/metadata access control, not encryption. Default
+    /// `true` (a policy that only cares about pushes keeps old
+    /// behaviour; `AcceptAll` stays accept-all).
+    async fn accept_blob(&self, _sender: &PublicKey) -> bool {
+        true
+    }
 }
 
 /// Accept every push. The default — right for a single-peer setup or a

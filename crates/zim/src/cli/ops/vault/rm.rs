@@ -6,12 +6,12 @@ use clap::Args;
 use crate::cli::op::Op;
 use crate::cli::ui;
 use crate::context::{ApiContext, ContextError};
-use crate::http_server::api::client::ApiError;
-use crate::http_server::api::v0::vault::rm::RmRequest;
+use crate::daemon::api::client::ApiError;
+use crate::daemon::api::v0::vault::rm::RmRequest;
 
 #[derive(Args, Debug, Clone)]
 pub struct Rm {
-    #[arg(skip)]
+    /// Vault id or name.
     pub target: String,
     pub path: String,
 }

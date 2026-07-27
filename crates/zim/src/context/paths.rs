@@ -21,7 +21,8 @@
 //! ├── config.toml      # AppConfig (api_port, log_level, …)
 //! ├── identity.key     # Ed25519 secret, hex-encoded
 //! ├── log.sqlite       # vault log + contacts book (SqliteVaultLog, SqlitePeerStore)
-//! ├── blobs/           # BlobsProvider::legacy_fs(...) store
+//! ├── blob-index.sqlite # SQLite index for the object-store blobs
+//! ├── blobs/           # object-store blob bodies (BlobsProvider::local)
 //! └── state/
 //!     └── daemon.log   # daemon process log (future)
 //! ```
@@ -100,6 +101,11 @@ pub fn log_file(home: &Path) -> PathBuf {
 
 pub fn blobs_dir(home: &Path) -> PathBuf {
     home.join("blobs")
+}
+
+/// SQLite index for the object-store blobs in [`blobs_dir`].
+pub fn blob_index_file(home: &Path) -> PathBuf {
+    home.join("blob-index.sqlite")
 }
 
 pub fn state_dir(home: &Path) -> PathBuf {

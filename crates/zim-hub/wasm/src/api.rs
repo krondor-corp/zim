@@ -22,9 +22,16 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 use wasm_bindgen::prelude::*;
 
-use zim_core::linked_data::{Hash, Link};
+// Shared wire types — the same definitions the hub server serializes.
+// This SDK keeps its own dispatch (`HubRequest`/`call`) for per-call JWT
+// auth + raw-bytes decodes, but the shapes live in `zim-api`.
+use zim_api::hub::blob::WriteBlobResponse;
+use zim_api::hub::resolver::HttpDidResolver;
+use zim_api::hub::vault::{HeadResponse, LogResponse, WriteHeadBody};
+use zim_core::linked_data::Hash;
 use zim_core::vault::VaultId;
 use zim_crypto::PublicKey;
+use zim_did::{Did, DidResolver};
 
 use crate::SESSION_KEY;
 
@@ -144,20 +151,20 @@ impl HubRequest for PutBlob {
     }
 }
 
-/// `GET /api/v0/v/{id}/head` — current canonical head + height.
+/// `GET /api/v0/vaults/{id}/head` — current canonical head + height.
 pub(crate) struct GetHead(pub VaultId);
 impl HubRequest for GetHead {
     type Response = HeadResponse;
     const AUTH: Auth = Auth::Bearer;
     fn build_request(self, base: &Url, client: &Client) -> RequestBuilder {
-        client.get(route(base, &format!("/api/v0/v/{}/head", self.0)))
+        client.get(route(base, &format!("/api/v0/vaults/{}/head", self.0)))
     }
     fn decode(bytes: Bytes) -> Result<HeadResponse, String> {
         from_json(bytes)
     }
 }
 
-/// `POST /api/v0/v/{id}/head` — advance the head to a new manifest.
+/// `POST /api/v0/vaults/{id}/head` — advance the head to a new manifest.
 pub(crate) struct PostHead {
     pub id: VaultId,
     pub manifest_hash: String,
@@ -167,8 +174,8 @@ impl HubRequest for PostHead {
     const AUTH: Auth = Auth::Bearer;
     fn build_request(self, base: &Url, client: &Client) -> RequestBuilder {
         client
-            .post(route(base, &format!("/api/v0/v/{}/head", self.id)))
-            .json(&WriteHeadRequest {
+            .post(route(base, &format!("/api/v0/vaults/{}/head", self.id)))
+            .json(&WriteHeadBody {
                 manifest_hash: self.manifest_hash,
             })
     }
@@ -177,7 +184,7 @@ impl HubRequest for PostHead {
     }
 }
 
-/// `GET /api/v0/v/{id}/log?from=&limit=` — paginated chain walk.
+/// `GET /api/v0/vaults/{id}/log?from=&limit=` — paginated chain walk.
 pub(crate) struct GetLog {
     pub id: VaultId,
     pub from: u64,
@@ -190,7 +197,7 @@ impl HubRequest for GetLog {
         client.get(route(
             base,
             &format!(
-                "/api/v0/v/{}/log?from={}&limit={}",
+                "/api/v0/vaults/{}/log?from={}&limit={}",
                 self.id, self.from, self.limit
             ),
         ))
@@ -257,52 +264,41 @@ impl HubRequest for SelfEnroll {
     }
 }
 
-/// `GET /u/{user_id}/did.json` — the user's did:web document (public; lists
-/// every enrolled key). Cookie auth is harmless on a public route.
-struct GetUserDid {
-    user_id: String,
-}
-impl HubRequest for GetUserDid {
-    type Response = DidDoc;
-    const AUTH: Auth = Auth::Cookie;
-    fn build_request(self, base: &Url, client: &Client) -> RequestBuilder {
-        client.get(route(base, &format!("/u/{}/did.json", self.user_id)))
-    }
-    fn decode(bytes: Bytes) -> Result<DidDoc, String> {
-        from_json(bytes)
-    }
+// ---------------------------------------------------------------------------
+// DID resolution — the SAME `HttpDidResolver` the daemons use
+// (`zim_api::hub::resolver`), not a hand-rolled fetch. The resolver goes
+// DID → URL itself (`did_web_url`), so we first spell the hub's base URL
+// as its `did:web` (port colon percent-encoded per the did:web spec).
+// ---------------------------------------------------------------------------
+
+/// The hub's `did:web:<host>[%3A<port>]` for `base`.
+fn base_did(base: &Url) -> Result<String, String> {
+    let host = base.host_str().ok_or("hub base URL has no host")?;
+    Ok(match base.port() {
+        Some(p) => format!("did:web:{host}%3A{p}"),
+        None => format!("did:web:{host}"),
+    })
 }
 
-#[derive(Deserialize)]
-struct DidDoc {
-    #[serde(rename = "verificationMethod")]
-    verification_method: Vec<DidVerificationMethod>,
-}
-
-#[derive(Deserialize)]
-struct DidVerificationMethod {
-    #[serde(rename = "publicKeyMultibase")]
-    public_key_multibase: String,
+/// A resolver for `base` — `allow_http` mirrors the page's own scheme so a
+/// dev hub on `http://127.0.0.1:8080` resolves without TLS.
+fn resolver_for(base: &Url) -> HttpDidResolver {
+    HttpDidResolver::new().with_allow_http(base.scheme() == "http")
 }
 
 /// Resolve a user's did:web document to the full set of pubkeys enrolled to
-/// them (web key + daemons) — used to seal a new vault to every device. The
-/// `publicKeyMultibase` values are `did:key` `z…` identifiers.
+/// them (web key + daemons) — used to seal a new vault to every device.
 pub(crate) async fn resolve_user_keys(base: &Url, user_id: &str) -> Result<Vec<PublicKey>, String> {
-    let client = Client::new();
-    let doc = call(
-        base,
-        &client,
-        GetUserDid {
-            user_id: user_id.to_string(),
-        },
-    )
-    .await?;
+    let did = Did::parse(&format!("{}:u:{user_id}", base_did(base)?)).map_err(|e| e.to_string())?;
+    let doc = resolver_for(base)
+        .resolve(&did)
+        .await
+        .map_err(|e| e.to_string())?;
     let total = doc.verification_method.len();
     let keys: Vec<PublicKey> = doc
         .verification_method
         .into_iter()
-        .filter_map(|vm| zim_did::did_key_decode(&vm.public_key_multibase).ok())
+        .filter_map(|vm| vm.pubkey().ok())
         .collect();
     web_sys::console::log_1(
         &format!(
@@ -314,33 +310,15 @@ pub(crate) async fn resolve_user_keys(base: &Url, user_id: &str) -> Result<Vec<P
     Ok(keys)
 }
 
-/// `GET /.well-known/did.json` — the hub's own did:web document. Its single
-/// verification method is the hub's iroh pubkey: the network identity peers
-/// dial it on. A browser key is reachable only *through* the hub, so a vault
-/// a browser creates seals its owner share with this key as the dial host.
-struct GetHubDid;
-impl HubRequest for GetHubDid {
-    type Response = DidDoc;
-    const AUTH: Auth = Auth::Cookie;
-    fn build_request(self, base: &Url, client: &Client) -> RequestBuilder {
-        client.get(route(base, "/.well-known/did.json"))
-    }
-    fn decode(bytes: Bytes) -> Result<DidDoc, String> {
-        from_json(bytes)
-    }
-}
-
-/// Resolve the hub's own iroh pubkey from `/.well-known/did.json`. This is the
+/// Resolve the hub's own iroh pubkey from its did:web document. This is the
 /// `via` host a browser-owned vault stamps on its owner share so a peer
 /// advancing the vault dials the hub (which mirrors the head) rather than
 /// trying — and failing — to dial the browser directly.
 pub(crate) async fn resolve_hub_key(base: &Url) -> Result<PublicKey, String> {
-    let client = Client::new();
-    let doc = call(base, &client, GetHubDid).await?;
-    doc.verification_method
-        .into_iter()
-        .find_map(|vm| zim_did::did_key_decode(&vm.public_key_multibase).ok())
-        .ok_or_else(|| "hub did.json had no decodable verification method".to_string())
+    let did = Did::parse(&base_did(base)?).map_err(|e| e.to_string())?;
+    zim_did::resolve_pubkey(&did, &resolver_for(base))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// `GET /api/v0/escrow/list` — this user's escrowed key fragments.
@@ -376,37 +354,6 @@ impl HubRequest for GetEscrow {
 // ---------------------------------------------------------------------------
 // Wire types. Mirror the axum handlers' request/response structs.
 // ---------------------------------------------------------------------------
-
-/// `api::v0::blob::WriteBlobResponse`.
-#[derive(Deserialize)]
-pub(crate) struct WriteBlobResponse {
-    pub hash: String,
-}
-
-/// `api::v0::vault::head::HeadResponse`.
-#[derive(Deserialize)]
-pub(crate) struct HeadResponse {
-    pub link: Link,
-    pub height: u64,
-}
-
-/// `api::v0::vault::log::LogResponse`.
-#[derive(Deserialize)]
-pub(crate) struct LogResponse {
-    pub entries: Vec<LogEntry>,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct LogEntry {
-    pub height: u64,
-    pub link: Link,
-}
-
-/// `api::v0::vault::write_head::WriteHeadRequest`.
-#[derive(Serialize)]
-struct WriteHeadRequest {
-    manifest_hash: String,
-}
 
 /// `api::v0::devices::ChallengeResponse`.
 #[derive(Deserialize)]

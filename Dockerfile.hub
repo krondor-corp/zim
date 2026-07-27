@@ -1,0 +1,36 @@
+# zim-hub production image. Built by zim-iac's Kamal config with this
+# repo as context (see zim-iac/config/deploy/hub.yml).
+#
+# Two-stage: trunk builds the Yew SPA into crates/zim-hub/web/dist
+# (rust_embed compiles it into the binary), then cargo builds zim-hub.
+# Trunk runs FIRST and standalone — it shells out to cargo and would
+# deadlock inside a parent cargo invocation (see crates/zim-hub/build.rs).
+
+FROM rust:1-bookworm AS builder
+
+# wasm target for the SPA + prebuilt trunk (compiling trunk from
+# source costs ~10 minutes; the release binary costs seconds).
+RUN rustup target add wasm32-unknown-unknown \
+    && ARCH="$(uname -m)" \
+    && curl -fsSL "https://github.com/trunk-rs/trunk/releases/latest/download/trunk-${ARCH}-unknown-linux-gnu.tar.gz" \
+       | tar -xz -C /usr/local/bin trunk
+
+WORKDIR /src
+COPY . .
+
+RUN cd crates/zim-hub/web && trunk build --release
+RUN cargo build --release -p zim-hub
+
+FROM debian:bookworm-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /src/target/release/zim-hub /usr/local/bin/zim-hub
+
+# All hub state (SQLite log + blob index, identity key, hub-config.toml
+# incl. the generated service secret) lives here — must be a volume.
+ENV ZIM_HUB_HOME=/data
+VOLUME /data
+
+EXPOSE 8080
+ENTRYPOINT ["zim-hub"]

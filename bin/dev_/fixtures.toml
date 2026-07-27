@@ -1,0 +1,229 @@
+# Fixtures — initial data set up in the dev environment.
+#
+# Applied by `./bin/dev seed` (after peer plumbing) or directly with
+# `./bin/dev fixtures apply`. List without applying: `./bin/dev fixtures list`.
+#
+# Fixtures are applied in order. Each fixture type:
+#   vault        - Create a vault
+#   file         - Write a file into a vault (inline content or source= path)
+#   dir          - Create a directory in a vault
+#   share        - Share a vault with a peer (peer = node nick)
+#   mv           - Move/rename a file or directory in a vault
+#   vault_read   - Read a vault path via the CLI (optionally verify content)
+#   mount        - Mount a vault via FUSE
+#   mount_verify - Verify the FUSE mount is accessible
+#   unmount      - Unmount a FUSE-mounted vault
+#   fuse_ls      - List a directory on a FUSE mount
+#   fuse_read    - Read a file on a FUSE mount (optionally verify content)
+#   fuse_write   - Write a file on a FUSE mount
+#   fuse_mv      - Move/rename a file within a FUSE mount
+#   fuse_mv_in   - Move a file from outside into a FUSE mount
+#   fuse_mv_out  - Move a file from a FUSE mount to outside
+#   fuse_rm      - Delete a file on a FUSE mount
+#
+# `node` defaults to the first node in nodes.toml (alice). FUSE fixtures
+# auto-skip (not fail) when FUSE is unavailable — see `./bin/dev fuse-check`.
+# Relative mount_point paths resolve against the repo's data/ dir.
+
+# =============================================================================
+# ALICE: create and populate vaults
+# =============================================================================
+
+[[fixture]]
+type = "vault"
+name = "demo"
+node = "alice"
+
+[[fixture]]
+type = "file"
+vault = "demo"
+path = "/readme.md"
+content = "hello from alice\n"
+node = "alice"
+
+[[fixture]]
+type = "dir"
+vault = "demo"
+path = "/docs"
+node = "alice"
+
+[[fixture]]
+type = "file"
+vault = "demo"
+path = "/docs/guide.md"
+content = """# Demo Vault
+
+Seeded by the fixture system (`bin/dev_/fixtures.toml`).
+
+## Files
+- `/readme.md` - A simple greeting
+- `/docs/guide.md` - This file
+
+## Sharing
+Shared with every other dev node (bob) as a direct `did:key` share.
+"""
+node = "alice"
+
+[[fixture]]
+type = "vault"
+name = "notes"
+node = "alice"
+
+[[fixture]]
+type = "file"
+vault = "notes"
+path = "/index.md"
+content = "# notes\n\nseeded by fixtures\n"
+node = "alice"
+
+# =============================================================================
+# SHARE + MODIFY
+# =============================================================================
+
+[[fixture]]
+type = "share"
+vault = "demo"
+peer = "bob"
+node = "alice"
+
+# Exercise a rename after the share so bob's first sync sees a chain,
+# not just genesis.
+[[fixture]]
+type = "mv"
+vault = "demo"
+from = "/docs/guide.md"
+to = "/guide.md"
+node = "alice"
+
+[[fixture]]
+type = "vault_read"
+vault = "demo"
+path = "/guide.md"
+node = "alice"
+
+# =============================================================================
+# FUSE MOUNT TEST (auto-skips when FUSE is unavailable)
+# =============================================================================
+
+[[fixture]]
+type = "mount"
+vault = "demo"
+mount_point = "mnt-demo"
+node = "alice"
+
+[[fixture]]
+type = "mount_verify"
+mount_point = "mnt-demo"
+
+[[fixture]]
+type = "fuse_ls"
+mount_point = "mnt-demo"
+path = "docs"
+
+[[fixture]]
+type = "fuse_read"
+mount_point = "mnt-demo"
+path = "readme.md"
+content = "hello from alice"
+
+# Write through the mount…
+[[fixture]]
+type = "fuse_write"
+mount_point = "mnt-demo"
+path = ".fuse-test.txt"
+content = "hello from fuse"
+
+# …and cross-check it committed to the encrypted vault (API↔FUSE
+# coherence: the CLI read must route through the mount's writer).
+[[fixture]]
+type = "vault_read"
+vault = "demo"
+path = "/.fuse-test.txt"
+content = "hello from fuse"
+node = "alice"
+
+# --- Move within mount (regression: create-then-rename must not ENOENT) ---
+[[fixture]]
+type = "fuse_mv"
+mount_point = "mnt-demo"
+from = ".fuse-test.txt"
+to = ".fuse-test-renamed.txt"
+
+[[fixture]]
+type = "fuse_read"
+mount_point = "mnt-demo"
+path = ".fuse-test-renamed.txt"
+content = "hello from fuse"
+
+# --- Move into mount (external file → FUSE mount) ---
+[[fixture]]
+type = "fuse_mv_in"
+mount_point = "mnt-demo"
+path = ".fuse-test-from-outside.txt"
+content = "moved in from outside"
+
+[[fixture]]
+type = "fuse_read"
+mount_point = "mnt-demo"
+path = ".fuse-test-from-outside.txt"
+content = "moved in from outside"
+
+# --- Move out of mount (FUSE mount → external path) ---
+[[fixture]]
+type = "fuse_mv_out"
+mount_point = "mnt-demo"
+path = ".fuse-test-from-outside.txt"
+
+# Overwrite + verify.
+[[fixture]]
+type = "fuse_write"
+mount_point = "mnt-demo"
+path = ".fuse-test-renamed.txt"
+content = "overwritten"
+
+[[fixture]]
+type = "fuse_read"
+mount_point = "mnt-demo"
+path = ".fuse-test-renamed.txt"
+content = "overwritten"
+
+# Clean up.
+[[fixture]]
+type = "fuse_rm"
+mount_point = "mnt-demo"
+path = ".fuse-test-renamed.txt"
+
+[[fixture]]
+type = "unmount"
+vault = "demo"
+node = "alice"
+
+# =============================================================================
+# EXPECTED END STATE
+# =============================================================================
+#
+# After all fixtures apply successfully:
+#
+# Vault "demo" structure (on alice; bob converges after sync):
+#   /readme.md      ("hello from alice")
+#   /guide.md       (moved from /docs/guide.md)
+#   /docs/          (now empty)
+#
+# Vault "notes" (alice only — not shared):
+#   /index.md
+#
+# Node visibility:
+#   - alice (API :17172): owns demo + notes
+#   - bob   (API :17173): sees demo via its share after sync (seconds to
+#     ~a minute; the reconcile sweep retries announces)
+#
+# FUSE (if available):
+#   - demo mounts at data/mnt-demo on alice, runs the declarative fuse_*
+#     ops above (write-through cross-checked against `vault cat`), unmounts
+#   - if unavailable, those fixtures report as skipped — NOT a failure
+#
+# Verify with:
+#   ./bin/dev cli bob vault list
+#   ./bin/dev cli bob vault cat demo /readme.md
+#   ./bin/dev cli bob vault cat demo /guide.md
+#   ./bin/dev fuse-check

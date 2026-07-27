@@ -7,18 +7,11 @@ members = [
     "crates/zim-crypto",
     "crates/zim-did",
     "crates/zim-hub",
-    "crates/zim-runtime",
     "crates/zim-peer",
-    "crates/zim-fuse",
     "crates/zim-hub/wasm",
 ]
 
-# Shelved (broken from upstream type changes, kept on disk for
-# reference): crates/_zim-protocol, crates/_zim-peer.
-# Rebuild atop zim-core / zim-peer when ready.
 exclude = [
-    "crates/_zim-protocol",
-    "crates/_zim-peer",
     # wasm32-only Yew app, built by Trunk (not the host `cargo build --workspace`).
     "crates/zim-hub/web",
 ]
@@ -71,6 +64,8 @@ reqwest = { version = "0.12", default-features = false, features = [
     "multipart",
 ] }
 url = { version = "2.5", features = ["serde"] }
+# Already in-tree via serde_ipld_dagcbor → ipld-core → cid; direct dep for did:key.
+multibase = "0.9"
 
 # Logging/tracing
 tracing = "0.1"
@@ -92,7 +87,7 @@ cid = { version = "0.11", features = ["serde"] }
 ipld-core = { version = "0.4", features = ["serde"] }
 serde_ipld_dagcbor = "0.6"
 
-# WASM (for crates/zim-wasm)
+# WASM (for crates/zim-hub/wasm)
 wasm-bindgen = "0.2"
 js-sys = "0.3"
 console_error_panic_hook = "0.1"

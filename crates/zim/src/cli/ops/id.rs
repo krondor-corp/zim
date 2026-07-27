@@ -8,8 +8,8 @@ use clap::Args;
 use crate::cli::op::Op;
 use crate::cli::ui;
 use crate::context::{ApiContext, ContextError};
-use crate::http_server::api::client::ApiError;
-use crate::http_server::health::identity::IdentityRequest;
+use crate::daemon::api::client::ApiError;
+use crate::daemon::health::identity::IdentityRequest;
 
 #[derive(Args, Debug, Clone)]
 pub struct Id;

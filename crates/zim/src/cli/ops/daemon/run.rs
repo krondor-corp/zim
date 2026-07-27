@@ -2,8 +2,11 @@
 //!
 //! This is the daemon process itself; service-manager commands
 //! (install/start/stop/...) just wrap it. Doesn't go through
-//! `ApiClient`; boots a `ServiceState`, builds the axum router, and
-//! serves until SIGINT/SIGTERM.
+//! `ApiClient`; boots a `ServiceState` and supervises the HTTP server
+//! and peer via [`zim_peer::ShutdownHandle`] — the same idiom the hub
+//! uses. A service that exits before the shutdown signal (e.g. the
+//! peer's effect runner dying) trips a loud exit(2), so the service
+//! manager restarts us instead of running half-dead.
 
 use std::fmt;
 use std::net::SocketAddr;
@@ -13,8 +16,8 @@ use clap::Args;
 
 use crate::cli::op::Op;
 use crate::context::{ContextError, DaemonContext};
-use crate::http_server::{self, Config};
-use crate::service_state::{ServiceState, StateError};
+use crate::daemon::state::{ServiceState, StateError};
+use crate::daemon::Config;
 
 #[derive(Args, Debug, Clone)]
 pub struct Run {
@@ -37,7 +40,7 @@ pub enum RunError {
     #[error(transparent)]
     State(#[from] StateError),
     #[error(transparent)]
-    Server(#[from] http_server::HttpServerError),
+    Server(#[from] crate::daemon::HttpServerError),
     #[error("invalid bind: {0}")]
     BadBind(String),
 }
@@ -67,39 +70,27 @@ impl Op for Run {
 
         let config = Config::new(addr);
 
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(());
-        let server_task = tokio::spawn(http_server::run_api(
-            config,
-            state.clone(),
-            shutdown_rx.clone(),
-        ));
-        let peer = state.peer().clone();
-        let peer_task = peer.spawn(shutdown_rx);
+        let (mut handle, shutdown_rx) = zim_peer::ShutdownHandle::new();
+        let http_state = state.clone();
+        let http_rx = shutdown_rx.clone();
+        handle.push(
+            "http",
+            tokio::spawn(async move {
+                if let Err(e) = crate::daemon::run_api(config, http_state, http_rx).await {
+                    tracing::error!("http server error: {e}");
+                }
+            }),
+        );
+        handle.push("peer", state.peer().spawn(shutdown_rx));
 
-        wait_for_signal().await;
-        let _ = shutdown_tx.send(());
+        handle.wait().await;
 
-        let _ = server_task.await;
-        let _ = peer_task.await;
+        // Spin mounts down with the daemon — a dead mount is worse than
+        // no mount (Finder shows a ghost volume; IO hangs).
+        #[cfg(feature = "fuse")]
+        state.mounts().stop_all();
 
         Ok(RunOutput {})
-    }
-}
-
-async fn wait_for_signal() {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{signal, SignalKind};
-        let mut sigint = signal(SignalKind::interrupt()).expect("install SIGINT");
-        let mut sigterm = signal(SignalKind::terminate()).expect("install SIGTERM");
-        tokio::select! {
-            _ = sigint.recv() => {}
-            _ = sigterm.recv() => {}
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = tokio::signal::ctrl_c().await;
     }
 }
 

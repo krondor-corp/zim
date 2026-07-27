@@ -89,7 +89,7 @@ fn banner(config: &Config) {
     tracing::info!("");
     tracing::info!("To mirror a vault on this hub, run on the owning peer:");
     tracing::info!("  zim peers add hub {did}");
-    tracing::info!("  zim vault <vault-id> relays add hub");
+    tracing::info!("  zim vault shares add <vault-id> <your did:web account>");
     tracing::info!("");
 }
 
@@ -163,7 +163,7 @@ async fn main() {
         Some(s3) => {
             tracing::info!("  blobs    s3 {} bucket={}", s3.endpoint, s3.bucket);
             let index_path = config.data_dir.join("blob-index.sqlite");
-            match zim_peer::object_store::s3_provider(
+            match zim_peer::BlobsProvider::s3(
                 &index_path,
                 &s3.endpoint,
                 &s3.access_key,
@@ -182,7 +182,12 @@ async fn main() {
         }
         None => {
             tracing::info!("  blobs    local fs (set ZIM_HUB_S3_* for object storage)");
-            match zim_core::blobs::BlobsProvider::legacy_fs(&config.data_dir.join("blobs")).await {
+            match zim_peer::BlobsProvider::local(
+                &config.data_dir.join("blob-index.sqlite"),
+                &config.data_dir.join("blobs"),
+            )
+            .await
+            {
                 Ok(b) => b,
                 Err(e) => {
                     tracing::error!("failed to open local blob store: {e}");
@@ -192,24 +197,22 @@ async fn main() {
         }
     };
 
-    let service =
-        match zim::ServiceState::boot_with_blobs(&config.data_dir, blobs, Some(accept)).await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!("failed to boot embedded peer: {e}");
-                std::process::exit(3);
-            }
-        };
+    let peer = match zim_hub::peer::boot(&config.data_dir, blobs, accept).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("failed to boot embedded peer: {e}");
+            std::process::exit(3);
+        }
+    };
 
     banner(&config);
 
-    let app_state = AppState::new(&config, service.clone(), db);
+    let app_state = AppState::new(&config, peer.clone(), db);
 
     let (mut handle, shutdown_rx) = ShutdownHandle::new();
 
-    // The embedded peer's sync loop runs as its own task. ServiceState
-    // is clone-cheap (Peer is Arc-wrapped internally).
-    let peer = service.peer().clone();
+    // The embedded peer's sync loop runs as its own task (Peer is
+    // Arc-wrapped, clone-cheap).
     let peer_task = peer.spawn(shutdown_rx.clone());
     handle.push("peer", peer_task);
 

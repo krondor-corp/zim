@@ -1,6 +1,6 @@
 //! Build script: ensure the SPA dist dir exists at compile time.
 //!
-//! The Yew SPA is built by Trunk (`bin/build-web`, run from `bin/hub` /
+//! The Yew SPA is built by Trunk (`make build-web`, run from the dev harness /
 //! `make hub` / `./bin/dev hub`) into `web/dist/`, which `http::spa` embeds
 //! via `rust_embed`. We don't shell out to trunk here: trunk is a nested
 //! `cargo` invocation under the parent build and deadlocks on lock
@@ -21,7 +21,7 @@ fn main() {
         .unwrap_or(true);
     if empty {
         println!(
-            "cargo:warning=web/dist is empty — run ./bin/build-web (or use ./bin/hub / make hub)"
+            "cargo:warning=web/dist is empty — run `make build-web` (or `make hub` / `./bin/dev hub up`)"
         );
     }
 }

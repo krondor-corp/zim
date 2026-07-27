@@ -74,7 +74,7 @@ jobs:
           fi
 
           # Get the latest release tag
-          LATEST_TAG=$(git describe --tags --abbrev=0 --match "zim-peer-v*" 2>/dev/null || echo "")
+          LATEST_TAG=$(git describe --tags --abbrev=0 --match "zim-v*" 2>/dev/null || echo "")
 
           if [ -z "$LATEST_TAG" ]; then
             echo "No previous release found, will create initial release"

@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Zim core: shared primitives, filesystem, storage, content-addressing, iroh abstraction layer"
+description = "Zim core: the vault data model — filesystem, content store, linked data. Iroh-free, wasm-clean."
 keywords.workspace = true
 categories.workspace = true
 
@@ -13,45 +13,17 @@ categories.workspace = true
 name = "zim_core"
 path = "src/lib.rs"
 
-[features]
-# default = native: pulls in iroh, iroh-blobs, and the full blob-provider stack.
-# WASM targets build with --no-default-features to get just the FS/crypto layer.
-default = ["native"]
-native = [
-    "dep:iroh",
-    "dep:iroh-blobs",
-    "dep:irpc",
-    "dep:bao-tree",
-    "dep:range-collections",
-    "dep:n0-future",
-    "dep:tokio",
-    "dep:parking_lot",
-    "dep:flume",
-]
-
 [dependencies]
 zim-crypto = { path = "../zim-crypto", version = "0.1.0" }
-# Only the `Identity` type is used here — drop the reqwest/tokio HTTP
-# resolver so the wasm FS/crypto layer stays free of native transports.
-# The daemon crates depend on zim-did directly to get the resolver back.
-zim-did = { path = "../zim-did", version = "0.1.0", default-features = false }
+# `Did` in shares/entries. zim-did is pure (types + codec + resolver
+# trait); the HTTP resolver lives in zim-api.
+zim-did = { path = "../zim-did", version = "0.1.0" }
 futures = { workspace = true }
 
 # Core (always present)
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 async-trait = "0.1"
-
-# Native-only (iroh networking stack)
-tokio = { workspace = true, optional = true }
-parking_lot = { workspace = true, optional = true }
-flume = { version = "0.11", optional = true }
-iroh = { workspace = true, optional = true }
-iroh-blobs = { workspace = true, optional = true }
-irpc = { version = "0.9.0", features = ["rpc", "stream", "derive"], default-features = false, optional = true }
-bao-tree = { version = "0.15.1", features = ["experimental-mixed", "serde"], default-features = false, optional = true }
-range-collections = { version = "0.4.6", features = ["serde"], optional = true }
-n0-future = { version = "0.2.0", optional = true }
 
 # Serialization (always)
 serde = { workspace = true }
@@ -89,6 +61,7 @@ ref-cast = "1.0"
 derive_more = { version = "2.0", features = ["from"] }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
 tempfile = { workspace = true }
 serde_json = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

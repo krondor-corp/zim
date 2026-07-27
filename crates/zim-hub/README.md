@@ -16,7 +16,7 @@ See [`docs/research/hub-revival.md`](../../docs/research/hub-revival.md) for the
 
 ## Status
 
-Phase 1 (mechanical revival): crate moved into the workspace, deps swapped against the current `zim` lib surface, obsolete OAuth scaffolding deleted. Ciphertext-serving HTTP endpoints (`/api/v0/v/{id}/{head,log,blob/...}`) are wired but blocked on the in-flight DID refactor in `zim-core` / `zim-vault`.
+Phase 1 (mechanical revival): crate moved into the workspace, deps swapped against the current `zim` lib surface, obsolete OAuth scaffolding deleted. Ciphertext-serving HTTP endpoints (`/api/v0/vaults/{id}/{head,log,blob/...}`) are wired but blocked on the in-flight DID refactor in `zim-core` / `zim-vault`.
 
 Phase 2 onward (sync verification, DID hosting, escrow service, browse + history UI) lives behind the DID infrastructure landing.
 
@@ -26,10 +26,10 @@ Phase 2 onward (sync verification, DID hosting, escrow service, browse + history
 make hub
 ```
 
-Starts the hub on `http://localhost:8080` with `cargo watch` on `src/`, `templates/`, `static/`, and `Cargo.toml`.
+Starts the hub on `http://localhost:17190` in the dev tmux session (window `hub`), with `cargo watch` over the hub + shared sync crates. `./bin/dev hub up` is the same thing; `cargo run -p zim-hub` runs it bare in the foreground (build the SPA first: `make build-web`).
 
 Defaults:
-- `ZIM_HUB_LISTEN=127.0.0.1:8080` — HTTP bind address
+- `ZIM_HUB_LISTEN=127.0.0.1:17190` — HTTP bind address
 - `ZIM_HUB_HOME=./data/zim-hub` — data directory (peer identity, vault log, blobs)
 - `ZIM_HUB_LOG=info`
 
@@ -38,9 +38,9 @@ Defaults:
 ```
 GET  /                              -- minimal landing: lists every vault on the hub
 GET  /_status/{livez,readyz,version}
-GET  /api/v0/v/{vault_id}/head
-GET  /api/v0/v/{vault_id}/log?from=N&limit=M
-GET  /api/v0/v/{vault_id}/blob/{hash}
+GET  /api/v0/vaults/{vault_id}/head
+GET  /api/v0/vaults/{vault_id}/log?from=N&limit=M
+GET  /api/v0/vaults/{vault_id}/blob/{hash}
 GET  /static/*path
 ```
 
@@ -63,7 +63,7 @@ crates/zim-hub/
 │   ├── sri.rs         — generated SRI constants
 │   └── http/
 │       ├── mod.rs     — Router builder + Service impl
-│       ├── api/v0/v/  — ciphertext + log endpoints (head, log, blob)
+│       ├── api/v0/vaults/  — ciphertext + log endpoints (head, log, blob)
 │       ├── health/    — livez / readyz / version
 │       ├── html/      — index page + static asset serving
 │       └── sse/       — reserved for future merge-fragment streams

@@ -20,7 +20,8 @@ Spawn parallel Claude Code workers to execute a set of tasks.
 
 ## Prerequisites
 
-Before spawning, you should have a clear picture of the work. Run `/issues` first to discover and understand what needs to be done.
+Before spawning, you should have a clear picture of the work. Run `/issues`
+first to inspect the relevant Linear issue and its dependencies.
 
 ## Workflow
 
@@ -53,11 +54,12 @@ Each `--context` value is the worker's entire prompt. Include:
 
 Example:
 ```bash
-jig spawn add-auth-middleware --context "Add JWT auth middleware to the Express API.
-Modify src/middleware/auth.ts. Use jsonwebtoken package (already installed).
-Protect all routes under /api/v1/ except /api/v1/health.
-Return 401 with {error: 'unauthorized'} on invalid/missing token.
-Do NOT modify the health endpoint or add any new packages." --auto
+jig spawn vault-export --context "Implement the Linear issue for vault export.
+Use docs/product/roadmap/vault-export.md for product context. Follow the Op
+pattern in docs/patterns/cli.md, return
+typed data from execute(), and format only in Display. Add an Alice/Bob scenario
+test and run the four checks in docs/patterns/success-criteria.md. Do not change the HTTP
+contract or add dependencies." --auto
 ```
 
 ## Rules

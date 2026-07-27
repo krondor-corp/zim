@@ -23,7 +23,7 @@
 //! shutdown.wait().await;
 //! ```
 //!
-//! [`ShutdownHandle`]: zim_runtime::ShutdownHandle
+//! [`ShutdownHandle`]: crate::runtime::ShutdownHandle
 
 use std::sync::Arc;
 
@@ -31,10 +31,10 @@ use async_trait::async_trait;
 use tokio::sync::{watch, Mutex};
 use tokio::task::JoinHandle;
 
-use zim_core::blobs::BlobsProvider;
-use zim_core::iroh::{self, Endpoint, NodeAddr, Router, BLOBS_ALPN};
+use crate::blobs::BlobsProvider;
+use crate::iroh::{self, Endpoint, NodeAddr, Router, BLOBS_ALPN};
+use crate::runtime::Service;
 use zim_crypto::{PrivateKey, PublicKey};
-use zim_runtime::Service;
 
 use crate::accept::{AcceptAll, AcceptPolicy};
 use crate::coordinator::{run_effects, SyncCoordinator};
@@ -85,29 +85,26 @@ struct PeerInner<L: VaultLog> {
     secret: PrivateKey,
     endpoint: Endpoint,
     coord: Arc<SyncCoordinator<L>>,
-    /// Take-once slots, consumed by [`Peer::shutdown`].
+    /// Take-once slots (`Option::take()` = "move out exactly once",
+    /// making teardown idempotent; the `Mutex` covers racing clones —
+    /// e.g. ctrl-C against service teardown).
     ///
-    /// Both values are *consumed* at shutdown, not just dropped:
-    /// `Router::shutdown(self)` takes ownership, and the runner's
-    /// `JoinHandle` must be awaited exactly once. `Option::take()`
-    /// expresses "move it out of a shared struct, exactly once" —
-    /// the second `shutdown()` call finds `None` and no-ops, which
-    /// is what makes shutdown idempotent.
-    ///
-    /// The `Mutex` is for the clones: `Peer` is `Clone` via the
-    /// outer `Arc`, and clones live in different tasks (axum
-    /// handlers, the effect runner, the spawned shutdown-watcher),
-    /// so concurrent `shutdown()` calls can race — e.g. a ctrl-C
-    /// signal against service teardown. The lock makes the `take()`
-    /// atomic: exactly one caller gets the value. (`Router` and
-    /// `JoinHandle` themselves are never cloned — only moved out.)
-    ///
-    /// Could be `std::sync::Mutex` — the guard is never held across
-    /// an `.await` (`take()` returns owned, guard drops before the
-    /// shutdown future runs) — but the tokio mutex costs nothing on
-    /// a once-per-process path.
+    /// **Known blind spot — the iroh router.** `Router::spawn()` runs
+    /// its accept loop on a task iroh owns internally; all we hold is
+    /// this handle, whose only affordance is `shutdown()`. If that
+    /// loop dies, no `JoinHandle` surfaces it — the liveness watcher
+    /// below cannot see it, and the peer would look healthy while
+    /// refusing connections. Accepted: the accept loop is iroh's code
+    /// (our panic surface is `tasks`), and its death shows up
+    /// indirectly — inbound sync stops and the reconcile sweep's
+    /// outbound pulls keep working, which is a visible asymmetry in
+    /// the logs. Revisit if iroh ever exposes the task handle.
     router: Mutex<Option<Router>>,
-    runner: Mutex<Option<JoinHandle<()>>>,
+    /// The peer's own tasks (effect runner, reconcile sweep). Taken by
+    /// the [`Service`] watcher, which supervises liveness; if no
+    /// watcher was spawned (tests calling [`Peer::shutdown`]
+    /// directly), `shutdown` drains it instead.
+    tasks: Mutex<Option<tokio::task::JoinSet<&'static str>>>,
     shutdown_tx: watch::Sender<()>,
 }
 
@@ -155,7 +152,7 @@ where
         for (client, share) in manifest.shares().iter() {
             // `reach()` = where we dial for this share (the `via` host, else
             // the client); `client` = who it's for (the recipient).
-            let Some(target) = share.reach().copied() else {
+            let Some(target) = share.reach() else {
                 continue;
             };
             if target == self_pk {
@@ -263,28 +260,64 @@ where
                 tracing::warn!("router shutdown error: {e}");
             }
         }
-        // Tell the effect runner to exit. The receiver is held by the
-        // runner; sending here ensures `changed()` fires.
+        // Tell the internal tasks to exit, then drain them — unless
+        // the Service watcher already took the set (it drains after
+        // this returns).
         let _ = self.0.shutdown_tx.send(());
-        if let Some(handle) = self.0.runner.lock().await.take() {
-            let _ = handle.await;
+        if let Some(mut tasks) = self.0.tasks.lock().await.take() {
+            while tasks.join_next().await.is_some() {}
         }
     }
 
-    /// Spawn a task that watches `shutdown_rx` and tears the peer
-    /// down when it fires. Returns a [`JoinHandle`] ready to register
-    /// with [`ShutdownHandle::push`](zim_runtime::ShutdownHandle::push).
+    /// Spawn the peer's supervisor: watches `shutdown_rx` for teardown
+    /// AND the internal tasks for early death (see the [`Service`]
+    /// impl). Returns a [`JoinHandle`] ready to register with
+    /// [`ShutdownHandle::push`](crate::runtime::ShutdownHandle::push).
     ///
     /// Takes `&self` and clones the cheap Arc internally — the
-    /// caller doesn't need to type `peer.clone()`. Equivalent in
-    /// effect to `<Peer<L, P> as Service>::spawn(self.clone(), rx)`.
+    /// caller doesn't need to type `peer.clone()`. This shadows
+    /// [`Service::spawn`] and delegates to it.
     pub fn spawn(&self, shutdown_rx: watch::Receiver<()>) -> JoinHandle<()> {
         let peer = self.clone();
-        tokio::spawn(async move {
-            let mut rx = shutdown_rx;
-            let _ = rx.changed().await;
-            peer.shutdown().await;
-        })
+        tokio::spawn(<Self as Service>::run(peer, shutdown_rx))
+    }
+}
+
+/// [`BlobsProtocol`](crate::iroh::BlobsProtocol) wrapped in the accept
+/// policy's [`accept_blob`](AcceptPolicy::accept_blob) gate. Consulted
+/// once per inbound blob connection, before any request is served.
+#[derive(Clone)]
+struct GatedBlobs {
+    inner: crate::iroh::BlobsProtocol,
+    accept: Arc<dyn AcceptPolicy>,
+}
+
+impl std::fmt::Debug for GatedBlobs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GatedBlobs").finish_non_exhaustive()
+    }
+}
+
+impl iroh::ProtocolHandler for GatedBlobs {
+    fn accept(
+        &self,
+        conn: iroh::Connection,
+    ) -> impl std::future::Future<Output = Result<(), iroh::AcceptError>> + Send {
+        let inner = self.inner.clone();
+        let accept = self.accept.clone();
+        async move {
+            let remote = conn.remote_node_id().map_err(iroh::AcceptError::from)?;
+            let sender = iroh::from_iroh_public_key(&remote);
+            if !accept.accept_blob(&sender).await {
+                tracing::info!(
+                    sender = %sender.to_hex(),
+                    "blob connection dropped (sender not accepted)"
+                );
+                conn.close(0u32.into(), b"not authorized");
+                return Ok(());
+            }
+            inner.accept(conn).await
+        }
     }
 }
 
@@ -302,8 +335,37 @@ where
     type State = Peer<L>;
 
     async fn run(peer: Self, mut shutdown_rx: watch::Receiver<()>) {
-        let _ = shutdown_rx.changed().await;
-        peer.shutdown().await;
+        // Take ownership of the peer's internal tasks: this watcher is
+        // the liveness supervisor, not just a shutdown proxy. Any task
+        // finishing BEFORE the signal means the sync engine is
+        // degraded — return early so `ShutdownHandle::wait`'s
+        // exited-before-shutdown tripwire fires (exit 2 → the service
+        // manager restarts the process). The iroh router's accept loop
+        // is NOT covered — see the blind-spot note on `PeerInner`.
+        let taken = peer.0.tasks.lock().await.take();
+        let Some(mut tasks) = taken else {
+            // Already torn down elsewhere; just wait out the signal.
+            let _ = shutdown_rx.changed().await;
+            return;
+        };
+        tokio::select! {
+            _ = shutdown_rx.changed() => {
+                peer.shutdown().await;
+                while tasks.join_next().await.is_some() {}
+            }
+            Some(res) = tasks.join_next() => {
+                match res {
+                    Ok(name) => {
+                        tracing::error!(task = name, "peer task exited before shutdown")
+                    }
+                    Err(e) if e.is_panic() => tracing::error!("peer task panicked: {e}"),
+                    Err(e) => tracing::error!("peer task join error: {e}"),
+                }
+                peer.shutdown().await;
+                tasks.abort_all();
+                while tasks.join_next().await.is_some() {}
+            }
+        }
     }
 }
 
@@ -325,6 +387,9 @@ pub struct PeerBuilder<L: VaultLog> {
     secret: Option<PrivateKey>,
     log: Option<L>,
     accept: Option<Arc<dyn AcceptPolicy>>,
+    /// Period between reconcile sweeps (catch-up pulls for pushes
+    /// missed while offline). `None` disables; default 5 minutes.
+    sync_interval: Option<std::time::Duration>,
     blobs: Option<BlobsProvider>,
     discovery: Discovery,
     effect_queue_size: Option<usize>,
@@ -341,6 +406,7 @@ impl<L: VaultLog> Default for PeerBuilder<L> {
             discovery: Discovery::Off,
             effect_queue_size: None,
             info: None,
+            sync_interval: Some(std::time::Duration::from_secs(300)),
         }
     }
 }
@@ -364,6 +430,12 @@ where
     /// [`AcceptAll`](crate::AcceptAll) — fine for a single peer or a
     /// test. The daemon supplies a contacts-backed policy, the hub a
     /// `user_peers`-backed one.
+    /// Override the reconcile sweep period (`None` disables it).
+    pub fn with_sync_interval(mut self, interval: Option<std::time::Duration>) -> Self {
+        self.sync_interval = interval;
+        self
+    }
+
     pub fn with_accept_policy(mut self, accept: Arc<dyn AcceptPolicy>) -> Self {
         self.accept = Some(accept);
         self
@@ -436,10 +508,50 @@ where
 
         // Spawn the effect runner with its own shutdown channel.
         let (shutdown_tx, shutdown_rx) = watch::channel(());
-        let runner = tokio::spawn(run_effects(coord.clone(), effect_rx, shutdown_rx));
 
-        // Register the iroh-blobs + sync protocols on the router.
-        let blobs_handler = (*blobs.protocol().clone()).clone();
+        // Every internal task the peer owns goes into one JoinSet —
+        // each returns its name so the Service watcher can say *which*
+        // task died. A task finishing before the shutdown signal is a
+        // liveness failure the supervisor must see (see the Service
+        // impl below).
+        let mut tasks = tokio::task::JoinSet::new();
+        {
+            let coord = coord.clone();
+            let rx = shutdown_rx.clone();
+            tasks.spawn(async move {
+                run_effects(coord, effect_rx, rx).await;
+                "effect-runner"
+            });
+        }
+
+        // Periodic reconcile: one sweep shortly after boot (missed-
+        // while-offline catch-up, after discovery has a moment to
+        // settle), then every `sync_interval`.
+        if let Some(interval) = self.sync_interval {
+            let coord = coord.clone();
+            let mut shutdown = shutdown_rx.clone();
+            tasks.spawn(async move {
+                tokio::select! {
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(15)) => {}
+                    _ = shutdown.changed() => return "reconcile",
+                }
+                loop {
+                    coord.reconcile_pass().await;
+                    tokio::select! {
+                        _ = tokio::time::sleep(interval) => {}
+                        _ = shutdown.changed() => return "reconcile",
+                    }
+                }
+            });
+        }
+
+        // Register the iroh-blobs + sync protocols on the router. The
+        // blobs handler is gated by the accept policy: without the gate,
+        // anyone who can dial the endpoint fetches any blob by hash.
+        let blobs_handler = GatedBlobs {
+            inner: (*blobs.protocol().clone()).clone(),
+            accept: coord.accept_policy(),
+        };
         let router = Router::builder(endpoint.clone())
             .accept(BLOBS_ALPN, blobs_handler)
             .accept(ALPN, SyncProtocol::new(coord.clone()))
@@ -450,7 +562,7 @@ where
             endpoint,
             coord,
             router: Mutex::new(Some(router)),
-            runner: Mutex::new(Some(runner)),
+            tasks: Mutex::new(Some(tasks)),
             shutdown_tx,
         })))
     }

@@ -4,7 +4,13 @@
 # `bob ...` after `eval "$(./bin/dev shell)"`, as the tmux pane
 # label, and as the data directory under `$DATA_DIR/<nick>/`.
 # Ports are in the 17xxx range so they don't collide with anything
-# common. Default daemon port: 17171 (so dev ports start at +1).
+# common. ALL dev services live in this band:
+#   1717x  daemons — default 17171, dev nodes from 17172
+#   1718x  infra   — minio API 17180, minio console 17181
+#   1719x  hub     — 17190
+#   1720x  site       — web/ Jekyll 17200
+#   1721x  livereload — site livereload 17210
+# Within each band, slot +N belongs to worktree N (base repo = +0).
 
 [alice]
 api_port = 17172

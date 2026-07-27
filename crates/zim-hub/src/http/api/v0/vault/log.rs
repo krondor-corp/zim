@@ -1,4 +1,4 @@
-//! `GET /api/v0/v/{vault_id}/log?from=N&limit=M` — paginated chain
+//! `GET /api/v0/vaults/{vault_id}/log?from=N&limit=M` — paginated chain
 //! walk, newest first.
 //!
 //! Walks heights `from` down to `max(0, from-limit)`. Each entry is
@@ -11,10 +11,10 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use serde::{Deserialize, Serialize};
-use zim_core::linked_data::Link;
 use zim_core::vault::VaultId;
 use zim_peer::VaultLog;
+// Shared wire types — mirrored by `zim_api::hub::vault::LogRequest`.
+use zim_api::hub::vault::{LogEntry, LogQuery, LogResponse};
 
 use crate::access::can_access_vault;
 use crate::http::auth::RequireUser;
@@ -24,25 +24,6 @@ use crate::state::AppState;
 /// chain. Browser pages should fetch in chunks of ~20.
 const MAX_LIMIT: u64 = 100;
 const DEFAULT_LIMIT: u64 = 20;
-
-#[derive(Debug, Deserialize)]
-pub struct LogQuery {
-    /// Highest height to include (inclusive). Defaults to current head.
-    pub from: Option<u64>,
-    /// How many heights to walk back (capped at `MAX_LIMIT`).
-    pub limit: Option<u64>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct LogResponse {
-    pub entries: Vec<LogEntry>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct LogEntry {
-    pub height: u64,
-    pub link: Link,
-}
 
 pub async fn handler(
     State(state): State<AppState>,
@@ -55,7 +36,7 @@ pub async fn handler(
     }
     // Read straight from coord.log() — the hub doesn't have a
     // Share, so the Vault-opener path can't be used.
-    let log = state.service.peer().coord().log();
+    let log = state.peer.coord().log();
     let top = match q.from {
         Some(h) => h,
         None => match log.height(vault_id).await {

@@ -19,6 +19,11 @@ pub struct BuildInfo {
     pub rust_version: String,
     pub target: String,
     pub host: String,
+    /// Compiled cargo features (e.g. `fuse`, `hub`). Lets tooling —
+    /// the dev harness's `fuse-check`, remote debugging — see what
+    /// this daemon can do without trying an operation and failing.
+    #[serde(default)]
+    pub build_features: Vec<String>,
 }
 
 impl BuildInfo {
@@ -35,6 +40,16 @@ impl BuildInfo {
             rust_version: option_env!("RUST_VERSION").unwrap_or("unknown").to_string(),
             target: option_env!("BUILD_TARGET").unwrap_or("unknown").to_string(),
             host: option_env!("BUILD_HOST").unwrap_or("unknown").to_string(),
+            build_features: {
+                let mut f = Vec::new();
+                if cfg!(feature = "fuse") {
+                    f.push("fuse".to_string());
+                }
+                if cfg!(feature = "hub") {
+                    f.push("hub".to_string());
+                }
+                f
+            },
         }
     }
 

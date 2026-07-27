@@ -20,7 +20,7 @@ pub mod paths;
 
 pub use config::AppConfig;
 
-use crate::http_server::api::client::{ApiClient, ApiError};
+use crate::daemon::api::client::{ApiClient, ApiError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ContextError {

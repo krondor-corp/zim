@@ -289,3 +289,45 @@ async fn open_errors_when_caller_has_no_share() {
         Ok(_) => panic!("expected ShareNotFound, got Ok"),
     }
 }
+
+#[tokio::test]
+async fn refresh_fast_forwards_a_stale_handle() {
+    let blobs = MemBlobs::default();
+    let log = MemLog::default();
+    let alice = PrivateKey::generate();
+
+    // Alice creates a vault and opens it twice — a "laptop" handle and a
+    // "browser" handle over the same stores.
+    let mut laptop = Vault::init("ff".to_string(), &alice, blobs.clone(), log.clone())
+        .await
+        .expect("init");
+    let id = laptop.id();
+    let mut browser = Vault::open(id, blobs, log, &alice).await.expect("open");
+
+    // The browser is current: refresh is a no-op.
+    assert!(!browser.refresh().await.expect("refresh (current)"));
+
+    // The laptop advances the head while the browser holds its old view.
+    let path = AbsPath::new("/news.md").unwrap();
+    laptop
+        .fs()
+        .add(&path, Cursor::new(b"laptop wrote this"))
+        .await
+        .unwrap();
+    laptop.save().await.expect("laptop save");
+
+    // Refresh fast-forwards the browser to the laptop's head.
+    assert!(browser.refresh().await.expect("refresh (stale)"));
+    assert_eq!(browser.height(), 1);
+    let bytes = browser.fs().cat(&path).await.unwrap();
+    assert_eq!(bytes, b"laptop wrote this");
+
+    // The browser can now save on top without conflicting.
+    browser
+        .fs()
+        .add(&AbsPath::new("/reply.md").unwrap(), Cursor::new(b"seen"))
+        .await
+        .unwrap();
+    browser.save().await.expect("browser save after refresh");
+    assert_eq!(browser.height(), 2);
+}

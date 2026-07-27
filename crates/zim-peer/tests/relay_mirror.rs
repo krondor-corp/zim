@@ -12,11 +12,12 @@
 
 use bytes::Bytes;
 
-use zim_core::blobs::{BlobStore, BlobsProvider};
+use zim_core::blobs::BlobStore;
 use zim_core::fs::AbsPath;
 use zim_core::vault::VaultLog;
 use zim_crypto::PrivateKey;
-use zim_did::Identity;
+use zim_did::Did;
+use zim_peer::BlobsProvider;
 use zim_peer::{MemoryVaultLog, Vault};
 
 use zim_peer::{Effect, Peer};
@@ -63,7 +64,7 @@ async fn hub_mirrors_chain_without_a_share() {
     // mirrors the chain without ever holding a Share or the vault secret.
     let browser = PrivateKey::generate().public();
     alice_vault
-        .add_share_via(browser, Some(Identity::Key(hub_pk)))
+        .add_share_via(browser, Some(Did::from_key(&hub_pk)))
         .expect("share via hub");
 
     // Some real content so the chain isn't trivial.

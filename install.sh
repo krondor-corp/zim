@@ -1,12 +1,12 @@
 #!/bin/sh
 # zim install script
-# Usage: curl -fsSL https://raw.githubusercontent.com/zim/zim/main/install.sh | sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/krondor-corp/zim/main/install.sh | sh
 #        curl -fsSL ... | sh -s -- --fuse
 #        curl -fsSL ... | sh -s -- --version 0.1.9
 set -eu
 
-REPO="zim/zim"
-BINARY="zim-peer"
+REPO="krondor-corp/zim"
+BINARY="zim"
 INSTALL_DIR="${ZIM_INSTALL_DIR:-$HOME/.local/bin}"
 
 # Parse arguments
@@ -86,7 +86,7 @@ ARCH="$(detect_arch)"
 # Validate platform support
 if [ "$OS" = "linux" ] && [ "$ARCH" = "arm64" ]; then
   echo "Error: Linux ARM64 binaries are not yet available." >&2
-  echo "Install from source: cargo install zim-peer" >&2
+  echo "Install from source: cargo install --git https://github.com/krondor-corp/zim zim" >&2
   exit 1
 fi
 
@@ -122,9 +122,9 @@ fi
 if [ -z "$VERSION" ]; then
   echo "Fetching latest version..."
   VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases" \
-    | grep -o '"tag_name": *"zim-peer-v[^"]*"' \
+    | grep -o '"tag_name": *"zim-v[^"]*"' \
     | head -1 \
-    | sed 's/.*"zim-peer-v\([^"]*\)".*/\1/')
+    | sed 's/.*"zim-v\([^"]*\)".*/\1/')
 
   if [ -z "$VERSION" ]; then
     echo "Error: Could not determine latest version." >&2
@@ -141,7 +141,7 @@ if [ "$FUSE" = "yes" ]; then
   SUFFIX="-fuse"
 fi
 ARTIFACT="zim-${OS}-${ARCH}${SUFFIX}-${VERSION}"
-URL="https://github.com/${REPO}/releases/download/zim-peer-v${VERSION}/${ARTIFACT}"
+URL="https://github.com/${REPO}/releases/download/zim-v${VERSION}/${ARTIFACT}"
 
 # Download binary
 TMPDIR=$(mktemp -d)
@@ -156,7 +156,7 @@ if ! curl -fSL --progress-bar -o "${TMPDIR}/zim" "$URL"; then
   else
     echo "Check that version ${VERSION} exists at:" >&2
   fi
-  echo "  https://github.com/${REPO}/releases/tag/zim-peer-v${VERSION}" >&2
+  echo "  https://github.com/${REPO}/releases/tag/zim-v${VERSION}" >&2
   exit 1
 fi
 

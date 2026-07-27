@@ -5,10 +5,17 @@ TMUX_SESSION="zim-dev"
 ZIM_BIN="${ZIM_BIN:-$PROJECT_ROOT/target/debug/zim}"
 
 cmd_clean() {
+    # Wiping state under running services is undefined behavior — the hub
+    # keeps serving from deleted sqlite handles and half-recreates its
+    # data dir; daemons ditto. Stop everything (incl. orphans holding
+    # dev-band ports) before touching disk.
+    cmd_kill --force
     echo -e "${YELLOW}Cleaning dev data...${NC}"
     for node in $(get_node_names); do
         rm -rf "$DATA_DIR/$node"
     done
+    # Fixture mountpoints (data/mnt-*) are plain dirs once unmounted.
+    rm -rf "$DATA_DIR"/mnt-* 2>/dev/null || true
     # Also wipe the hub's state DB (users, user_peers, escrow, blob index).
     # Daemons get fresh identities above; if the hub roster survived it would
     # keep their *old* keys, and every browser-created vault would then be
@@ -39,11 +46,11 @@ kill_dev_ports() {
     local killed=0
     # Daemon ports + the hub port. The hub runs in its own tmux window
     # under `cargo watch`/confit, which can outlive `kill-session` — so
-    # without this a stale hub keeps holding :8080 and the next `hub up`
+    # without this a stale hub keeps holding :17190 and the next `hub up`
     # fails to bind.
     local ports
     ports=$(for node in $(get_node_names); do get_api_port "$node"; done)
-    ports="$ports ${HUB_PORT:-8080}"
+    ports="$ports ${HUB_PORT:-17190}"
     for port in $ports; do
         local pid=$(lsof -ti tcp:"$port" 2>/dev/null)
         if [[ -n "$pid" ]]; then
@@ -101,7 +108,7 @@ zim_build_features() {
 # unrelated wasm/hub-only edit doesn't needlessly bounce the daemons (and lose
 # their iroh discovery state).
 zim_watch_dirs() {
-    echo "-w crates/zim/src -w crates/zim-peer/src -w crates/zim-core/src -w crates/zim-crypto/src -w crates/zim-did/src -w crates/zim-runtime/src -w crates/zim-fuse/src"
+    echo "-w crates/zim/src -w crates/zim-peer/src -w crates/zim-core/src -w crates/zim-crypto/src -w crates/zim-did/src"
 }
 
 # True when the platform's FUSE lib is installed (macFUSE / libfuse).
@@ -345,7 +352,7 @@ seed_node_configs() {
 #
 #     eval "$(./bin/dev shell)"
 #
-# After that, `alice vault demo head` and `bob vaults list` just work.
+# After that, `alice vault head demo` and `bob vault list` just work.
 # Regenerate after editing nodes.toml. Seeds each node's config.toml
 # so commands don't accidentally hit the default port 17171 because a
 # config wasn't written yet.

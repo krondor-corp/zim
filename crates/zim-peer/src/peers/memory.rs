@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::sync::RwLock;
-use zim_did::Identity;
+use zim_did::Did;
 
-use zim_core::peers::{PeerEntry, PeerStore, PeerStoreError};
+use crate::peers::{PeerEntry, PeerStore, PeerStoreError};
 
 #[derive(Debug, Clone, Default)]
 pub struct MemoryPeerStore {
@@ -40,7 +40,7 @@ impl PeerStore for MemoryPeerStore {
     async fn upsert(
         &self,
         nick: &str,
-        identity: Identity,
+        identity: Did,
         trusted: bool,
         notes: Option<String>,
     ) -> Result<(), PeerStoreError<Self::Error>> {

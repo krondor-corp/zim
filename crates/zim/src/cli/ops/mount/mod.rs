@@ -11,12 +11,13 @@ use clap::Subcommand;
 
 use crate::cli::op::Op;
 use crate::context::ApiContext;
-use crate::http_server::api::client::ApiError;
-use crate::http_server::api::v0::mounts::ListRequest;
+use crate::daemon::api::client::ApiError;
+use crate::daemon::api::v0::mounts::ListRequest;
 
 pub mod add;
 pub mod list;
 pub mod remove;
+pub mod set;
 pub mod stop;
 
 /// Resolve a `stop`/`remove` target — a mountpoint **path** or a **vault
@@ -52,6 +53,8 @@ pub enum Mount {
     Add(add::Add),
     /// List mounts and their status.
     List(list::List),
+    /// Edit a registration in place (auto/read-only).
+    Set(set::Set),
     /// Unmount, keeping the registration (re-`start` later / on boot).
     Stop(stop::Stop),
     /// Unmount and forget the registration.
@@ -63,6 +66,7 @@ pub enum Mount {
 pub enum MountOutput {
     Add(add::AddOutput),
     List(list::ListOutput),
+    Set(set::SetOutput),
     Stop(stop::StopOutput),
     Remove(remove::RemoveOutput),
 }
@@ -73,6 +77,8 @@ pub enum MountError {
     Add(#[from] add::AddError),
     #[error(transparent)]
     List(#[from] list::ListError),
+    #[error(transparent)]
+    Set(#[from] set::SetError),
     #[error(transparent)]
     Stop(#[from] stop::StopError),
     #[error(transparent)]
@@ -93,6 +99,7 @@ impl Op for Mount {
         Ok(match self {
             Mount::Add(c) => MountOutput::Add(c.run(c.build_context().await?).await?),
             Mount::List(c) => MountOutput::List(c.run(c.build_context().await?).await?),
+            Mount::Set(c) => MountOutput::Set(c.run(c.build_context().await?).await?),
             Mount::Stop(c) => MountOutput::Stop(c.run(c.build_context().await?).await?),
             Mount::Remove(c) => MountOutput::Remove(c.run(c.build_context().await?).await?),
         })
@@ -104,6 +111,7 @@ impl fmt::Display for MountOutput {
         match self {
             MountOutput::Add(o) => write!(f, "{o}"),
             MountOutput::List(o) => write!(f, "{o}"),
+            MountOutput::Set(o) => write!(f, "{o}"),
             MountOutput::Stop(o) => write!(f, "{o}"),
             MountOutput::Remove(o) => write!(f, "{o}"),
         }

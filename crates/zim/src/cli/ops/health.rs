@@ -19,8 +19,8 @@ use clap::Args;
 use crate::cli::op::Op;
 use crate::cli::ui;
 use crate::context::{paths, ApiContext, ContextError};
-use crate::http_server::api::client::ApiError;
-use crate::http_server::health::liveness::LivezRequest;
+use crate::daemon::api::client::ApiError;
+use crate::daemon::health::liveness::LivezRequest;
 
 /// Short timeout for the livez probe — we want a fast "is it up?"
 /// answer, not to hang waiting on a stuck daemon.

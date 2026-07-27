@@ -1,22 +1,24 @@
-//! `zim vault <target> <subcommand>` — per-vault filesystem and
-//! membership ops. The positional `<target>` (UUID or human name)
-//! lives on this wrapper; leaves get it propagated before dispatch.
-//! Registry-level ops live under [`vaults`](super::vaults).
+//! `zim vault <op> …` — everything vault-shaped, verb-first like the
+//! rest of the CLI (`mount add`, `peers add`). Registry ops
+//! (`create`, `list`) and per-vault ops (`ls <target> /`, …) share the
+//! one noun; per-vault leaves take the vault id/name as their first
+//! positional.
 
 use std::fmt;
 
 use async_trait::async_trait;
-use clap::{Args, Subcommand};
+use clap::Subcommand;
 
 use crate::cli::op::Op;
 
 pub mod add;
 pub mod cat;
+pub mod create;
 pub mod head;
+pub mod list;
 pub mod ls;
 pub mod mkdir;
 pub mod mv;
-pub mod relays;
 pub mod rm;
 pub mod shares;
 pub mod sync;
@@ -42,16 +44,12 @@ pub fn normalize_path(path: &str) -> String {
     }
 }
 
-#[derive(Args, Debug, Clone)]
-pub struct Vault {
-    /// Vault id or name.
-    pub target: String,
-    #[command(subcommand)]
-    pub op: VaultSub,
-}
-
 #[derive(Subcommand, Debug, Clone)]
-pub enum VaultSub {
+pub enum Vault {
+    /// Create a new vault.
+    Create(create::Create),
+    /// List every vault this daemon holds.
+    List(list::List),
     /// Show the current head + height.
     Head(head::Head),
     /// List directory contents.
@@ -68,8 +66,6 @@ pub enum VaultSub {
     Mv(mv::Mv),
     /// Manage shares (list / add / rm). Bare `shares` lists.
     Shares(shares::Shares),
-    /// Manage relays (list / add / rm). Bare `relays` lists.
-    Relays(relays::Relays),
     /// Pull from a peer.
     Sync(sync::Sync),
 }
@@ -77,6 +73,8 @@ pub enum VaultSub {
 #[derive(Debug, serde::Serialize)]
 #[serde(untagged)]
 pub enum VaultOutput {
+    Create(create::CreateOutput),
+    List(list::ListOutput),
     Head(head::HeadOutput),
     Ls(ls::LsOutput),
     Cat(cat::CatOutput),
@@ -85,12 +83,15 @@ pub enum VaultOutput {
     Rm(rm::RmOutput),
     Mv(mv::MvOutput),
     Shares(shares::OpOutput),
-    Relays(relays::OpOutput),
     Sync(sync::SyncOutput),
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum VaultError {
+    #[error(transparent)]
+    Create(#[from] create::CreateError),
+    #[error(transparent)]
+    List(#[from] list::ListError),
     #[error(transparent)]
     Head(#[from] head::HeadError),
     #[error(transparent)]
@@ -108,8 +109,6 @@ pub enum VaultError {
     #[error(transparent)]
     Shares(#[from] shares::OpError),
     #[error(transparent)]
-    Relays(#[from] relays::OpError),
-    #[error(transparent)]
     Sync(#[from] sync::SyncError),
 }
 
@@ -124,66 +123,18 @@ impl Op for Vault {
     }
 
     async fn run(&self, _ctx: ()) -> Result<Self::Output, Self::Error> {
-        // Every leaf — and the Shares/Relays wrappers, which dispatch
-        // further down — needs `target` to resolve the vault id. The
-        // leaves' clap structs carry it as `#[arg(skip)]`; we stamp it
-        // here before calling `run`. After that the pattern is the
-        // same as `Peers` / `Vaults` / `Daemon`: match → run → wrap.
-        let target = self.target.clone();
-        Ok(match self.op.clone() {
-            VaultSub::Head(mut c) => {
-                c.target = target;
-                VaultOutput::Head(c.run(c.build_context().await?).await?)
-            }
-            VaultSub::Ls(mut c) => {
-                c.target = target;
-                VaultOutput::Ls(c.run(c.build_context().await?).await?)
-            }
-            VaultSub::Cat(mut c) => {
-                c.target = target;
-                VaultOutput::Cat(c.run(c.build_context().await?).await?)
-            }
-            VaultSub::Add(mut c) => {
-                c.target = target;
-                VaultOutput::Add(c.run(c.build_context().await?).await?)
-            }
-            VaultSub::Mkdir(mut c) => {
-                c.target = target;
-                VaultOutput::Mkdir(c.run(c.build_context().await?).await?)
-            }
-            VaultSub::Rm(mut c) => {
-                c.target = target;
-                VaultOutput::Rm(c.run(c.build_context().await?).await?)
-            }
-            VaultSub::Mv(mut c) => {
-                c.target = target;
-                VaultOutput::Mv(c.run(c.build_context().await?).await?)
-            }
-            VaultSub::Sync(mut c) => {
-                c.target = target;
-                VaultOutput::Sync(c.run(c.build_context().await?).await?)
-            }
-            VaultSub::Shares(mut c) => {
-                // Stamp `target` onto whichever leaf is about to
-                // execute — explicit subcommand or the flattened
-                // `list` default.
-                match &mut c.command {
-                    Some(shares::Command::List(l)) => l.target = target,
-                    Some(shares::Command::Add(a)) => a.target = target,
-                    Some(shares::Command::Rm(r)) => r.target = target,
-                    None => c.list.target = target,
-                }
-                VaultOutput::Shares(c.run(c.build_context().await?).await?)
-            }
-            VaultSub::Relays(mut c) => {
-                match &mut c.command {
-                    Some(relays::Command::List(l)) => l.target = target,
-                    Some(relays::Command::Add(a)) => a.target = target,
-                    Some(relays::Command::Rm(r)) => r.target = target,
-                    None => c.list.target = target,
-                }
-                VaultOutput::Relays(c.run(c.build_context().await?).await?)
-            }
+        Ok(match self {
+            Vault::Create(c) => VaultOutput::Create(c.run(c.build_context().await?).await?),
+            Vault::List(c) => VaultOutput::List(c.run(c.build_context().await?).await?),
+            Vault::Head(c) => VaultOutput::Head(c.run(c.build_context().await?).await?),
+            Vault::Ls(c) => VaultOutput::Ls(c.run(c.build_context().await?).await?),
+            Vault::Cat(c) => VaultOutput::Cat(c.run(c.build_context().await?).await?),
+            Vault::Add(c) => VaultOutput::Add(c.run(c.build_context().await?).await?),
+            Vault::Mkdir(c) => VaultOutput::Mkdir(c.run(c.build_context().await?).await?),
+            Vault::Rm(c) => VaultOutput::Rm(c.run(c.build_context().await?).await?),
+            Vault::Mv(c) => VaultOutput::Mv(c.run(c.build_context().await?).await?),
+            Vault::Shares(c) => VaultOutput::Shares(c.run(c.build_context().await?).await?),
+            Vault::Sync(c) => VaultOutput::Sync(c.run(c.build_context().await?).await?),
         })
     }
 }
@@ -191,6 +142,8 @@ impl Op for Vault {
 impl fmt::Display for VaultOutput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            VaultOutput::Create(o) => write!(f, "{o}"),
+            VaultOutput::List(o) => write!(f, "{o}"),
             VaultOutput::Head(o) => write!(f, "{o}"),
             VaultOutput::Ls(o) => write!(f, "{o}"),
             VaultOutput::Cat(o) => write!(f, "{o}"),
@@ -199,7 +152,6 @@ impl fmt::Display for VaultOutput {
             VaultOutput::Rm(o) => write!(f, "{o}"),
             VaultOutput::Mv(o) => write!(f, "{o}"),
             VaultOutput::Shares(o) => write!(f, "{o}"),
-            VaultOutput::Relays(o) => write!(f, "{o}"),
             VaultOutput::Sync(o) => write!(f, "{o}"),
         }
     }

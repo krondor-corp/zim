@@ -11,9 +11,10 @@
 //! Used by `SyncCoordinator::pull_from_peer` when the local peer
 //! doesn't hold a share for the vault — the hub-mirror path.
 
-use zim_core::blobs::{BlobStore, BlobsProvider};
+use crate::blobs::BlobsProvider;
+use crate::iroh::{Downloader, Endpoint, Shuffled};
+use zim_core::blobs::BlobStore;
 use zim_core::fs::Manifest;
-use zim_core::iroh::{Downloader, Endpoint, Shuffled};
 use zim_core::linked_data::{Hash, Link};
 use zim_core::vault::{Head, VaultId, VaultLog};
 use zim_crypto::PublicKey;
@@ -119,7 +120,7 @@ pub async fn apply_chain_log_only<L: VaultLog>(
         let pin_peers: Vec<PublicKey> = manifest
             .shares()
             .iter()
-            .filter_map(|(_, share)| share.identity().pubkey().copied())
+            .filter_map(|(_, share)| share.identity().pubkey())
             .collect();
         if pin_peers.is_empty() {
             continue;
@@ -145,11 +146,11 @@ async fn download_hash(
     let discovery = Shuffled::new(
         peer_ids
             .iter()
-            .map(zim_core::iroh::to_iroh_public_key)
+            .map(crate::iroh::to_iroh_public_key)
             .collect(),
     );
     downloader
-        .download(iroh_blobs::Hash::from(hash), discovery)
+        .download(crate::iroh::to_iroh_hash(hash), discovery)
         .await?;
     Ok(())
 }

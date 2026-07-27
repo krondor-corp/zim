@@ -6,7 +6,7 @@
 //! version: the directory tree, the per-entry encryption, the op log,
 //! and the persistence path through [`ContentStore`](content_store::ContentStore).
 //!
-//! The vault concept (chain bookkeeping, sharing, publishing, sync) is
+//! The vault concept (chain bookkeeping, sharing, sync) is
 //! built *on top of* this layer in `zim-protocol` and higher.
 //!
 //! # Core types
@@ -17,7 +17,7 @@
 //!   [`Fs::rm`], [`Fs::mv`]; persisted via [`Fs::save`].
 //! - [`Manifest`] — the signed top-level record of a vault version: id,
 //!   name, [`Shares`], [`Pins`], inline [`Metadata`](content_store::Metadata),
-//!   [`Published`] set, history pointer.
+//!   history pointer.
 //! - [`Dir`] — a directory's children map (`name → Entry`). Its encoded
 //!   form is what ships in the metadata pack.
 //! - [`Entry`] — what a [`Dir`] stores for each child. Either an
@@ -46,7 +46,6 @@ mod fs_inner;
 mod manifest;
 mod maybe_mime;
 mod pins;
-mod published;
 mod share;
 #[cfg(test)]
 mod tests;
@@ -61,5 +60,4 @@ pub use entry::{Dir, Entry};
 pub use fs_inner::{Fs, FsError, FsInner};
 pub use manifest::{Manifest, ManifestError, Shares};
 pub use pins::Pins;
-pub use published::Published;
 pub use share::Share;

@@ -15,7 +15,9 @@
 //! changes take effect immediately.
 
 pub mod google;
-pub mod jwt;
+// Both ends of the JWT format (mint + verify) live in `zim_api::hub::jwt`
+// so they can't drift; re-exported here to keep the old import path.
+pub use zim_api::hub::jwt;
 pub mod logout;
 
 use axum::async_trait;

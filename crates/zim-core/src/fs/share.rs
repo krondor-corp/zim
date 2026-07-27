@@ -6,29 +6,29 @@
 //! always-on host a hosted client is reached *through*. This is what
 //! folds the old separate `Relay` type away — a relay is just a share
 //! with a `via` set (see the hosted-DID protocol in
-//! `docs/concepts/identity.md`):
+//! `docs/product/identity.md`):
 //!
 //! - **`via = None`** — direct: the client is dialed as an iroh peer
 //!   (its `NodeId` is the key). `did:key` shares.
 //! - **`via = Some(host)`** — hosted: the secret is still sealed to the
 //!   client (zero-knowledge — the host never holds it), but sync dials
 //!   the host, never the client. The host is recorded as a resolved
-//!   `Identity::Key`, so routing/access checks stay synchronous.
+//!   `did:key`, so routing/access checks stay synchronous.
 //!
 //! The caller (which owns a DID resolver) expands a `did:web` into one
 //! share per verification method at share time via
 //! [`zim_did::resolve_reaches`], sealing each client and stamping the
 //! shared `via`. Every `Share` persisted on disk therefore carries a
-//! concrete `Identity::Key` for both `identity` and `via`.
+//! concrete `did:key` for both `identity` and `via`.
 
 use serde::{Deserialize, Serialize};
 
 use zim_crypto::{PublicKey, SecretShare};
-use zim_did::Identity;
+use zim_did::Did;
 
 /// A peer's share of vault access.
 ///
-/// Pairs an [`Identity`] (the seal target) with a [`SecretShare`] (the
+/// Pairs a [`Did`] (the seal target) with a [`SecretShare`] (the
 /// vault secret encrypted to that identity's pubkey) and an optional
 /// `via` host the client is reached through.
 ///
@@ -37,14 +37,14 @@ use zim_did::Identity;
 /// reached through `host`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Share {
-    identity: Identity,
+    identity: Did,
     secret_share: SecretShare,
     /// The always-on host this client is reached through. `None` for a
-    /// directly-dialable peer; `Some(Identity::Key(host))` for a hosted
+    /// directly-dialable peer; `Some(did:key of host)` for a hosted
     /// client (e.g. a browser reached via the hub). The host never holds
     /// the vault secret — `secret_share` is sealed to the client.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    via: Option<Identity>,
+    via: Option<Did>,
 }
 
 impl Share {
@@ -55,7 +55,7 @@ impl Share {
     /// - `identity` — the peer's DID-shaped identity (the seal target).
     /// - `via` — the host the client is reached through, or `None` for a
     ///   directly-dialable peer.
-    pub fn new(secret_share: SecretShare, identity: Identity, via: Option<Identity>) -> Self {
+    pub fn new(secret_share: SecretShare, identity: Did, via: Option<Did>) -> Self {
         Self {
             identity,
             secret_share,
@@ -71,14 +71,14 @@ impl Share {
 
     /// The peer's logical identity (DID) — the seal target. This is *who*
     /// the share is for, not where to reach them; see [`Self::reach`].
-    pub fn identity(&self) -> &Identity {
+    pub fn identity(&self) -> &Did {
         &self.identity
     }
 
     /// The recipient's pubkey — whose key the secret is sealed to (who can
     /// decrypt). `None` only if `identity` is a non-key DID. Sugar for
     /// `identity().pubkey()`.
-    pub fn recipient(&self) -> Option<&PublicKey> {
+    pub fn recipient(&self) -> Option<PublicKey> {
         self.identity.pubkey()
     }
 
@@ -91,7 +91,7 @@ impl Share {
     /// means the client is dialed directly. This is the raw relay
     /// identity; for "where do I actually reach this share" use
     /// [`Self::reach`], which folds in the direct-dial fallback.
-    pub fn via(&self) -> Option<&Identity> {
+    pub fn via(&self) -> Option<&Did> {
         self.via.as_ref()
     }
 
@@ -104,10 +104,10 @@ impl Share {
     /// share is `recipient = browser_key`, `reach = hub`. Callers that
     /// dial or fetch must use `reach`, not `recipient` — a browser has no
     /// iroh endpoint, so dialing the recipient directly fails.
-    pub fn reach(&self) -> Option<&PublicKey> {
+    pub fn reach(&self) -> Option<PublicKey> {
         self.via
             .as_ref()
-            .and_then(Identity::pubkey)
+            .and_then(Did::pubkey)
             .or_else(|| self.identity.pubkey())
     }
 

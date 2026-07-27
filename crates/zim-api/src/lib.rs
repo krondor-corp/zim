@@ -24,25 +24,30 @@
 //!
 //! ## Who depends on what
 //!
+//! Everything here compiles unconditionally for every consumer — reqwest
+//! target-gates its native TLS/tokio stack, so this builds on wasm32 too.
+//! One contract, no feature-dependent subsets.
+//!
 //! - **`zim`** (daemon + CLI) re-exports [`ApiRequest`] / [`ApiError`] so
 //!   its existing endpoint impls keep their import path, and uses the
 //!   [`hub`] client for `zim hub` commands (behind `zim`'s `hub` feature).
-//! - **`zim-hub`** (server) does NOT link this crate's requests at
-//!   compile time — it mirrors them in axum routes by hand. Each hub
-//!   request documents the route it targets; keep them in lockstep.
-//! - **`zim-hub/web`** (wasm SPA) uses the [`hub`] client via reqwest's
+//! - **`zim-hub`** (server) serializes the same wire types and compiles
+//!   the same request impls its axum routes mirror. The route *paths*
+//!   still have no compile-time link — each hub request documents the
+//!   route it targets; keep them in lockstep.
+//! - **`zim-hub/web`** (wasm SPA) drives the same requests via reqwest's
 //!   wasm/fetch backend.
 
-#[cfg(feature = "client")]
-use reqwest::{Client as HttpClient, RequestBuilder, Url};
-#[cfg(feature = "client")]
+use reqwest::{Client as HttpClient, RequestBuilder};
 use serde::de::DeserializeOwned;
 
-#[cfg(feature = "client")]
 mod error;
 
-#[cfg(feature = "client")]
 pub use error::ApiError;
+
+/// Re-exported so callers (notably the wasm SPA) can build a base
+/// [`Url`] without adding their own `url` dependency.
+pub use reqwest::Url;
 
 #[cfg(feature = "hub")]
 pub mod hub;
@@ -51,7 +56,6 @@ pub mod hub;
 /// request is formed — method, path, query, body, and auth headers — by
 /// returning a fully-built [`RequestBuilder`]. The [`Client`] only sends
 /// it and decodes [`Self::Response`].
-#[cfg(feature = "client")]
 pub trait ApiRequest {
     type Response: DeserializeOwned;
     fn build_request(self, base_url: &Url, client: &HttpClient) -> RequestBuilder;
@@ -63,14 +67,12 @@ pub trait ApiRequest {
 /// Daemon-specific conveniences (resolve a vault/peer by name) live on
 /// the `zim` crate's wrapper, not here — this stays a thin executor that
 /// both the daemon RPC and the hub client share.
-#[cfg(feature = "client")]
 #[derive(Debug, Clone)]
 pub struct Client {
     base: Url,
     http: HttpClient,
 }
 
-#[cfg(feature = "client")]
 impl Client {
     pub fn new(base: &Url) -> Result<Self, ApiError> {
         Ok(Self {
@@ -117,13 +119,21 @@ impl Client {
 
     /// Send `req` (method/path/body/auth per its own `build_request`)
     /// and decode the typed reply. Non-2xx → [`ApiError::HttpStatus`].
+    /// A success with an empty body (204-style action endpoints) decodes
+    /// as JSON `null`, so `Response = ()` works.
     pub async fn call<R: ApiRequest>(&self, req: R) -> Result<R::Response, ApiError> {
         let response = req.build_request(&self.base, &self.http).send().await?;
-        if response.status().is_success() {
-            Ok(response.json::<R::Response>().await?)
+        let status = response.status();
+        if status.is_success() {
+            let body = response.bytes().await?;
+            if body.is_empty() {
+                Ok(serde_json::from_slice(b"null")?)
+            } else {
+                Ok(serde_json::from_slice(&body)?)
+            }
         } else {
             Err(ApiError::HttpStatus(
-                response.status(),
+                status,
                 response.text().await.unwrap_or_default(),
             ))
         }

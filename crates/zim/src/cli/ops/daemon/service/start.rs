@@ -16,7 +16,7 @@ use service_manager::ServiceStartCtx;
 use crate::cli::op::Op;
 use crate::cli::ui;
 use crate::context::{ApiContext, ContextError};
-use crate::http_server::health::liveness::LivezRequest;
+use crate::daemon::health::liveness::LivezRequest;
 
 use super::{label, manager};
 

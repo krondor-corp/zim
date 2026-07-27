@@ -7,11 +7,15 @@
 #   - zim (CLI/daemon): the daemon-RPC request types implement `ApiRequest`
 #     from here, so there is ONE trait definition. The `zim hub` commands
 #     use the `hub` client (behind zim's `hub` feature).
-#   - zim-hub (server): mirrors these requests in its axum routes. There is
-#     no compile-time link between the two — the server MUST keep its routes
-#     in sync with the request types here (see each request's doc comment).
-#   - zim-hub/web (wasm SPA): uses the `hub` client too (reqwest's wasm/fetch
-#     backend) instead of hand-rolling gloo-net calls.
+#   - zim-hub (server): serializes the same wire types AND compiles the
+#     same request impls its axum routes mirror. The route *paths* still
+#     have no compile-time link (see each request's doc comment).
+#   - zim-hub/web (wasm SPA): drives the same requests through reqwest's
+#     wasm/fetch backend.
+#
+# The executor (`ApiRequest`/`Client`/reqwest) is compiled UNCONDITIONALLY —
+# reqwest target-gates its native TLS/tokio stack, so this builds on wasm32
+# too. No client feature: every consumer sees the full, identical contract.
 [package]
 name = "zim-api"
 version = "0.1.0"
@@ -24,29 +28,44 @@ keywords.workspace = true
 categories.workspace = true
 
 [features]
-default = ["client"]
-# The reqwest-backed executor: `ApiRequest`, `Client`, `ApiError`, and the
-# request impls / `HubClient`. Off → only the pure (serde) wire types are
-# compiled, so a wasm32 consumer (the web SPA) can share the types without
-# pulling reqwest's native-TLS stack (which doesn't build on wasm).
-client = ["dep:reqwest", "dep:url"]
-# Hub wire types (+ helpers + JWT minting). Add `client` for the live
-# `HubClient`. Types alone need no reqwest.
+default = []
+# Hub wire types + requests + `HubClient` + JWT minting. Off for consumers
+# that only speak the daemon RPC.
 hub = ["dep:zim-crypto", "dep:zim-did", "dep:chrono", "dep:base64"]
+# Subject gates on top of `hub` — a feature is a *capability* (who speaks
+# these routes), never a client/server split: every enabled endpoint is
+# always the full definition (wire types + request impl).
+#
+# `/api/v0/admin/*` — the SPA's admin page + the hub server. Daemons never
+# speak these.
+admin = ["hub"]
+# `/api/v0/auth/device-code/*`, browser approve side — SPA + hub server.
+# (The daemon side of device-code login has its own types in `zim`.)
+grant = ["hub"]
+# `/api/v0/vaults/{id}/*` + `/api/v0/blob` — the hub's vault mirror surface
+# (head, log, blobs). Spoken by the browser wasm SDK + the hub server;
+# daemons sync over iroh, not HTTP. Pulls `zim-core` for `Link`/`VaultId`.
+vault = ["hub", "dep:zim-core"]
 
 [dependencies]
+async-trait = "0.1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+reqwest = { workspace = true }
+url = { workspace = true }
 
-# client feature only (reqwest's native TLS doesn't build on wasm32)
-reqwest = { workspace = true, optional = true }
-url = { workspace = true, optional = true }
-
-# hub feature only. zim-did with default-features off: we only use the
-# pure `did_key_encode`, NOT the `http-resolver` (reqwest→tokio→mio, which
-# doesn't build on wasm32 — would break the web SPA's types-only dep).
+# hub feature only. zim-did is pure (types + codec + resolver trait);
+# the reqwest-backed resolver impl lives HERE (hub::resolver).
 zim-crypto = { path = "../zim-crypto", version = "0.1.0", optional = true }
-zim-did = { path = "../zim-did", version = "0.1.0", optional = true, default-features = false }
+zim-did = { path = "../zim-did", version = "0.1.0", optional = true }
+# vault feature only — wire types carry `Link`/`VaultId`. zim-core is
+# iroh-free and wasm-clean by construction.
+zim-core = { path = "../zim-core", version = "0.1.0", optional = true }
 chrono = { workspace = true, optional = true }
+# wasm-safe Instant for the resolver cache (std on native). Already in-tree.
+web-time = "1"
 base64 = { version = "0.22", optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

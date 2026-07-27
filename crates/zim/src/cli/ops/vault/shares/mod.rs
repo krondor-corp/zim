@@ -1,8 +1,4 @@
-//! `zim vault <target> shares <subcommand>` — share-list ops.
-//!
-//! Bare `shares` (no subcommand) defaults to `list` — same shape as
-//! jig's `issues` group: `command: Option<Command>` plus a flattened
-//! `List` so the no-subcommand path falls through to it.
+//! `zim vault shares <subcommand> <target> …` — share-list ops.
 
 use async_trait::async_trait;
 use clap::Args;
@@ -15,13 +11,11 @@ pub mod rm;
 
 pub use list::List;
 
-/// Manage shares (list / add / rm). Bare `shares` lists.
+/// Manage shares (list / add / rm).
 #[derive(Args, Debug, Clone)]
 pub struct Shares {
     #[command(subcommand)]
-    pub command: Option<Command>,
-    #[command(flatten)]
-    pub list: List,
+    pub command: Command,
 }
 
 crate::command_enum! {
@@ -44,9 +38,6 @@ impl Op for Shares {
     }
 
     async fn run(&self, _ctx: ()) -> Result<Self::Output, Self::Error> {
-        match &self.command {
-            Some(cmd) => cmd.run(()).await,
-            None => Command::List(self.list.clone()).run(()).await,
-        }
+        self.command.run(()).await
     }
 }

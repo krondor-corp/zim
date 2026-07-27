@@ -1,4 +1,4 @@
-//! `POST /api/v0/v/{vault_id}/head` — advance the vault head.
+//! `POST /api/v0/vaults/{vault_id}/head` — advance the vault head.
 //!
 //! The browser (or any authenticated client) submits the blake3 hash
 //! of a new manifest blob it already pushed via `PUT /api/v0/blob`. The hub:
@@ -19,33 +19,22 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use serde::{Deserialize, Serialize};
 use zim_core::blobs::BlobStore;
 use zim_core::fs::Manifest;
 use zim_core::linked_data::{Hash, Link, LD_CBOR_CODEC};
 use zim_core::vault::{Head, VaultId};
 use zim_peer::{Effect, VaultLog};
+// Shared wire types — mirrored by `zim_api::hub::vault::WriteHeadRequest`.
+use zim_api::hub::vault::{WriteHeadBody, WriteHeadResponse};
 
 use crate::http::auth::RequireUser;
 use crate::state::AppState;
-
-#[derive(Debug, Deserialize)]
-pub struct WriteHeadRequest {
-    /// blake3 hex of the new manifest blob (already uploaded via PUT /api/v0/blob).
-    pub manifest_hash: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct WriteHeadResponse {
-    pub hash: String,
-    pub height: u64,
-}
 
 pub async fn handler(
     State(state): State<AppState>,
     RequireUser(_user): RequireUser,
     Path(vault_id): Path<VaultId>,
-    Json(req): Json<WriteHeadRequest>,
+    Json(req): Json<WriteHeadBody>,
 ) -> Response {
     let hash = match Hash::from_str(&req.manifest_hash) {
         Ok(h) => h,
@@ -53,7 +42,7 @@ pub async fn handler(
     };
     let manifest_link = Link::new(LD_CBOR_CODEC, hash);
 
-    let coord = state.service.peer().coord();
+    let coord = state.peer.coord();
     let blobs = coord.blobs();
     let log = coord.log();
 
@@ -185,14 +174,14 @@ async fn announce_to_shareholders(
     head: Head,
     manifest: &Manifest,
 ) {
-    let peer = state.service.peer();
+    let peer = &state.peer;
     let self_pk = peer.id();
     let author = *manifest.author();
 
     for (client, share) in manifest.shares().iter() {
         // `reach()` = where we dial for this share (the `via` host, else the
         // client); `client` = the recipient this push is for.
-        let Some(target) = share.reach().copied() else {
+        let Some(target) = share.reach() else {
             continue;
         };
         if target == self_pk || target == author {

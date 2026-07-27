@@ -9,12 +9,12 @@
 
 use async_trait::async_trait;
 use rusqlite::{params, OptionalExtension};
-use zim_did::Identity;
+use zim_did::Did;
 
 use std::path::Path;
 
 use crate::db::{Database, DatabaseError};
-use zim_core::peers::{PeerEntry, PeerStore, PeerStoreError};
+use crate::peers::{PeerEntry, PeerStore, PeerStoreError};
 
 type StoreError = PeerStoreError<DatabaseError>;
 
@@ -52,8 +52,8 @@ impl SqlitePeerStore {
     pub async fn upsert_via(
         &self,
         nick: &str,
-        identity: Identity,
-        via: Option<Identity>,
+        identity: Did,
+        via: Option<Did>,
         trusted: bool,
         notes: Option<String>,
     ) -> Result<(), StoreError> {
@@ -96,8 +96,8 @@ fn row_to_entry(
     notes: Option<String>,
     via: Option<String>,
 ) -> Result<PeerEntry, StoreError> {
-    let parse = |s: &str| -> Result<Identity, StoreError> {
-        Identity::parse(s).map_err(|e| {
+    let parse = |s: &str| -> Result<Did, StoreError> {
+        Did::parse(s).map_err(|e| {
             PeerStoreError::Backend(DatabaseError::Deserialize(anyhow::anyhow!(
                 "contact `{nick}` has unparseable DID `{s}`: {e}"
             )))
@@ -170,7 +170,7 @@ impl PeerStore for SqlitePeerStore {
     async fn upsert(
         &self,
         nick: &str,
-        identity: Identity,
+        identity: Did,
         trusted: bool,
         notes: Option<String>,
     ) -> Result<(), StoreError> {
@@ -232,10 +232,10 @@ fn backend(e: rusqlite::Error) -> StoreError {
 mod tests {
     use super::*;
 
-    fn did_key() -> Identity {
+    fn did_key() -> Did {
         // A deterministic did:key for a fixed pubkey.
         let pk = zim_crypto::PrivateKey::generate().public();
-        Identity::Key(pk)
+        Did::from_key(&pk)
     }
 
     #[tokio::test]

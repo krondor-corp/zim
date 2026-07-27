@@ -32,14 +32,12 @@ path = "src/bin/devseed.rs"
 
 [dependencies]
 # workspace — in-process peer Service surface
-zim = { path = "../zim", version = "0.1.0" }
 # Shared API contract: the server serializes these wire types; the CLI +
 # web SPA deserialize them. Routes here MUST mirror the request types in
 # `zim_api::hub` (no compile-time link — see each request's doc comment).
-zim-api = { path = "../zim-api", version = "0.1.0", default-features = false, features = ["hub"] }
+zim-api = { path = "../zim-api", version = "0.1.0", features = ["hub", "admin", "grant", "vault"] }
 zim-core = { path = "../zim-core", version = "0.1.0" }
 zim-did = { path = "../zim-did", version = "0.1.0" }
-zim-runtime = { path = "../zim-runtime", version = "0.1.0" }
 zim-peer = { path = "../zim-peer", version = "0.1.0" }
 zim-crypto = { path = "../zim-crypto", version = "0.1.0" }
 

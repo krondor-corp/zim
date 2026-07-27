@@ -83,7 +83,7 @@ impl BlobStore for HubBlobStore {
 }
 
 // ---------------------------------------------------------------------------
-// HubVaultLog — per-vault head log over /api/v0/v/{id}/...
+// HubVaultLog — per-vault head log over /api/v0/vaults/{id}/...
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug)]
@@ -260,7 +260,7 @@ impl WasmFs {
         let hub_key = crate::api::resolve_hub_key(&base)
             .await
             .map_err(|e| JsError::new(&format!("resolve hub key: {e}")))?;
-        let owner_via = Some(zim_did::Identity::Key(hub_key));
+        let owner_via = Some(zim_did::Did::from_key(&hub_key));
 
         let vault = Vault::init_with_shares(
             name,
@@ -335,8 +335,8 @@ impl WasmFs {
             .iter()
             .map(|(pk, share)| ShareView {
                 pubkey: pk.to_hex(),
-                did: share.identity().to_did().to_string(),
-                via: share.via().map(|v| v.to_did().to_string()),
+                did: share.identity().to_string(),
+                via: share.via().map(|v| v.to_string()),
             })
             .collect();
 
@@ -449,6 +449,16 @@ impl WasmFs {
             .mv(&from, &to)
             .await
             .map_err(|e| JsError::new(&format!("mv: {e}")))
+    }
+
+    /// Fast-forward to the hub's current head if it moved (another device
+    /// wrote). Returns `true` when the tree changed. Staged, unsaved
+    /// mutations are discarded on a real refresh — save first, or replay.
+    pub async fn refresh(&mut self) -> Result<bool, JsError> {
+        self.vault
+            .refresh()
+            .await
+            .map_err(|e| JsError::new(&format!("refresh: {e}")))
     }
 
     /// Persist staged mutations. `Vault::save` uploads the new manifest

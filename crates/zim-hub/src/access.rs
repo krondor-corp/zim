@@ -65,7 +65,7 @@ pub struct ManifestMeta {
 /// manifest. Returns `None` if the vault isn't in the log, the head
 /// link can't be looked up, or the manifest blob isn't local.
 pub async fn read_manifest_meta(state: &AppState, vault_id: VaultId) -> Option<ManifestMeta> {
-    let coord = state.service.peer().coord();
+    let coord = state.peer.coord();
     let log = coord.log();
     if !log.exists(vault_id).await.unwrap_or(false) {
         return None;

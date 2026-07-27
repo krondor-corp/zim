@@ -213,7 +213,7 @@ impl Op for Login {
         } else {
             let did = fetch_hub_did(&client, &hub_url).await?;
             let identity =
-                zim_did::Identity::parse(&did).map_err(|e| LoginError::PeerBook(e.to_string()))?;
+                zim_did::Did::parse(&did).map_err(|e| LoginError::PeerBook(e.to_string()))?;
             let store = zim_peer::SqlitePeerStore::open(&paths::log_file(&home))
                 .map_err(|e| LoginError::PeerBook(e.to_string()))?;
             // The hub is a relay endpoint, not a vault shareholder, so it's

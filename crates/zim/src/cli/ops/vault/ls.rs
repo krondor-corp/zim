@@ -8,12 +8,12 @@ use zim_core::vault::VaultId;
 use crate::cli::op::Op;
 use crate::cli::ui;
 use crate::context::{ApiContext, ContextError};
-use crate::http_server::api::client::{ApiClient, ApiError};
-use crate::http_server::api::v0::vault::ls::{EntryKind, LsRequest};
+use crate::daemon::api::client::{ApiClient, ApiError};
+use crate::daemon::api::v0::vault::ls::{EntryKind, LsRequest};
 
 #[derive(Args, Debug, Clone)]
 pub struct Ls {
-    #[arg(skip)]
+    /// Vault id or name.
     pub target: String,
     #[arg(default_value = "/")]
     pub path: String,

@@ -28,9 +28,10 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use zim_crypto::{PrivateKey, PublicKey};
 
-use zim_core::blobs::{BlobStore, BlobsProvider};
+use crate::blobs::BlobsProvider;
+use crate::iroh::{Downloader, Endpoint, Shuffled};
+use zim_core::blobs::BlobStore;
 use zim_core::fs::{Manifest, MergeResult};
-use zim_core::iroh::{Downloader, Endpoint, Shuffled};
 use zim_core::linked_data::Link;
 use zim_core::vault::{Head, VaultId, VaultLog};
 
@@ -143,6 +144,86 @@ where
 
     pub fn log(&self) -> &L {
         &self.log
+    }
+
+    /// The accept policy — shared with the blob-ALPN gate in `Peer`.
+    pub fn accept_policy(&self) -> Arc<dyn AcceptPolicy> {
+        self.accept.clone()
+    }
+
+    /// One reconcile sweep: for every vault we hold, enqueue a
+    /// `PullFromPeer` toward each distinct dial target in its head
+    /// manifest's shares. `pull_from_peer` is a single cheap
+    /// head-comparison round trip when we're already current, so this
+    /// is the catch-up mechanism for pushes missed while offline —
+    /// sync is push-based (`HeadAdvanced`) and pushes are
+    /// fire-and-forget, so without a periodic sweep a missed push is
+    /// lost forever. Reads manifests straight from the log + blob
+    /// store (no `Vault::open`), so it also works on a relay that
+    /// holds no share.
+    pub async fn reconcile_pass(&self) {
+        let self_pk = self.secret.public();
+        let ids = match self.log.list_vaults().await {
+            Ok(ids) => ids,
+            Err(e) => {
+                tracing::warn!("reconcile: list_vaults: {e}");
+                return;
+            }
+        };
+        tracing::info!(vaults = ids.len(), "reconcile sweep");
+        for vault_id in ids {
+            let head = match self.log.head(vault_id, None).await {
+                Ok(h) => h,
+                Err(e) => {
+                    tracing::debug!(%vault_id, "reconcile: head: {e}");
+                    continue;
+                }
+            };
+            let manifest: Manifest = match self.blobs.get_cbor(&head.link).await {
+                Ok(m) => m,
+                Err(e) => {
+                    tracing::debug!(%vault_id, "reconcile: manifest fetch: {e}");
+                    continue;
+                }
+            };
+            // Re-announce our head to every shareholder (push retry: the
+            // share-time announce is fire-and-forget, so a recipient that
+            // was unreachable would otherwise never learn the vault
+            // exists), then pull from each distinct dial target (catch-up
+            // for pushes *we* missed). Both are cheap no-ops when the
+            // other side is current.
+            let mut targets: Vec<PublicKey> = Vec::new();
+            for (client, share) in manifest.shares().iter() {
+                let Some(target) = share.reach() else {
+                    continue;
+                };
+                if target == self_pk {
+                    continue;
+                }
+                targets.push(target);
+                if let Err(e) = self
+                    .submit(Effect::AnnounceHead {
+                        peer_id: target,
+                        vault_id,
+                        head: Box::new(head.clone()),
+                        recipient: *client,
+                    })
+                    .await
+                {
+                    tracing::debug!(%vault_id, "reconcile: enqueue announce: {e}");
+                }
+            }
+            targets.sort();
+            targets.dedup();
+            for peer_id in targets {
+                if let Err(e) = self
+                    .submit(Effect::PullFromPeer { peer_id, vault_id })
+                    .await
+                {
+                    tracing::debug!(%vault_id, "reconcile: enqueue pull: {e}");
+                }
+            }
+        }
     }
 
     pub fn blobs(&self) -> &BlobsProvider {
@@ -594,12 +675,12 @@ where
         let discovery = Shuffled::new(
             peer_ids
                 .iter()
-                .map(zim_core::iroh::to_iroh_public_key)
+                .map(crate::iroh::to_iroh_public_key)
                 .collect(),
         );
         // `Downloader` speaks iroh hashes; convert at the boundary (the
         // codebase convention — see `blobs::provider`).
-        let iroh_hash = zim_core::iroh::Hash::from(hash);
+        let iroh_hash = crate::iroh::to_iroh_hash(hash);
         downloader.download(iroh_hash, discovery).await?;
         Ok(())
     }
@@ -679,7 +760,7 @@ where
         let mut peer_ids: Vec<PublicKey> = manifest
             .shares()
             .iter()
-            .filter_map(|(_, share)| share.reach().copied())
+            .filter_map(|(_, share)| share.reach())
             .chain(source_peers.iter().copied())
             .collect();
         peer_ids.sort();

@@ -30,7 +30,6 @@ web-sys = { version = "0.3", features = [
     "Clipboard",
 ] }
 gloo-storage = "0.3"
-gloo-net = "0.6"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 hex = "0.4"
@@ -38,6 +37,7 @@ console_error_panic_hook = "0.1"
 
 # The SDK: HubClient / WasmFs / crypto, called directly as Rust.
 zim-hub-wasm = { path = "../wasm" }
-# Shared hub wire types (types-only — no reqwest, so it builds on wasm32).
-# We deserialize the same `Device` the hub server serializes + the CLI reads.
-zim-api = { path = "../../zim-api", default-features = false, features = ["hub"] }
+# Shared hub wire types + the typed client (reqwest's wasm/fetch backend).
+# Same `ApiRequest` types the hub server compiles + the CLI calls; the SPA
+# additionally speaks the admin page + browser device-code approval.
+zim-api = { path = "../../zim-api", features = ["hub", "admin", "grant"] }

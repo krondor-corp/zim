@@ -9,13 +9,13 @@ use clap::Args;
 use crate::cli::op::Op;
 use crate::cli::ui;
 use crate::context::{ApiContext, ContextError};
-use crate::http_server::api::client::ApiError;
-use crate::http_server::api::v0::peers::list::ListRequest as PeersListRequest;
-use crate::http_server::api::v0::vault::shares::{ShareInfo, SharesRequest};
+use crate::daemon::api::client::ApiError;
+use crate::daemon::api::v0::peers::list::ListRequest as PeersListRequest;
+use crate::daemon::api::v0::vault::shares::{ShareInfo, SharesRequest};
 
 #[derive(Args, Debug, Clone)]
 pub struct List {
-    #[arg(skip)]
+    /// Vault id or name.
     pub target: String,
 }
 
@@ -75,11 +75,16 @@ impl fmt::Display for ListOutput {
             let is_you = s.peer == self.you;
             let nick = self.nicks.get(&s.peer);
             match (nick, is_you) {
-                (Some(n), true) => writeln!(f, "{} {} {}", n, ui::dim(&s.peer), ui::dim("(you)"))?,
-                (Some(n), false) => writeln!(f, "{} {}", n, ui::dim(&s.peer))?,
-                (None, true) => writeln!(f, "{} {}", s.peer, ui::dim("(you)"))?,
-                (None, false) => writeln!(f, "{}", s.peer)?,
+                (Some(n), true) => write!(f, "{} {} {}", n, ui::dim(&s.peer), ui::dim("(you)"))?,
+                (Some(n), false) => write!(f, "{} {}", n, ui::dim(&s.peer))?,
+                (None, true) => write!(f, "{} {}", s.peer, ui::dim("(you)"))?,
+                (None, false) => write!(f, "{}", s.peer)?,
             }
+            // Hosted shares are reached through a host, not dialed.
+            if let Some(via) = &s.via {
+                write!(f, " {}", ui::dim(format!("via {via}")))?;
+            }
+            writeln!(f)?;
         }
         Ok(())
     }

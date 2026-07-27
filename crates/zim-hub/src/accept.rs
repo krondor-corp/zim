@@ -52,6 +52,12 @@ impl HubAcceptPolicy {
 
 #[async_trait]
 impl AcceptPolicy for HubAcceptPolicy {
+    async fn accept_blob(&self, sender: &PublicKey) -> bool {
+        // Ciphertext blobs are served only to enrolled devices (any
+        // user) — the mirror is for its tenants, not the open internet.
+        self.enrolled(sender).await
+    }
+
     async fn accept_sync(&self, sync: &IncomingSync) -> bool {
         // Only relay for a hosted recipient, and only from a device we
         // control. Both must be enrolled.

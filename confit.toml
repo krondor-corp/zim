@@ -26,5 +26,5 @@ google_o_auth_client_id     = "op_env://GOOGLE_O_AUTH_CLIENT_ID"
 google_o_auth_client_secret = "op_env://GOOGLE_O_AUTH_CLIENT_SECRET"
 
 [services.hub]
-domain = "zim.krondor.org"
+domain = "hub.zim.krondor.org"
 port   = 8080

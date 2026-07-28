@@ -121,7 +121,7 @@ pub fn key_gate(props: &Props) -> Html {
 
     let creating = *mode == Mode::Create;
     html! {
-        <div class="card" style="max-width:440px;margin:0 auto;">
+        <div class="gate" style="max-width:440px;margin:0 auto;">
             <h3 style="margin-top:0;">
                 { if creating { "Create your web key" } else { "Unlock your account" } }
             </h3>

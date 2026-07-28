@@ -5,7 +5,7 @@ use yew::prelude::*;
 use yew_router::prelude::*;
 
 use crate::api::Me;
-use crate::layouts::AppShell;
+use crate::layouts::PackChrome;
 use crate::pages;
 
 #[derive(Clone, Routable, PartialEq)]
@@ -30,21 +30,24 @@ pub enum Route {
 pub fn switch(route: Route, me: &Me) -> Html {
     match route {
         Route::Workspace => html! {
-            <AppShell email={me.email.clone()}>
+            <PackChrome crumb="vaults">
                 <pages::workspace::Workspace user_id={me.user_id.clone()} />
-            </AppShell>
+            </PackChrome>
         },
+        // The vault workspace is pack's editor-layout: its own fixed
+        // header + tree + document chrome, no AppShell sidebar.
         Route::Vault { id } => html! {
-            <AppShell email={me.email.clone()}>
-                <pages::vault::VaultTree vault_id={id} />
-            </AppShell>
+            <pages::vault::VaultTree vault_id={id} user_id={me.user_id.clone()} />
         },
-        // Settings is a full-screen layout of its own.
-        Route::Settings => html! { <pages::settings::Settings me={me.clone()} /> },
+        Route::Settings => html! {
+            <PackChrome crumb="settings">
+                <pages::settings::Settings me={me.clone()} />
+            </PackChrome>
+        },
         Route::Admin => html! {
-            <AppShell email={me.email.clone()}>
+            <PackChrome crumb="admin">
                 <pages::admin::Admin />
-            </AppShell>
+            </PackChrome>
         },
         // Device pairing has its own bare layout (reached pre-app from a
         // `zim hub login` link).

@@ -1,15 +1,52 @@
-//! Workspace: the vault list + "New vault". The list comes from
-//! `/api/v0/vaults` (cookie-authed); creation goes through `WasmFs::init`
-//! (browser key as owner), then the list reloads.
+//! Workspace: no screen — a resolver. Sign-in lands here and gets
+//! redirected straight into a vault: the last one opened (localStorage)
+//! when it still exists, else the first in the account. With zero
+//! vaults it renders the one vestige of the old list page: a
+//! "create your first vault" empty state. Creation itself goes through
+//! `WasmFs::init` (browser key as owner) and is also reachable from
+//! the vault switcher's "+ New vault".
 
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 use yew_router::prelude::*;
 use zim_wasm::WasmFs;
 
-use crate::api::{fetch_vaults, VaultItem};
+use crate::api::fetch_vaults;
+use crate::components::dialog::PromptDialog;
 use crate::routes::Route;
 use crate::util::{jserr, origin};
+
+const LAST_VAULT_KEY: &str = "zim.last_vault";
+
+/// Remember the vault the user is working in (read back by the
+/// workspace resolver on next sign-in).
+pub fn remember_vault(id: &str) {
+    if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+        let _ = storage.set_item(LAST_VAULT_KEY, id);
+    }
+}
+
+fn last_vault() -> Option<String> {
+    web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|s| s.get_item(LAST_VAULT_KEY).ok().flatten())
+        .filter(|v| !v.is_empty())
+}
+
+/// Create a vault with `name` and navigate into it. Shared by the
+/// empty-state dialog here and the switcher's "+ New vault" dialog.
+pub fn create_vault(name: String, user_id: String, navigator: Navigator, error: Callback<String>) {
+    spawn_local(async move {
+        match WasmFs::init(name, origin(), user_id).await {
+            Ok(fs) => {
+                let id = fs.vault_id();
+                remember_vault(&id);
+                navigator.push(&Route::Vault { id });
+            }
+            Err(e) => error.emit(jserr(e.into())),
+        }
+    });
+}
 
 #[derive(Properties, PartialEq)]
 pub struct Props {
@@ -19,97 +56,79 @@ pub struct Props {
 
 #[function_component(Workspace)]
 pub fn workspace(props: &Props) -> Html {
-    let vaults = use_state(|| None::<Vec<VaultItem>>);
     let error = use_state(String::new);
-    let creating = use_state(|| false);
-
-    let reload = {
-        let vaults = vaults.clone();
-        let error = error.clone();
-        Callback::from(move |_: ()| {
-            let vaults = vaults.clone();
-            let error = error.clone();
-            spawn_local(async move {
-                match fetch_vaults().await {
-                    Ok(v) => vaults.set(Some(v)),
-                    Err(e) => error.set(e),
-                }
-            });
-        })
-    };
+    // None = still resolving; Some(true) = no vaults (show empty state).
+    let empty = use_state(|| None::<bool>);
+    let navigator = use_navigator().expect("router context");
 
     {
-        let reload = reload.clone();
+        let empty = empty.clone();
+        let error = error.clone();
+        let navigator = navigator.clone();
         use_effect_with((), move |_| {
-            reload.emit(());
+            spawn_local(async move {
+                match fetch_vaults().await {
+                    Ok(list) if list.is_empty() => empty.set(Some(true)),
+                    Ok(list) => {
+                        // Last-opened when it still exists, else first.
+                        let target = last_vault()
+                            .filter(|id| list.iter().any(|v| &v.vault_id == id))
+                            .unwrap_or_else(|| list[0].vault_id.clone());
+                        navigator.replace(&Route::Vault { id: target });
+                    }
+                    Err(e) => {
+                        error.set(e);
+                        empty.set(Some(true));
+                    }
+                }
+            });
             || ()
         });
     }
 
-    let new_vault = {
-        let creating = creating.clone();
-        let reload = reload.clone();
-        let error = error.clone();
+    let show_dialog = use_state(|| false);
+    let open_dialog = {
+        let show_dialog = show_dialog.clone();
+        Callback::from(move |_: MouseEvent| show_dialog.set(true))
+    };
+    let dialog_html = if *show_dialog {
+        let show_dialog = show_dialog.clone();
         let user_id = props.user_id.clone();
-        Callback::from(move |_: MouseEvent| {
-            let name = web_sys::window()
-                .and_then(|w| w.prompt_with_message("New vault name:").ok().flatten())
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
-            let Some(name) = name else {
-                return;
-            };
-            let creating = creating.clone();
-            let reload = reload.clone();
-            let error = error.clone();
-            let user_id = user_id.clone();
-            creating.set(true);
-            error.set(String::new());
-            spawn_local(async move {
-                match WasmFs::init(name, origin(), user_id).await {
-                    Ok(_) => {
-                        creating.set(false);
-                        reload.emit(());
-                    }
-                    Err(e) => {
-                        creating.set(false);
-                        error.set(jserr(e.into()));
-                    }
-                }
-            });
-        })
+        let navigator = navigator.clone();
+        let error = error.clone();
+        html! {
+            <PromptDialog title="New vault" label="Name"
+                on_cancel={let s = show_dialog.clone(); Callback::from(move |_: ()| s.set(false))}
+                on_submit={Callback::from(move |name: String| {
+                    show_dialog.set(false);
+                    let error = error.clone();
+                    create_vault(name, user_id.clone(), navigator.clone(),
+                        Callback::from(move |e: String| error.set(e)));
+                })} />
+        }
+    } else {
+        Html::default()
     };
 
     html! {
-        <>
-            <span class="page-eyebrow">{ "workspace" }</span>
-            <h1>{ "Your vaults" }</h1>
-            <div style="display:flex;align-items:center;gap:0.75rem;margin:0 0 1rem;">
-                <button class="btn btn-primary" onclick={new_vault} disabled={*creating}>
-                    { if *creating { "Creating\u{2026}" } else { "New vault" } }
-                </button>
-            </div>
+        <div class="doc-empty" style="min-height:60vh;flex-direction:column;gap:1rem;">
             if !(*error).is_empty() {
                 <div class="error">{ (*error).clone() }</div>
             }
             {
-                match &*vaults {
-                    None => html! { <p class="muted">{ "Loading\u{2026}" }</p> },
-                    Some(list) if list.is_empty() => html! {
-                        <div class="section-empty">{ "No vaults yet. Click New vault to create one." }</div>
-                    },
-                    Some(list) => html! {
-                        <div class="card-grid">
-                            { for list.iter().map(|v| html! {
-                                <Link<Route> classes="card" to={Route::Vault { id: v.vault_id.clone() }}>
-                                    <h3>{ v.name.clone() }</h3>
-                                    <span class="card-meta">{ v.vault_id.clone() }</span>
-                                </Link<Route>>
-                            }) }
-                        </div>
+                match *empty {
+                    None => html! { <span>{ "Loading\u{2026}" }</span> },
+                    Some(_) => html! {
+                        <>
+                            <p>{ "No vaults yet. A vault is an encrypted, versioned folder that syncs to all your devices." }</p>
+                            <button type="button" class="tree-pane__new" style="padding:0.5rem 1.2rem;" onclick={open_dialog}>
+                                { "+ Create your first vault" }
+                            </button>
+                        </>
                     },
                 }
             }
-        </>
+            { dialog_html }
+        </div>
     }
 }

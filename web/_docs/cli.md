@@ -1,217 +1,102 @@
 ---
-title: CLI Reference
+title: CLI reference
 order: 4
 ---
 
-The `zim` command-line tool manages buckets, runs the daemon, and controls P2P sync.
+The `zim` command-line tool runs the daemon, manages vaults, and drives
+peer-to-peer sync. Commands talk to a local daemon over its HTTP API on
+loopback; start it with `zim daemon run` (or install it as a service).
 
 ## Setup
 
 ```bash
-zim init                    # one-time: create state dir + identity
-zim daemon                  # start the daemon (foreground)
+zim init                 # create your data dir + device identity
+zim id                   # print this device's public key
+zim daemon run           # run the daemon in the foreground
+zim update               # update the binary (and restart the service)
 ```
 
-The daemon must be running for most commands to work. Run it in one terminal, use the CLI in another.
+## Vaults
 
-## Buckets
-
-### Create a bucket
+A vault is an encrypted, versioned folder. Commands are verb-first —
+`zim vault <op> <vault> …`, where `<vault>` is a name or id.
 
 ```bash
-zim bucket create my-notes
+zim vault create notes                    # create a vault
+zim vault list                            # list vaults this device holds
+zim vault head notes                      # current version + height
+
+zim vault ls notes /                      # list a directory
+zim vault cat notes /readme.md            # read a file to stdout
+echo "hi" | zim vault add notes /hi.md    # write a file (content from stdin)
+zim vault mkdir notes /docs               # create a directory
+zim vault mv notes /a.md /docs/a.md       # move a path
+zim vault rm notes /draft.md              # remove a path
 ```
 
-### List all buckets
+## Sharing
+
+Grant another device or account access to a vault by adding its
+identity as a shareholder. A peer can be a `did:key`, a `did:web`
+account (to share into someone's hub), or a nickname from your address
+book.
 
 ```bash
-zim bucket ls
+zim vault shares add notes <did-or-nickname>    # grant access
+zim vault shares list notes                     # who can decrypt this vault
+zim vault shares rm notes <did-or-nickname>     # revoke access
 ```
 
-### List files in a bucket
+Once shared, the vault syncs to the recipient automatically over the
+peer-to-peer transport (relayed through a hub when one of you is
+offline). To pull from a specific peer on demand:
 
 ```bash
-zim bucket ls my-notes /
-zim bucket ls my-notes /docs/
+zim vault sync notes <peer>
 ```
 
-### Add a file
+## Peers
+
+Your local address book maps nicknames to public keys, so you can use
+names instead of raw keys in `shares` and `sync`.
 
 ```bash
-zim bucket add my-notes ./readme.md
-zim bucket add my-notes ./photos/  # add a directory
-```
-
-### Read a file
-
-```bash
-zim bucket cat my-notes /readme.md
-```
-
-### Create a directory
-
-```bash
-zim bucket mkdir my-notes /docs
-```
-
-### Move or rename
-
-```bash
-zim bucket mv my-notes /old-name.txt /new-name.txt
-```
-
-### Delete a file or directory
-
-```bash
-zim bucket rm my-notes /draft.md
-```
-
-### View version history
-
-```bash
-zim bucket history my-notes
-```
-
-### Bucket status
-
-```bash
-zim bucket stat my-notes
-```
-
-### Clone a bucket from a peer
-
-```bash
-zim bucket clone <share-link>
-```
-
-### Approve or ignore a pending bucket
-
-```bash
-zim bucket approve <bucket-id>
-zim bucket ignore <bucket-id>
-```
-
-## Publishing
-
-### Publish individual files or folders
-
-```bash
-zim bucket files publish my-notes /readme.md
-zim bucket folders publish my-notes /docs/
-```
-
-### List published entries
-
-```bash
-zim bucket files list my-notes
-zim bucket folders list my-notes
-```
-
-## Sharing & access
-
-### List shares
-
-```bash
-zim bucket shares ls my-notes
-```
-
-### Create a share link
-
-```bash
-zim bucket shares create my-notes
-```
-
-## Mirrors
-
-### Add a mirror (e.g. a zim-hub)
-
-```bash
-zim bucket mirror add my-notes <hub-node-id>
-```
-
-### Remove a mirror
-
-```bash
-zim bucket mirror remove my-notes <hub-node-id>
-```
-
-### List mirrors
-
-```bash
-zim bucket mirror list my-notes
-```
-
-## Viewer management
-
-### List pending viewer requests
-
-```bash
-zim bucket viewer list my-notes
-```
-
-### Authorize a viewer
-
-```bash
-zim bucket viewer authorize my-notes <viewer-pubkey>
-```
-
-### Deauthorize a viewer
-
-```bash
-zim bucket viewer deauthorise my-notes <viewer-pubkey>
-```
-
-## Sync
-
-### Manually trigger sync with a peer
-
-```bash
-zim bucket sync now my-notes <node-id>
-```
-
-### List sync peers
-
-```bash
-zim bucket sync list my-notes
-```
-
-## FUSE mounting
-
-Mount a bucket as a local directory (requires FUSE support — see [Mounting Buckets]({{ '/docs/mounting/' | relative_url }})):
-
-```bash
-zim fs mount my-notes /mnt/my-notes
-zim fs unmount my-notes
-zim fs list
-```
-
-## Daemon
-
-```bash
-zim daemon                  # start (foreground)
-zim daemon --gateway-only   # gateway mode (no full API)
+zim peers add alice <pubkey>    # remember a peer under a nickname
+zim peers list                  # everyone this device knows
+zim peers ping alice            # round-trip: identity, version, RTT
+zim peers rm alice              # forget a nickname
 ```
 
 ## Hub
 
-```bash
-zim hub register --hub https://hub.example.com   # register this device with a hub
-zim hub login --hub https://hub.example.com       # refresh auth token
-```
-
-## Other
+Pair a device with a hub to sync through your account and reach the
+browser. See [Your devices]({{ '/docs/devices/' | relative_url }}) for
+the full flow.
 
 ```bash
-zim health          # check daemon health
-zim version         # print version
-zim update          # self-update to latest release
-zim --plain ...     # no colors, no table borders (for scripting)
+zim hub login --hub https://hub.zim.krondor.org   # pair this device
+zim hub peers sync                                 # sync the account roster
+zim hub peers ls                                   # roster + who's in your book
 ```
 
-## Global options
+> Vaults created in the browser won't appear on a device (and vice
+> versa) until that device has run `zim hub peers sync`.
 
-| Flag | What it does |
-|------|-------------|
-| `--remote <URL>` | Target a specific daemon URL instead of the default. |
-| `--config-path <PATH>` | Use a custom state directory (defaults to `~/.config/zim/`). |
-| `--plain` | Plain text output — no colors, no table borders. |
+## Mounting
+
+Mount a vault as a local folder (requires FUSE — see
+[Mounting]({{ '/docs/mounting/' | relative_url }})):
+
+```bash
+zim mount add notes ~/zim/notes    # mount at a path
+zim mount list                     # mounts + status
+zim mount stop notes               # unmount (keeps the registration)
+zim mount remove notes             # unmount and forget
+```
+
+## Status
+
+```bash
+zim health        # daemon health
+zim version       # build info
+```

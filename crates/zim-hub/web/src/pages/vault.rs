@@ -1,21 +1,26 @@
-//! Vault tree browser: open a vault and walk it by path. Read (`ls`/`cat`)
+//! Vault workspace: pack-style shell — persistent expandable file tree
+//! on the left, document editor/viewer on the right. Read (`ls`/`cat`)
 //! and edit (`add_file`/`mkdir`/`rm` then `save`) go through the held
-//! `WasmFs` — all blob crypto happens inside the SDK. The handle lives in a
-//! `RefCell` across user actions (which are sequential, so the borrows don't
-//! overlap).
+//! `WasmFs` — all blob crypto happens inside the SDK. The handle lives
+//! in a `RefCell` across user actions (which are sequential, so the
+//! borrows don't overlap).
 
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use serde::Deserialize;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::HtmlInputElement;
 use yew::prelude::*;
+use yew_router::prelude::*;
 use zim_wasm::WasmFs;
 
-use yew_router::prelude::*;
-
-use crate::api::{fetch_devices, fetch_me, Device, FsEntry};
+use crate::api::{fetch_devices, fetch_me, fetch_vaults, Device, FsEntry, VaultItem};
+use crate::pages::vault_editor::{EditorPane, OpenFile};
+use crate::pages::vault_tree::{build_rows, CtxMenu, CtxTarget, TreeNode, TreePane};
+use crate::components::dialog::{ConfirmDialog, PromptDialog};
+use crate::layouts::HeaderMenu;
 use crate::routes::Route;
 use crate::util::{jserr, origin};
 
@@ -47,26 +52,6 @@ fn read_meta(fs: &FsHandle) -> Option<VaultMeta> {
     let f = guard.as_ref()?;
     let json = f.manifest_info().ok()?;
     serde_json::from_str::<VaultMeta>(&json).ok()
-}
-
-/// A decrypted file ready to preview: its name, resolved MIME, an object-URL
-/// over the bytes (for `<img>`/`<video>`/`<iframe download>` etc.), and the
-/// decoded text when it's a textual type.
-#[derive(Clone, PartialEq)]
-struct Preview {
-    name: String,
-    mime: String,
-    url: String,
-    text: Option<String>,
-}
-
-/// MIME from the manifest entry, falling back to a guess from the extension
-/// (files added in-browser may not carry a MIME).
-fn resolve_mime(entry: &FsEntry) -> String {
-    match entry.mime.as_deref() {
-        Some(m) if !m.is_empty() => m.to_string(),
-        _ => guess_mime(&entry.name),
-    }
 }
 
 fn guess_mime(name: &str) -> String {
@@ -121,18 +106,23 @@ fn object_url(bytes: &[u8], mime: &str) -> Result<String, String> {
     web_sys::Url::create_object_url_with_blob(&blob).map_err(jserr)
 }
 
+/// Which first-class dialog is open (replaces browser prompt/confirm).
+#[derive(Clone, PartialEq)]
+enum Dialog {
+    NewNote { dir: String },
+    NewFolder { dir: String },
+    Delete { path: String },
+    NewVault,
+}
+
 #[derive(Properties, PartialEq)]
 pub struct Props {
     pub vault_id: String,
+    /// Signed-in user id — the switcher's "+ New vault" shares new
+    /// vaults with all the account's devices.
+    pub user_id: String,
 }
 
-fn path_of(stack: &[String]) -> String {
-    if stack.is_empty() {
-        "/".to_string()
-    } else {
-        format!("/{}", stack.join("/"))
-    }
-}
 /// Abbreviate a 64-char hex vault id for display: `01fc44f0\u{2026}405e38`.
 /// The full id is in the Details panel.
 fn short_id(id: &str) -> String {
@@ -140,14 +130,6 @@ fn short_id(id: &str) -> String {
         format!("{}\u{2026}{}", &id[..8], &id[id.len() - 6..])
     } else {
         id.to_string()
-    }
-}
-
-fn child_of(stack: &[String], name: &str) -> String {
-    if stack.is_empty() {
-        format!("/{name}")
-    } else {
-        format!("/{}/{}", stack.join("/"), name)
     }
 }
 
@@ -229,38 +211,96 @@ async fn rm_and_save(fs: &FsHandle, path: String) -> Result<(), String> {
     .await
 }
 
+async fn mv_and_save(fs: &FsHandle, from: String, to: String) -> Result<(), String> {
+    save_with_retry(fs, async |f: &mut WasmFs| {
+        f.mv(from.clone(), to.clone())
+            .await
+            .map_err(|e| jserr(e.into()))
+    })
+    .await
+}
+
+/// Load `path` into an [`OpenFile`] (decrypt, object-URL, decode text).
+async fn load_file(fs: &FsHandle, path: String) -> Result<OpenFile, String> {
+    let bytes = cat(fs, path.clone()).await?;
+    let name = path.rsplit('/').next().unwrap_or_default();
+    let mime = guess_mime(name);
+    let url = object_url(&bytes, &mime)?;
+    let text = if is_textual(&mime) && bytes.len() < 2_000_000 {
+        String::from_utf8(bytes).ok()
+    } else {
+        None
+    };
+    Ok(OpenFile {
+        path,
+        mime,
+        url,
+        text,
+    })
+}
+
+
+/// Join `dir` + `name` into a vault path.
+fn joined(dir: &str, name: &str) -> String {
+    if dir == "/" {
+        format!("/{name}")
+    } else {
+        format!("{dir}/{name}")
+    }
+}
+
 #[function_component(VaultTree)]
 pub fn vault_tree(props: &Props) -> Html {
     let fs: FsHandle = use_mut_ref(|| None::<WasmFs>);
-    let stack = use_state(Vec::<String>::new);
-    let entries = use_state(|| None::<Vec<FsEntry>>);
-    let preview = use_state(|| None::<Preview>);
+    let expanded = use_state(BTreeSet::<String>::new);
+    let rows = use_state(|| None::<Vec<TreeNode>>);
+    let open_file = use_state(|| None::<OpenFile>);
     let error = use_state(String::new);
     let status = use_state(String::new);
+    // The in-flight edit: Some(text) once the open file's content has
+    // been touched; cleared on save / file switch. Drives the header's
+    // Save affordance.
+    let draft = use_state(|| None::<String>);
     let meta = use_state(|| None::<VaultMeta>);
     let devices = use_state(Vec::<Device>::new);
-    // The account's `did:web` — shown for the web key in the shareholders list
-    // instead of its raw `did:key`. Empty until `/me` resolves.
     let web_did = use_state(String::new);
     let show_details = use_state(|| false);
+    let vaults = use_state(Vec::<VaultItem>::new);
+    let ctx = use_state(|| None::<CtxMenu>);
+    let dialog = use_state(|| None::<Dialog>);
+    let dragging = use_state(|| None::<String>);
+    let upload_dir = use_state(|| "/".to_string());
+    let upload_input = use_node_ref();
 
-    // ls a path and render it; refresh the manifest metadata too (cheap,
-    // synchronous read of the open vault — keeps height/shares current
-    // after navigation and edits).
-    let load = {
+    // Rebuild the whole visible tree: refresh from the hub, walk root +
+    // every expanded dir, refresh manifest metadata. Expansion state is
+    // preserved, so this is the one refresh path after any mutation.
+    let rebuild = {
         let fs = fs.clone();
-        let entries = entries.clone();
+        let expanded = expanded.clone();
+        let rows = rows.clone();
         let error = error.clone();
         let meta = meta.clone();
-        Callback::from(move |path: String| {
+        Callback::from(move |_: ()| {
             let fs = fs.clone();
-            let entries = entries.clone();
+            let expanded_set = (*expanded).clone();
+            let rows = rows.clone();
             let error = error.clone();
             let meta = meta.clone();
             yew::platform::spawn_local(async move {
+                if fs.borrow().is_none() {
+                    return; // pre-open effect fire; mount path rebuilds explicitly
+                }
                 refresh(&fs).await;
-                match ls(&fs, path).await {
-                    Ok(es) => entries.set(Some(es)),
+                let lister = {
+                    let fs = fs.clone();
+                    move |p: String| {
+                        let fs = fs.clone();
+                        async move { ls(&fs, p).await }
+                    }
+                };
+                match build_rows(lister, &expanded_set).await {
+                    Ok(r) => rows.set(Some(r)),
                     Err(e) => error.set(e),
                 }
                 meta.set(read_meta(&fs));
@@ -268,41 +308,64 @@ pub fn vault_tree(props: &Props) -> Html {
         })
     };
 
-    // Open on mount, then list root.
+    // Open on mount, then build the root tree; load the account's vault
+    // list (switcher) + devices (details panel).
     {
         let fs = fs.clone();
-        let load = load.clone();
+        let rebuild = rebuild.clone();
         let error = error.clone();
         let devices = devices.clone();
         let web_did = web_did.clone();
+        let vaults = vaults.clone();
+        let expanded = expanded.clone();
+        let rows = rows.clone();
+        let open_file = open_file.clone();
         let vault_id = props.vault_id.clone();
         use_effect_with(vault_id.clone(), move |_| {
             let fs = fs.clone();
-            let load = load.clone();
+            let rebuild = rebuild.clone();
             let error = error.clone();
             let devices = devices.clone();
             let web_did = web_did.clone();
+            let vaults = vaults.clone();
+            // Fresh vault, fresh view state: expansion paths and the
+            // open file belong to the PREVIOUS vault.
+            expanded.set(BTreeSet::new());
+            rows.set(None);
+            open_file.set(None);
+            crate::pages::workspace::remember_vault(&vault_id);
             yew::platform::spawn_local(async move {
                 match open(&fs, vault_id).await {
-                    Ok(()) => load.emit("/".to_string()),
+                    Ok(()) => rebuild.emit(()),
                     Err(e) => error.set(e),
                 }
-                // For flagging which shareholders are our own devices, and
-                // rendering the web key by its account `did:web`.
                 if let Ok(d) = fetch_devices().await {
                     devices.set(d);
                 }
                 if let Ok(Some(me)) = fetch_me().await {
                     web_did.set(me.did);
                 }
+                if let Ok(v) = fetch_vaults().await {
+                    vaults.set(v);
+                }
             });
             || ()
         });
     }
 
-    // Revoke the preview's object URL when it changes or the view unmounts.
+    // Expansion set drives the tree; rebuild on every change.
     {
-        let url = (*preview).as_ref().map(|p| p.url.clone());
+        let rebuild = rebuild.clone();
+        let expanded_now = (*expanded).clone();
+        use_effect_with(expanded_now, move |_| {
+            rebuild.emit(());
+            || ()
+        });
+    }
+
+    // Revoke the open file's object URL when it changes or we unmount.
+    {
+        let url = (*open_file).as_ref().map(|p| p.url.clone());
         use_effect_with(url, move |url| {
             let url = url.clone();
             move || {
@@ -313,90 +376,78 @@ pub fn vault_tree(props: &Props) -> Html {
         });
     }
 
-    let enter_dir = {
-        let stack = stack.clone();
-        let load = load.clone();
-        let preview = preview.clone();
-        Callback::from(move |name: String| {
-            let mut next = (*stack).clone();
-            next.push(name);
-            stack.set(next.clone());
-            preview.set(None);
-            load.emit(path_of(&next));
+    let on_toggle = {
+        let expanded = expanded.clone();
+        Callback::from(move |path: String| {
+            let mut next = (*expanded).clone();
+            if !next.remove(&path) {
+                next.insert(path);
+            }
+            expanded.set(next);
         })
     };
 
-    let crumb = {
-        let stack = stack.clone();
-        let load = load.clone();
-        let preview = preview.clone();
-        Callback::from(move |depth: usize| {
-            let next: Vec<String> = stack.iter().take(depth).cloned().collect();
-            stack.set(next.clone());
-            preview.set(None);
-            load.emit(path_of(&next));
-        })
-    };
-
-    let open_file = {
+    let on_open = {
         let fs = fs.clone();
-        let stack = stack.clone();
-        let preview = preview.clone();
+        let open_file = open_file.clone();
         let error = error.clone();
-        Callback::from(move |(name, mime): (String, String)| {
+        Callback::from(move |path: String| {
             let fs = fs.clone();
-            let path = child_of(&stack, &name);
-            let preview = preview.clone();
+            let open_file = open_file.clone();
             let error = error.clone();
             yew::platform::spawn_local(async move {
-                match cat(&fs, path).await {
-                    Ok(bytes) => match object_url(&bytes, &mime) {
-                        Ok(url) => {
-                            let text = if is_textual(&mime) && bytes.len() < 2_000_000 {
-                                String::from_utf8(bytes).ok()
-                            } else {
-                                None
-                            };
-                            preview.set(Some(Preview {
-                                name,
-                                mime,
-                                url,
-                                text,
-                            }));
-                        }
-                        Err(e) => error.set(e),
-                    },
+                match load_file(&fs, path).await {
+                    Ok(f) => {
+                        error.set(String::new());
+                        open_file.set(Some(f));
+                    }
                     Err(e) => error.set(e),
                 }
             });
         })
     };
+    // Switching files abandons the draft.
+    {
+        let draft = draft.clone();
+        let status = status.clone();
+        let path_now = (*open_file).as_ref().map(|f| f.path.clone());
+        use_effect_with(path_now, move |_| {
+            draft.set(None);
+            status.set(String::new());
+            || ()
+        });
+    }
 
-    let remove = {
+    let save_draft = {
         let fs = fs.clone();
-        let stack = stack.clone();
-        let load = load.clone();
+        let open_file = open_file.clone();
+        let draft = draft.clone();
         let error = error.clone();
         let status = status.clone();
-        Callback::from(move |name: String| {
-            let ok = web_sys::window()
-                .and_then(|w| w.confirm_with_message(&format!("Delete {name}?")).ok())
-                .unwrap_or(false);
-            if !ok {
+        let rebuild = rebuild.clone();
+        Callback::from(move |_: MouseEvent| {
+            let Some(path) = (*open_file).as_ref().map(|f| f.path.clone()) else {
                 return;
-            }
+            };
+            let Some(text) = (*draft).clone() else {
+                return;
+            };
             let fs = fs.clone();
-            let path = child_of(&stack, &name);
-            let here = path_of(&stack);
-            let load = load.clone();
+            let open_file = open_file.clone();
+            let draft = draft.clone();
             let error = error.clone();
             let status = status.clone();
-            status.set(format!("deleting {name}\u{2026}"));
+            let rebuild = rebuild.clone();
+            status.set("saving\u{2026}".to_string());
             yew::platform::spawn_local(async move {
-                match rm_and_save(&fs, path).await {
+                match add_and_save(&fs, path.clone(), text.into_bytes()).await {
                     Ok(()) => {
-                        status.set(String::new());
-                        load.emit(here);
+                        status.set("saved".to_string());
+                        draft.set(None);
+                        if let Ok(f) = load_file(&fs, path).await {
+                            open_file.set(Some(f));
+                        }
+                        rebuild.emit(());
                     }
                     Err(e) => {
                         status.set(String::new());
@@ -407,32 +458,69 @@ pub fn vault_tree(props: &Props) -> Html {
         })
     };
 
-    let new_folder = {
+    let on_change = {
+        let draft = draft.clone();
+        let status = status.clone();
+        Callback::from(move |text: String| {
+            draft.set(Some(text));
+            status.set(String::new());
+        })
+    };
+
+    // --- creation / destruction (ctx menu + docked New) ---
+
+    let new_note_in = {
         let fs = fs.clone();
-        let stack = stack.clone();
-        let load = load.clone();
+        let open_file = open_file.clone();
         let error = error.clone();
         let status = status.clone();
-        Callback::from(move |_: MouseEvent| {
-            let name = web_sys::window()
-                .and_then(|w| w.prompt_with_message("Folder name:").ok().flatten())
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
-            let Some(name) = name else {
-                return;
-            };
+        let rebuild = rebuild.clone();
+        Callback::from(move |(dir, mut name): (String, String)| {
+            if !name.to_ascii_lowercase().ends_with(".md") {
+                name.push_str(".md");
+            }
             let fs = fs.clone();
-            let path = child_of(&stack, &name);
-            let here = path_of(&stack);
-            let load = load.clone();
+            let path = joined(&dir, &name);
+            let open_file = open_file.clone();
             let error = error.clone();
             let status = status.clone();
+            let rebuild = rebuild.clone();
+            status.set(format!("creating {name}\u{2026}"));
+            yew::platform::spawn_local(async move {
+                match add_and_save(&fs, path.clone(), Vec::new()).await {
+                    Ok(()) => {
+                        status.set(String::new());
+                        if let Ok(f) = load_file(&fs, path).await {
+                            open_file.set(Some(f));
+                        }
+                        rebuild.emit(());
+                    }
+                    Err(e) => {
+                        status.set(String::new());
+                        error.set(e);
+                    }
+                }
+            });
+        })
+    };
+
+    let new_folder_in = {
+        let fs = fs.clone();
+        let error = error.clone();
+        let status = status.clone();
+        let rebuild = rebuild.clone();
+        Callback::from(move |(dir, name): (String, String)| {
+            let fs = fs.clone();
+            let path = joined(&dir, &name);
+            let error = error.clone();
+            let status = status.clone();
+            let rebuild = rebuild.clone();
             status.set(format!("creating {name}\u{2026}"));
             yew::platform::spawn_local(async move {
                 match mkdir_and_save(&fs, path).await {
                     Ok(()) => {
                         status.set(String::new());
-                        load.emit(here);
+                        rebuild.emit(());
                     }
                     Err(e) => {
                         status.set(String::new());
@@ -443,12 +531,44 @@ pub fn vault_tree(props: &Props) -> Html {
         })
     };
 
-    let upload = {
+    let remove_path = {
         let fs = fs.clone();
-        let stack = stack.clone();
-        let load = load.clone();
+        let open_file = open_file.clone();
         let error = error.clone();
         let status = status.clone();
+        let rebuild = rebuild.clone();
+        Callback::from(move |path: String| {
+            let name = path.rsplit('/').next().unwrap_or_default().to_string();
+            let fs = fs.clone();
+            let open_file = open_file.clone();
+            let error = error.clone();
+            let status = status.clone();
+            let rebuild = rebuild.clone();
+            status.set(format!("deleting {name}\u{2026}"));
+            yew::platform::spawn_local(async move {
+                match rm_and_save(&fs, path.clone()).await {
+                    Ok(()) => {
+                        status.set(String::new());
+                        if (*open_file).as_ref().is_some_and(|f| f.path == path) {
+                            open_file.set(None);
+                        }
+                        rebuild.emit(());
+                    }
+                    Err(e) => {
+                        status.set(String::new());
+                        error.set(e);
+                    }
+                }
+            });
+        })
+    };
+
+    let upload_files = {
+        let fs = fs.clone();
+        let error = error.clone();
+        let status = status.clone();
+        let rebuild = rebuild.clone();
+        let upload_dir = upload_dir.clone();
         Callback::from(move |e: Event| {
             let input: HtmlInputElement = e.target_unchecked_into();
             let Some(files) = input.files() else {
@@ -464,11 +584,10 @@ pub fn vault_tree(props: &Props) -> Html {
                 return;
             }
             let fs = fs.clone();
-            let cur = (*stack).clone();
-            let here = path_of(&cur);
-            let load = load.clone();
+            let dir = (*upload_dir).clone();
             let error = error.clone();
             let status = status.clone();
+            let rebuild = rebuild.clone();
             yew::platform::spawn_local(async move {
                 for file in picked {
                     let name = file.name();
@@ -481,198 +600,366 @@ pub fn vault_tree(props: &Props) -> Html {
                             return;
                         }
                     };
-                    if let Err(e) = add_and_save(&fs, child_of(&cur, &name), bytes).await {
+                    if let Err(e) = add_and_save(&fs, joined(&dir, &name), bytes).await {
                         status.set(String::new());
                         error.set(e);
                         return;
                     }
                 }
                 status.set(String::new());
-                load.emit(here);
+                rebuild.emit(());
             });
         })
     };
 
+    // Drag & drop: move `from` into directory `into` (append its name).
+    let on_move = {
+        let fs = fs.clone();
+        let open_file = open_file.clone();
+        let error = error.clone();
+        let status = status.clone();
+        let rebuild = rebuild.clone();
+        Callback::from(move |(from, into): (String, String)| {
+            let name = from.rsplit('/').next().unwrap_or_default().to_string();
+            let to = joined(&into, &name);
+            if to == from {
+                return;
+            }
+            let fs = fs.clone();
+            let open_file = open_file.clone();
+            let error = error.clone();
+            let status = status.clone();
+            let rebuild = rebuild.clone();
+            status.set(format!("moving {name}\u{2026}"));
+            yew::platform::spawn_local(async move {
+                match mv_and_save(&fs, from.clone(), to.clone()).await {
+                    Ok(()) => {
+                        status.set(String::new());
+                        // If the open file moved, follow it to the new path.
+                        if (*open_file).as_ref().is_some_and(|f| f.path == from) {
+                            if let Ok(f) = load_file(&fs, to).await {
+                                open_file.set(Some(f));
+                            }
+                        }
+                        rebuild.emit(());
+                    }
+                    Err(e) => {
+                        status.set(String::new());
+                        error.set(e);
+                    }
+                }
+            });
+        })
+    };
+    let on_drag_start = {
+        let dragging = dragging.clone();
+        Callback::from(move |path: String| dragging.set(Some(path)))
+    };
+    let on_drag_end = {
+        let dragging = dragging.clone();
+        Callback::from(move |_: ()| dragging.set(None))
+    };
+
+    // Context menu plumbing: open from the tree, act + close here.
+    let on_ctx = {
+        let ctx = ctx.clone();
+        Callback::from(move |m: CtxMenu| ctx.set(Some(m)))
+    };
+    let close_ctx = {
+        let ctx = ctx.clone();
+        Callback::from(move |_: MouseEvent| ctx.set(None))
+    };
+
+    let ctx_menu_html = (*ctx).as_ref().map(|m| {
+        let style = format!("left:{}px;top:{}px;", m.x, m.y);
+        let dir = match &m.target {
+            CtxTarget::Folder(p) => p.clone(),
+            _ => "/".to_string(),
+        };
+        let item = |label: &str, action: Callback<MouseEvent>| {
+            html! { <button type="button" class="ctx-menu__item" onclick={action}>{ label }</button> }
+        };
+        let trigger_upload = {
+            let upload_dir = upload_dir.clone();
+            let upload_input = upload_input.clone();
+            let ctx = ctx.clone();
+            let dir = dir.clone();
+            Callback::from(move |_: MouseEvent| {
+                upload_dir.set(dir.clone());
+                ctx.set(None);
+                if let Some(input) = upload_input.cast::<HtmlInputElement>() {
+                    input.click();
+                }
+            })
+        };
+        html! {
+            <>
+                <div style="position:fixed;inset:0;z-index:79;" onclick={close_ctx.clone()}
+                     oncontextmenu={close_ctx.clone()}></div>
+                <div class="ctx-menu" style={style}>
+                    { item("New note", {
+                        let dialog = dialog.clone();
+                        let ctx2 = ctx.clone();
+                        let dir = dir.clone();
+                        Callback::from(move |_: MouseEvent| {
+                            ctx2.set(None);
+                            dialog.set(Some(Dialog::NewNote { dir: dir.clone() }));
+                        })
+                    }) }
+                    { item("New folder", {
+                        let dialog = dialog.clone();
+                        let ctx2 = ctx.clone();
+                        let dir = dir.clone();
+                        Callback::from(move |_: MouseEvent| {
+                            ctx2.set(None);
+                            dialog.set(Some(Dialog::NewFolder { dir: dir.clone() }));
+                        })
+                    }) }
+                    { item("Upload here", trigger_upload) }
+                    {
+                        match &m.target {
+                            CtxTarget::File(p) | CtxTarget::Folder(p) => {
+                                let dialog = dialog.clone();
+                                let ctx2 = ctx.clone();
+                                let p = p.clone();
+                                html! { { item("Delete", Callback::from(move |_: MouseEvent| {
+                                    ctx2.set(None);
+                                    dialog.set(Some(Dialog::Delete { path: p.clone() }));
+                                })) } }
+                            }
+                            CtxTarget::Root => html! {},
+                        }
+                    }
+                </div>
+            </>
+        }
+    });
+
+    let navigator = use_navigator().expect("router context");
+    let new_vault = {
+        let dialog = dialog.clone();
+        Callback::from(move |_: MouseEvent| dialog.set(Some(Dialog::NewVault)))
+    };
+
+    let vault_title = match &*meta {
+        Some(m) if !m.name.is_empty() => m.name.clone(),
+        _ => short_id(&props.vault_id),
+    };
+    let active = (*open_file).as_ref().map(|f| f.path.clone());
+
+    // Breadcrumb: [vault switcher] / file / path / segments
     let crumbs = {
         let mut items: Vec<Html> = Vec::new();
-        let crumb0 = crumb.clone();
         items.push(html! {
-            <a href="#" onclick={Callback::from(move |e: MouseEvent| { e.prevent_default(); crumb0.emit(0); })}>{ "/" }</a>
+            <HeaderMenu class={classes!("vault-switch")}
+                trigger_class={classes!("app-header__crumb", "app-header__crumb--current", "vault-switch__trigger")}
+                trigger={html! { <>{ vault_title.clone() }{ " \u{25BE}" }</> }}>
+                { for vaults.iter().map(|v| {
+                    let name = if v.name.is_empty() { short_id(&v.vault_id) } else { v.name.clone() };
+                    html! {
+                        <Link<Route> to={Route::Vault { id: v.vault_id.clone() }} classes="app-menu__item">
+                            { name }
+                        </Link<Route>>
+                    }
+                }) }
+                <button type="button" class="app-menu__item" onclick={new_vault.clone()}
+                    style="background:none;border:none;width:100%;cursor:pointer;">
+                    { "+ New vault" }
+                </button>
+            </HeaderMenu>
         });
-        for (i, seg) in stack.iter().enumerate() {
-            let crumb = crumb.clone();
-            let depth = i + 1;
-            // The root "/" doubles as the leading separator, so only
-            // separate between segments.
-            if i > 0 {
-                items.push(html! { <span class="muted">{ " / " }</span> });
-            } else {
-                items.push(html! { <span>{ " " }</span> });
+        if let Some(f) = &*open_file {
+            for seg in f.path.trim_start_matches('/').split('/') {
+                items.push(html! { <span class="app-header__sep">{ "/" }</span> });
+                items.push(html! { <span class="app-header__crumb app-header__crumb--current">{ seg.to_string() }</span> });
             }
-            items.push(html! {
-                <a href="#" onclick={Callback::from(move |e: MouseEvent| { e.prevent_default(); crumb.emit(depth); })}>{ seg.clone() }</a>
-            });
         }
         items
     };
 
+    let toggle_details = {
+        let show_details = show_details.clone();
+        Callback::from(move |_: MouseEvent| show_details.set(!*show_details))
+    };
+
+    let details_modal = if *show_details {
+        let close = {
+            let show_details = show_details.clone();
+            Callback::from(move |_: MouseEvent| show_details.set(false))
+        };
+        html! {
+            <>
+                <div class="dialog-backdrop" onclick={close.clone()}></div>
+                <div class="dialog dialog--wide" role="dialog" aria-modal="true">
+                    <div class="dialog__form">
+                        <div style="display:flex;align-items:center;gap:0.75rem;">
+                            <h2 class="dialog__title" style="flex:1;margin:0;">{ "Vault details" }</h2>
+                            <button type="button" class="dialog__btn" onclick={close}>{ "Close" }</button>
+                        </div>
+                        {
+                            match &*meta {
+                                None => html! { <div class="vault-details muted">{ "Loading\u{2026}" }</div> },
+                                Some(m) => details_panel(m, &devices, &web_did),
+                            }
+                        }
+                    </div>
+                </div>
+            </>
+        }
+    } else {
+        Html::default()
+    };
+
     html! {
         <>
-            <span class="page-eyebrow">
-                <Link<Route> to={Route::Workspace}>{ "workspace" }</Link<Route>>{ " / vault" }
-            </span>
-            <h1 style="font-size:1.1rem;">
-                {
-                    match &*meta {
-                        Some(m) if !m.name.is_empty() => html! { m.name.clone() },
-                        _ => html! { <code style="font-size:0.85rem;">{ short_id(&props.vault_id) }</code> },
+            <header class="app-header">
+                <HeaderMenu trigger={html! { "\u{2630}" }}>
+                    <Link<Route> to={Route::Settings} classes="app-menu__item">{ "Settings" }</Link<Route>>
+                    <a href="/auth/logout" class="app-menu__item">{ "Sign out" }</a>
+                </HeaderMenu>
+                <div class="app-header__slot app-header__slot--left">{ crumbs }</div>
+                <div class="app-header__slot app-header__slot--right">
+                    <span id="save-status" class="app-header__status">{ (*status).clone() }</span>
+                    if draft.is_some() {
+                        <button type="button" class="app-header__btn app-header__btn--save" onclick={save_draft.clone()}>
+                            { "Save" }
+                        </button>
                     }
-                }
-            </h1>
-
-            <div style="margin-top:0.5rem;">
-                <button type="button" class="btn" onclick={
-                    let show_details = show_details.clone();
-                    Callback::from(move |_: MouseEvent| show_details.set(!*show_details))
-                } style="font-size:0.8rem;padding:0.15rem 0.6rem;">
-                    { if *show_details { "Details \u{25B4}" } else { "Details \u{25BE}" } }
-                </button>
-            </div>
-            if *show_details {
-                {
-                    match &*meta {
-                        None => html! { <div class="card" style="padding:1rem;margin-top:0.5rem;"><span class="muted">{ "Loading\u{2026}" }</span></div> },
-                        Some(m) => details_panel(m, &devices, &web_did),
-                    }
-                }
-            }
-
-            <div style="display:flex;gap:0.5rem;align-items:center;margin:1rem 0 0;">
-                <label class="btn" style="cursor:pointer;">
-                    { "Upload" }
-                    <input type="file" multiple={true} style="display:none;" onchange={upload} />
-                </label>
-                <button type="button" class="btn" onclick={new_folder}>{ "New folder" }</button>
-                if !(*status).is_empty() {
-                    <span class="muted" style="font-size:0.8rem;">{ (*status).clone() }</span>
-                }
-            </div>
-
-            <nav style="font-size:0.9rem;margin:1rem 0 0.5rem;">{ crumbs }</nav>
-
-            if !(*error).is_empty() {
-                <div class="error">{ (*error).clone() }</div>
-            }
-
-            <div class="card" style="padding:0;overflow:hidden;">
-                {
-                    match &*entries {
-                        None => html! { <div class="muted" style="padding:0.75rem 1rem;">{ "Loading\u{2026}" }</div> },
-                        Some(es) if es.is_empty() => html! { <div class="muted" style="padding:0.75rem 1rem;">{ "(empty directory)" }</div> },
-                        Some(es) => html! { { for sorted(es).into_iter().map(|e| row(&e, &enter_dir, &open_file, &remove)) } },
-                    }
-                }
-            </div>
-
-            if let Some(p) = &*preview {
-                <div style="margin-top:1rem;">
-                    <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.5rem;">
-                        <h3 style="margin:0;">{ p.name.clone() }</h3>
-                        <span class="muted" style="font-size:0.75rem;">{ p.mime.clone() }</span>
-                        <span style="flex:1;"></span>
-                        <a class="btn" href={p.url.clone()} download={p.name.clone()}>{ "Download" }</a>
-                        <button class="btn" onclick={
-                            let preview = preview.clone();
-                            Callback::from(move |_: MouseEvent| preview.set(None))
-                        }>{ "Close" }</button>
-                    </div>
-                    { preview_body(p) }
+                    <button type="button" class="app-header__btn" title="Vault details" onclick={toggle_details}>
+                        { "\u{24D8}" }
+                    </button>
                 </div>
+            </header>
+
+            <div class="editor-layout">
+                {
+                    match &*rows {
+                        None => html! {
+                            <aside class="tree-pane"><div class="doc-empty">{ "Loading\u{2026}" }</div></aside>
+                        },
+                        Some(r) => html! {
+                            <TreePane rows={r.clone()} active={active.clone()}
+                                on_toggle={on_toggle} on_open={on_open.clone()}
+                                on_new_note={
+                                    let dialog = dialog.clone();
+                                    Callback::from(move |_: ()| dialog.set(Some(Dialog::NewNote { dir: "/".to_string() })))
+                                }
+                                on_upload={
+                                    let upload_dir = upload_dir.clone();
+                                    let upload_input = upload_input.clone();
+                                    Callback::from(move |_: ()| {
+                                        upload_dir.set("/".to_string());
+                                        if let Some(input) = upload_input.cast::<HtmlInputElement>() {
+                                            input.click();
+                                        }
+                                    })
+                                }
+                                on_ctx={on_ctx}
+                                on_move={on_move}
+                                dragging={(*dragging).clone()}
+                                on_drag_start={on_drag_start}
+                                on_drag_end={on_drag_end} />
+                        },
+                    }
+                }
+                <div class="editor-main">
+                    <div class="editor-body">
+                        if !(*error).is_empty() {
+                            <div class="error" style="margin:1rem 2rem 0;">{ (*error).clone() }</div>
+                        }
+                        {
+                            match &*open_file {
+                                Some(f) => html! {
+                                    <EditorPane file={f.clone()} on_change={on_change.clone()} />
+                                },
+                                None => html! {
+                                    <div class="doc-empty">
+                                        { "Select a file, or right-click the tree for more." }
+                                    </div>
+                                },
+                            }
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <input type="file" multiple={true} style="display:none;"
+                ref={upload_input} onchange={upload_files} />
+
+            { ctx_menu_html.unwrap_or_default() }
+            { details_modal }
+            {
+                match &*dialog {
+                    None => html! {},
+                    Some(d) => {
+                        let close = {
+                            let dialog = dialog.clone();
+                            Callback::from(move |_: ()| dialog.set(None))
+                        };
+                        match d.clone() {
+                            Dialog::NewNote { dir } => {
+                                let dialog = dialog.clone();
+                                let new_note_in = new_note_in.clone();
+                                html! {
+                                    <PromptDialog title="New note" label="Name" value="note.md"
+                                        on_cancel={close}
+                                        on_submit={Callback::from(move |name: String| {
+                                            dialog.set(None);
+                                            new_note_in.emit((dir.clone(), name));
+                                        })} />
+                                }
+                            }
+                            Dialog::NewFolder { dir } => {
+                                let dialog = dialog.clone();
+                                let new_folder_in = new_folder_in.clone();
+                                html! {
+                                    <PromptDialog title="New folder" label="Name"
+                                        on_cancel={close}
+                                        on_submit={Callback::from(move |name: String| {
+                                            dialog.set(None);
+                                            new_folder_in.emit((dir.clone(), name));
+                                        })} />
+                                }
+                            }
+                            Dialog::Delete { path } => {
+                                let dialog = dialog.clone();
+                                let remove_path = remove_path.clone();
+                                let name = path.rsplit('/').next().unwrap_or_default().to_string();
+                                html! {
+                                    <ConfirmDialog title={format!("Delete {name}?")}
+                                        body="This removes it from the vault's current version. Prior versions keep their history."
+                                        on_cancel={close}
+                                        on_confirm={Callback::from(move |_| {
+                                            dialog.set(None);
+                                            remove_path.emit(path.clone());
+                                        })} />
+                                }
+                            }
+                            Dialog::NewVault => {
+                                let dialog = dialog.clone();
+                                let user_id = props.user_id.clone();
+                                let navigator = navigator.clone();
+                                let error = error.clone();
+                                html! {
+                                    <PromptDialog title="New vault" label="Name"
+                                        on_cancel={close}
+                                        on_submit={Callback::from(move |name: String| {
+                                            dialog.set(None);
+                                            let error = error.clone();
+                                            crate::pages::workspace::create_vault(
+                                                name,
+                                                user_id.clone(),
+                                                navigator.clone(),
+                                                Callback::from(move |e: String| error.set(e)),
+                                            );
+                                        })} />
+                                }
+                            }
+                        }
+                    }
+                }
             }
         </>
-    }
-}
-
-fn sorted(entries: &[FsEntry]) -> Vec<FsEntry> {
-    let mut v = entries.to_vec();
-    v.sort_by(|a, b| {
-        if a.kind == b.kind {
-            a.name.cmp(&b.name)
-        } else if a.kind == "dir" {
-            std::cmp::Ordering::Less
-        } else {
-            std::cmp::Ordering::Greater
-        }
-    });
-    v
-}
-
-fn preview_body(p: &Preview) -> Html {
-    let url = p.url.clone();
-    if p.mime.starts_with("image/") {
-        html! { <img src={url} alt={p.name.clone()} style="max-width:100%;max-height:70vh;border-radius:6px;" /> }
-    } else if p.mime == "application/pdf" {
-        html! { <iframe src={url} title={p.name.clone()} style="width:100%;height:70vh;border:1px solid hsl(var(--border));border-radius:6px;"></iframe> }
-    } else if p.mime.starts_with("video/") {
-        html! { <video src={url} controls={true} style="max-width:100%;max-height:70vh;border-radius:6px;" /> }
-    } else if p.mime.starts_with("audio/") {
-        html! { <audio src={url} controls={true} style="width:100%;" /> }
-    } else if let Some(text) = &p.text {
-        html! { <pre class="card" style="max-height:60vh;overflow:auto;margin:0;white-space:pre-wrap;word-break:break-word;font-size:0.8rem;padding:1rem;">{ text.clone() }</pre> }
-    } else {
-        html! { <p class="muted">{ format!("No inline preview for {} \u{2014} use Download.", p.mime) }</p> }
-    }
-}
-
-fn row(
-    e: &FsEntry,
-    enter_dir: &Callback<String>,
-    open_file: &Callback<(String, String)>,
-    remove: &Callback<String>,
-) -> Html {
-    let is_dir = e.kind == "dir";
-    let name = e.name.clone();
-    let mime = resolve_mime(e);
-    let onclick = {
-        let name = name.clone();
-        let mime = mime.clone();
-        let enter_dir = enter_dir.clone();
-        let open_file = open_file.clone();
-        Callback::from(move |ev: MouseEvent| {
-            ev.prevent_default();
-            if is_dir {
-                enter_dir.emit(name.clone());
-            } else {
-                open_file.emit((name.clone(), mime.clone()));
-            }
-        })
-    };
-    let on_del = {
-        let name = name.clone();
-        let remove = remove.clone();
-        Callback::from(move |ev: MouseEvent| {
-            ev.prevent_default();
-            ev.stop_propagation();
-            remove.emit(name.clone());
-        })
-    };
-    let label = if is_dir {
-        format!("{}/", e.name)
-    } else {
-        e.name.clone()
-    };
-    html! {
-        <a href="#" {onclick}
-           style="display:flex;gap:0.6rem;align-items:center;padding:0.55rem 1rem;text-decoration:none;color:inherit;border-bottom:1px solid hsl(var(--border));font-size:0.9rem;">
-            <span>{ if is_dir { "\u{1F4C1}" } else { "\u{1F4C4}" } }</span>
-            <span style="font-family:var(--font-mono);">{ label }</span>
-            <span style="flex:1;"></span>
-            if let Some(m) = &e.mime {
-                <span class="muted" style="font-size:0.75rem;">{ m.clone() }</span>
-            }
-            <button type="button" class="btn" title="Delete" onclick={on_del}
-                style="padding:0.1rem 0.45rem;font-size:0.75rem;">{ "\u{2715}" }</button>
-        </a>
     }
 }
 
@@ -680,7 +967,7 @@ fn row(
 /// are the signed-in user's own enrolled devices.
 fn details_panel(meta: &VaultMeta, devices: &[Device], web_did: &str) -> Html {
     html! {
-        <div class="card" style="padding:1rem;margin-top:0.5rem;font-size:0.85rem;">
+        <div class="card vault-details" style="padding:1rem;">
             <div style="display:grid;grid-template-columns:auto 1fr;gap:0.35rem 1rem;align-items:baseline;">
                 <span class="muted">{ "name" }</span>
                 <span>{ meta.name.clone() }</span>

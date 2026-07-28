@@ -1,23 +1,15 @@
 - title: Getting Started
   items:
     - quickstart
+    - devices
     - install
 
 - title: Usage
   items:
     - cli
     - mounting
+    - sharing
 
-- title: Account
+- title: Reference
   items:
-    - viewer-enrolment
-    - devices
     - security
-
-- title: Self-Hosting
-  items:
-    - deploy-hub
-
-- title: Development
-  items:
-    - local-development

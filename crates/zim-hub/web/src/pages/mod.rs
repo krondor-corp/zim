@@ -9,4 +9,6 @@ pub mod gate;
 pub mod not_found;
 pub mod settings;
 pub mod vault;
+pub mod vault_editor;
+pub mod vault_tree;
 pub mod workspace;

@@ -1,63 +1,59 @@
 ---
-title: Quickstart
-order: 2
+title: Getting started
+order: 1
 ---
 
-From a fresh shell to an encrypted, syncable vault in four steps.
+Zim keeps your files and notes in **vaults** — encrypted, versioned
+folders that sync between your browser and your devices. Everything is
+encrypted before it leaves your hands; the hub that stores and relays
+your data only ever sees ciphertext.
 
-## 1. Install the CLI
+The fastest way in is the browser. No installs, three steps.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/krondor-corp/zim/main/install.sh | sh
-```
+## 1. Sign in
 
-See [Install]({{ '/docs/install/' | relative_url }}) for the FUSE variant, source builds, and updates.
+Open **[hub.zim.krondor.org](https://hub.zim.krondor.org)** and sign in
+with Google.
 
-## 2. Initialize this device
+The first time in, you'll be asked to set a **passphrase**. This creates
+your web key — the identity your browser uses to encrypt and decrypt.
+The passphrase wraps that key before it's stored, so the hub can hold it
+for you without being able to use it.
 
-```bash
-zim init
-```
+> **Your passphrase is not recoverable.** It protects the key that
+> decrypts your vaults; nobody — including the hub — can reset it for
+> you. Put it in your password manager.
 
-This creates your data directory (`~/.config/zim` by default) with:
+## 2. Create your first vault
 
-- `identity.key` — your Ed25519 device identity (back it up; never share it)
-- `config.toml` — daemon configuration
-- `blobs/` — the encrypted content store
-- `state/` — the vault log and daemon state
+In the browser, create a vault and give it a name. A vault is the
+unit of everything in Zim: it has its own encryption secret, its own
+version history, and its own list of devices that can open it.
 
-The command prints your device's public key — that's how other devices and peers will know this one.
+You start as the only member. Every file you add is encrypted under the
+vault's secret; the vault's history advances as a signed chain of
+versions, so any device can verify it's seeing the real thing.
 
-## 3. Start the daemon
+## 3. Work in the browser
 
-```bash
-zim daemon service install   # register with launchd / systemd
-zim daemon service start
-```
+Inside a vault you can:
 
-(Or run it in the foreground with `zim daemon run`.) The daemon listens on `127.0.0.1:17171` — loopback only, nothing is exposed off-host. Every other CLI command talks to it over this API.
+- **Browse** the file tree — expand folders, click a file to view it.
+- **Upload** files and create folders.
+- **Write notes** — create a markdown file, edit it in the browser,
+  and save. Each save commits a new version to the vault's history.
+- **Inspect** the vault's details — its id, current version, and the
+  devices it's shared with.
 
-## 4. Create and use a vault
+Everything you do here is committed as an encrypted version and synced
+to any other device that holds the vault.
 
-```bash
-zim vault create notes
-echo "first note" | zim vault add notes /hello.md
-zim vault ls notes /
-zim vault cat notes /hello.md
-```
+## Next
 
-`create` writes the vault's genesis manifest, with the vault secret sealed to your device key. `add` encrypts the content and advances the vault by one version. Every change is a new head in a signed chain — history stays reachable.
+The browser is one device. The other half of Zim is having the same
+vaults on your machines — synced by the CLI, mounted as real folders:
 
-## What just happened
-
-- **Identity** — an Ed25519 keypair generated locally; its public half identifies this device.
-- **Vault secret** — a fresh symmetric key for `notes`, sealed to your device with X25519. Only keyholders can read the vault; anyone can mirror its ciphertext.
-- **Content** — your file was encrypted and stored as a content-addressed blob; the (encrypted) directory tree references it.
-- **Chain** — each save signs a new manifest that links to the previous one.
-
-## Next steps
-
-- Share a vault with another device or person: `zim vault shares add <vault> <key>`
-- Mount a vault as a folder (FUSE builds): `zim mount add <vault> <path>`
-- Keep a hub copy and browse from the web: `zim hub login`
-- [Install]({{ '/docs/install/' | relative_url }}) for FUSE, updates, and service management.
+- **[Your devices]({{ '/docs/devices/' | relative_url }})** — connect
+  the CLI, sync your device roster, and mount vaults locally.
+- **[Install]({{ '/docs/install/' | relative_url }})** — all the ways
+  to get the `zim` binary.

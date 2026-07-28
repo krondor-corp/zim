@@ -11,14 +11,15 @@
       <div class="hero-content">
         <span class="hero-eyebrow">End-to-end encrypted peer-to-peer storage</span>
         <h1 class="hero-title">Zim</h1>
-        <p class="hero-tagline">Your files, encrypted and synced directly between your devices. No cloud accounts, no servers in the middle, no one else can read your data.</p>
+        <p class="hero-tagline">Encrypted vaults for your files and notes &mdash; in the browser and on every device. Content is encrypted before it leaves your hands; the hub that syncs it only ever sees ciphertext.</p>
         <div class="hero-install" id="hero-install">
           <code>curl -fsSL https://raw.githubusercontent.com/krondor-corp/zim/main/install.sh | sh</code>
           <button class="copy-btn copy-btn-visible" onclick="navigator.clipboard.writeText('curl -fsSL https://raw.githubusercontent.com/krondor-corp/zim/main/install.sh | sh').then(function(){var b=document.querySelector('#hero-install .copy-btn');b.textContent='copied';setTimeout(function(){b.textContent='copy'},1500)})">copy</button>
         </div>
         <div class="hero-links">
-          <a href="{{ '/docs/quickstart/' | relative_url }}" class="hero-cta">Get started</a>
-          <a href="https://github.com/krondor-corp/zim" class="hero-link">View on GitHub</a>
+          <a href="https://hub.zim.krondor.org" class="hero-cta">Sign in</a>
+          <a href="{{ '/docs/quickstart/' | relative_url }}" class="hero-link">Get started</a>
+          <a href="https://github.com/krondor-corp/zim" class="hero-link">GitHub</a>
         </div>
       </div>
       <div class="hero-logo">
@@ -36,11 +37,15 @@
         </div>
         <div class="feature">
           <h3>Share</h3>
-          <p>Bucket secrets are split into per-owner shares using X25519 ECDH + AES-KW. Add or revoke a device by adding or removing a share &mdash; no key rotation required.</p>
+          <p>Vault secrets are split into per-device shares using X25519 secret sharing. Add or revoke a device by adding or removing a share &mdash; no key rotation required.</p>
         </div>
         <div class="feature">
           <h3>Sync</h3>
           <p>Content-addressed blobs replicate over iroh's QUIC transport. Local-first: every operation works offline and converges when peers reconnect.</p>
+        </div>
+        <div class="feature">
+          <h3>Everywhere</h3>
+          <p>Browse and edit your vaults from any browser, a CLI and daemon for your machines, and FUSE mounts that make a vault feel like a local folder.</p>
         </div>
       </div>
     </section>

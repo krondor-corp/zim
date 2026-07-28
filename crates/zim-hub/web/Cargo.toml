@@ -14,6 +14,8 @@ description = "Yew (Rust/WASM) frontend for zim-hub. Consumes zim-hub-wasm as th
 [dependencies]
 yew = { version = "0.21", features = ["csr"] }
 yew-router = "0.18"
+# Markdown rendering for the note editor's preview (pure Rust, wasm-clean).
+pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"

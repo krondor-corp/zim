@@ -801,3 +801,281 @@ td code { font-size: 0.75rem; }
   .settings-group { display: none; }
   .settings-main { margin-left: var(--sidebar-icon-col); padding: 1.5rem 1.25rem; }
 }
+
+/* === Vault workspace (pack shell: tree pane + editor) ================== */
+
+.vault-shell {
+  display: flex;
+  gap: 0;
+  /* Fill the viewport under the app chrome. */
+  min-height: calc(100vh - var(--header-h) - 2rem);
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: hsl(var(--card));
+}
+
+.vault-side {
+  width: var(--sidebar-w);
+  min-width: var(--sidebar-w);
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
+}
+
+.vault-side__head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.vault-side__back {
+  text-decoration: none;
+  color: hsl(var(--muted-foreground));
+}
+.vault-side__back:hover { color: hsl(var(--foreground)); }
+
+.vault-side__title {
+  flex: 1;
+  font-weight: 600;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vault-side__details {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: hsl(var(--muted-foreground));
+  font-size: 0.9rem;
+}
+.vault-side__details:hover { color: hsl(var(--primary)); }
+
+.vault-side__actions {
+  display: flex;
+  gap: 0.35rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid hsl(var(--border));
+}
+.vault-side__actions .btn {
+  font-size: 0.72rem;
+  padding: 0.2rem 0.5rem;
+}
+
+.vault-side__status {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.75rem;
+}
+
+/* --- Tree --- */
+
+.tree-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.35rem 0;
+}
+
+.tree-empty { padding: 0.75rem; font-size: 0.85rem; }
+
+.tree-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.28rem 0.5rem;
+  font-size: 0.85rem;
+  text-decoration: none;
+  color: hsl(var(--foreground));
+  border-left: 2px solid transparent;
+}
+.tree-item:hover { background: hsl(var(--accent)); }
+.tree-item--active {
+  background: hsl(var(--accent));
+  border-left-color: hsl(var(--primary));
+}
+
+.tree-item__chev {
+  width: 0.9rem;
+  color: hsl(var(--muted-foreground));
+  font-size: 0.7rem;
+  flex: none;
+  text-align: center;
+}
+.tree-item__chev--blank { visibility: hidden; }
+.tree-item__icon { font-size: 0.8rem; flex: none; }
+.tree-item__name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tree-item__del {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: hsl(var(--muted-foreground));
+  font-size: 0.7rem;
+  padding: 0 0.2rem;
+  opacity: 0;
+}
+.tree-item:hover .tree-item__del { opacity: 1; }
+.tree-item__del:hover { color: hsl(var(--destructive)); }
+
+/* --- Editor pane --- */
+
+.vault-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 1rem 1.25rem;
+  overflow-y: auto;
+}
+
+.vault-main__empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+}
+
+.editor-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.editor-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px solid hsl(var(--border));
+  margin-bottom: 0.75rem;
+}
+
+.editor-title {
+  font-weight: 600;
+  font-size: 1rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.editor-dirty { color: hsl(var(--primary)); font-size: 0.6rem; }
+.editor-spacer { flex: 1; }
+
+.editor-tab {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: hsl(var(--muted-foreground));
+  font-size: 0.78rem;
+  padding: 0.2rem 0.55rem;
+  cursor: pointer;
+}
+.editor-tab--active {
+  color: hsl(var(--foreground));
+  border-color: hsl(var(--border));
+  background: hsl(var(--accent));
+}
+
+.btn--primary {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  border-color: hsl(var(--primary));
+}
+.btn--primary:disabled { opacity: 0.45; cursor: default; }
+
+.editor-status { font-size: 0.75rem; padding-bottom: 0.4rem; }
+
+.editor-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-textarea {
+  flex: 1;
+  min-height: 50vh;
+  resize: vertical;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  line-height: 1.55;
+  padding: 0.9rem 1rem;
+}
+.editor-textarea:focus {
+  outline: none;
+  border-color: hsl(var(--ring));
+}
+
+.editor-plain {
+  flex: 1;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.82rem;
+  margin: 0;
+}
+
+.editor-media { max-width: 100%; max-height: 70vh; border-radius: var(--radius); }
+.editor-frame {
+  width: 100%;
+  height: 70vh;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+}
+.editor-nopreview { font-size: 0.85rem; }
+
+/* --- Markdown prose (preview) --- */
+
+.prose {
+  flex: 1;
+  overflow-y: auto;
+  max-width: 46rem;
+  line-height: 1.65;
+  font-size: 0.92rem;
+}
+.prose h1, .prose h2, .prose h3 { margin: 1.2em 0 0.45em; line-height: 1.25; }
+.prose h1 { font-size: 1.45rem; }
+.prose h2 { font-size: 1.18rem; }
+.prose h3 { font-size: 1rem; }
+.prose p, .prose ul, .prose ol, .prose blockquote { margin: 0 0 0.85em; }
+.prose ul, .prose ol { padding-left: 1.4em; }
+.prose a { color: hsl(var(--primary)); }
+.prose code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: hsl(var(--muted));
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+}
+.prose pre {
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  padding: 0.8rem 1rem;
+  overflow-x: auto;
+  margin: 0 0 0.85em;
+}
+.prose pre code { background: none; padding: 0; }
+.prose blockquote {
+  border-left: 3px solid hsl(var(--border));
+  padding-left: 1rem;
+  color: hsl(var(--muted-foreground));
+}
+.prose hr { border: none; border-top: 1px solid hsl(var(--border)); margin: 1.2em 0; }
+.prose table { border-collapse: collapse; margin: 0 0 0.85em; }
+.prose th, .prose td { border: 1px solid hsl(var(--border)); padding: 0.3em 0.7em; }
+.prose img { max-width: 100%; }

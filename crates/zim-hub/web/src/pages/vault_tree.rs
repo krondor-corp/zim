@@ -224,7 +224,7 @@ fn row(n: &TreeNode, props: &TreePaneProps) -> Html {
         };
         let droppable = dragged
             .as_deref()
-            .map(|f| is_valid_drop(f))
+            .map(is_valid_drop)
             .unwrap_or(false);
         let ondragover = {
             Callback::from(move |e: DragEvent| {

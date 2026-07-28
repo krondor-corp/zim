@@ -4,7 +4,6 @@
 //! autofocuses. Rendered from page-level state — pages hold
 //! `Option<SomeDialog>` and map submit/cancel back to their actions.
 
-use wasm_bindgen::JsCast;
 use web_sys::{HtmlInputElement, KeyboardEvent};
 use yew::prelude::*;
 
@@ -152,13 +151,4 @@ pub fn confirm_dialog(props: &ConfirmDialogProps) -> Html {
             </div>
         </>
     }
-}
-
-/// Convenience: does this keyboard event's target sit inside a dialog?
-/// (Pages with global key handlers use it to stay out of the way.)
-pub fn in_dialog(e: &KeyboardEvent) -> bool {
-    e.target()
-        .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
-        .map(|el| el.closest(".dialog").ok().flatten().is_some())
-        .unwrap_or(false)
 }

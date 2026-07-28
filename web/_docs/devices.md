@@ -3,7 +3,7 @@ title: Your devices
 order: 2
 ---
 
-The web workspace is one device. This page connects the rest: sign the
+The browser is one device. This page connects the rest: sign the
 CLI into your account, sync your device roster, and (optionally) mount
 vaults as local folders.
 
@@ -52,7 +52,7 @@ zim hub peers ls
 Devices marked as in your address book are the ones this machine will
 sync with. From here, vaults flow both ways automatically — browser
 edits land on your machine within moments, and local writes appear in
-the web workspace.
+the browser.
 
 ## 3. Mount a vault (optional, needs FUSE)
 
@@ -65,7 +65,7 @@ zim mount add <vault> ~/zim/notes
 ```
 
 Anything you drop in the folder is encrypted and versioned like any
-other vault write — and syncs everywhere, including the web workspace.
+other vault write — and syncs everywhere, including the browser.
 See [Mounting]({{ '/docs/mounting/' | relative_url }}) for the full
 lifecycle (auto-mount, read-only, unmounting).
 

@@ -8,7 +8,7 @@ folders that sync between your browser and your devices. Everything is
 encrypted before it leaves your hands; the hub that stores and relays
 your data only ever sees ciphertext.
 
-The fastest way in is the web workspace. No installs, three steps.
+The fastest way in is the browser. No installs, three steps.
 
 ## 1. Sign in
 
@@ -26,7 +26,7 @@ for you without being able to use it.
 
 ## 2. Create your first vault
 
-From the workspace, create a vault and give it a name. A vault is the
+In the browser, create a vault and give it a name. A vault is the
 unit of everything in Zim: it has its own encryption secret, its own
 version history, and its own list of devices that can open it.
 
@@ -34,13 +34,13 @@ You start as the only member. Every file you add is encrypted under the
 vault's secret; the vault's history advances as a signed chain of
 versions, so any device can verify it's seeing the real thing.
 
-## 3. Use the workspace
+## 3. Work in the browser
 
 Inside a vault you can:
 
 - **Browse** the file tree — expand folders, click a file to view it.
 - **Upload** files and create folders.
-- **Write notes** — create a markdown file, edit it in the workspace,
+- **Write notes** — create a markdown file, edit it in the browser,
   and save. Each save commits a new version to the vault's history.
 - **Inspect** the vault's details — its id, current version, and the
   devices it's shared with.
@@ -50,7 +50,7 @@ to any other device that holds the vault.
 
 ## Next
 
-The workspace is one device. The other half of Zim is having the same
+The browser is one device. The other half of Zim is having the same
 vaults on your machines — synced by the CLI, mounted as real folders:
 
 - **[Your devices]({{ '/docs/devices/' | relative_url }})** — connect

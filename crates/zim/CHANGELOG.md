@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/krondor-corp/zim/compare/zim-v0.1.1...zim-v0.1.2) - 2026-07-28
+
+### Other
+
+- Pack-aligned redesign: one-product site + pack UI for the hub app ([#24](https://github.com/krondor-corp/zim/pull/24))
+
 ## [0.1.1](https://github.com/krondor-corp/zim/compare/zim-v0.1.0...zim-v0.1.1) - 2026-07-27
 
 ### Other

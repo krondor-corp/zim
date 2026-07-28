@@ -802,280 +802,601 @@ td code { font-size: 0.75rem; }
   .settings-main { margin-left: var(--sidebar-icon-col); padding: 1.5rem 1.25rem; }
 }
 
-/* === Vault workspace (pack shell: tree pane + editor) ================== */
+/* === Pack app chrome + editor-layout (ported from krondor-corp/pack
+ * crates/app/static/css/{header,editor,prose}.css — trimmed to the
+ * pieces the vault workspace uses; icons are text glyphs, not
+ * uk-icon). The vault page is pack's UI with a vault switcher. === */
 
-.vault-shell {
-  display: flex;
-  gap: 0;
-  /* Fill the viewport under the app chrome. */
-  min-height: calc(100vh - var(--header-h) - 2rem);
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius);
-  overflow: hidden;
-  background: hsl(var(--card));
+/* App header — the only chrome: menu, breadcrumb, status, palette. */
+
+.app-header {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--header-h);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 0.75rem;
+    background: hsl(var(--background));
+    border-bottom: 1px solid hsl(var(--border));
+    z-index: 50;
+    font-size: 0.8rem;
 }
 
-.vault-side {
-  width: var(--sidebar-w);
-  min-width: var(--sidebar-w);
-  display: flex;
-  flex-direction: column;
-  border-right: 1px solid hsl(var(--border));
-  background: hsl(var(--background));
+.app-header__slot {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
 }
 
-.vault-side__head {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.6rem 0.75rem;
-  border-bottom: 1px solid hsl(var(--border));
+.app-header__slot--left {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: hsl(var(--muted-foreground));
 }
 
-.vault-side__back {
-  text-decoration: none;
-  color: hsl(var(--muted-foreground));
-}
-.vault-side__back:hover { color: hsl(var(--foreground)); }
-
-.vault-side__title {
-  flex: 1;
-  font-weight: 600;
-  font-size: 0.9rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.app-header__slot--left:empty::before {
+    content: "";
 }
 
-.vault-side__details {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: hsl(var(--muted-foreground));
-  font-size: 0.9rem;
-}
-.vault-side__details:hover { color: hsl(var(--primary)); }
-
-.vault-side__actions {
-  display: flex;
-  gap: 0.35rem;
-  padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid hsl(var(--border));
-}
-.vault-side__actions .btn {
-  font-size: 0.72rem;
-  padding: 0.2rem 0.5rem;
+.app-header__btn {
+    background: none;
+    border: 1px solid transparent;
+    color: hsl(var(--muted-foreground));
+    cursor: pointer;
+    padding: 0.3rem 0.65rem;
+    border-radius: var(--radius);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.78rem;
+    font-weight: 500;
+    transition: color 0.15s, background-color 0.15s, border-color 0.15s;
 }
 
-.vault-side__status {
-  padding: 0.35rem 0.75rem;
-  font-size: 0.75rem;
+.app-header__btn:hover {
+    color: hsl(var(--foreground));
+    background: hsl(var(--muted));
+    border-color: hsl(var(--border));
 }
 
-/* --- Tree --- */
+.app-header__btn-label { line-height: 1; }
 
-.tree-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 0.35rem 0;
+.app-header__crumb {
+    color: hsl(var(--muted-foreground));
+    text-decoration: none;
+    padding: 0.15rem 0.25rem;
+    border-radius: 0.25rem;
+    transition: color 0.15s, background-color 0.15s;
+}
+a.app-header__crumb:hover {
+    color: hsl(var(--foreground));
+    background: hsl(var(--muted));
+}
+.app-header__crumb--current { color: hsl(var(--foreground)); }
+.app-header__sep {
+    color: hsl(var(--muted-foreground) / 0.5);
+    margin: 0 0.1rem;
+}
+.app-header__status {
+    color: hsl(var(--muted-foreground));
+    font-size: 0.75rem;
+    white-space: nowrap;
+}
+.app-header__kbd {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.68rem;
+    padding: 0.05rem 0.3rem;
+    border: 1px solid hsl(var(--border));
+    border-radius: 0.25rem;
+    background: hsl(var(--muted) / 0.6);
+    color: hsl(var(--muted-foreground));
 }
 
-.tree-empty { padding: 0.75rem; font-size: 0.85rem; }
+/* Header menu — a <details> dropdown; no branding, no sidebar. */
+.app-menu {
+    position: relative;
+    flex-shrink: 0;
+    margin-right: 0.25rem;
+}
+
+.app-menu__trigger {
+    list-style: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.9rem;
+    height: 1.9rem;
+    border-radius: var(--radius);
+    color: hsl(var(--muted-foreground));
+    cursor: pointer;
+    transition: color 0.15s, background-color 0.15s;
+}
+.app-menu__trigger::-webkit-details-marker { display: none; }
+.app-menu__trigger:hover,
+.app-menu[open] .app-menu__trigger {
+    color: hsl(var(--foreground));
+    background: hsl(var(--muted));
+}
+
+.app-menu__list {
+    position: absolute;
+    top: calc(100% + 0.35rem);
+    left: 0;
+    min-width: 10rem;
+    padding: 0.3rem;
+    background: hsl(var(--popover));
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    box-shadow: 0 8px 24px hsl(var(--foreground) / 0.08);
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+}
+
+.app-menu__item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.6rem;
+    border-radius: 0.25rem;
+    font-size: 0.8rem;
+    color: hsl(var(--muted-foreground));
+    text-decoration: none;
+    white-space: nowrap;
+    transition: color 0.15s, background-color 0.15s;
+}
+.app-menu__item:hover {
+    color: hsl(var(--foreground));
+    background: hsl(var(--muted));
+}
+
+.editor-layout {
+    display: flex;
+    flex-direction: row;
+    position: fixed;
+    top: var(--header-h);
+    left: 0;
+    width: 100vw;
+    height: calc(100vh - var(--header-h));
+    z-index: 10;
+    background: hsl(var(--background));
+}
+
+/* Tree visibility — html.tree-hidden applies pre-paint from base.html. */
+.tree-hidden .tree-pane { display: none; }
+
+/* Header toggle: one affordance, icon reflects state. */
+.tree-toggle-icon--hidden { display: none; }
+.tree-hidden .tree-toggle-icon--hidden { display: inline-flex; }
+.tree-hidden .tree-toggle-icon--open { display: none; }
+
+/* Small screens: the tree is an overlay drawer, not a column — it floats
+   above the editor instead of squeezing it, and closes on file pick. */
+@media (max-width: 768px) {
+    .tree-pane {
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: min(20rem, 85vw);
+        z-index: 25;
+        background: hsl(var(--background));
+        box-shadow: 8px 0 24px hsl(var(--foreground) / 0.12);
+    }
+}
+
+/* Keyboard focus ring for roving tree navigation. */
+.tree-item:focus {
+    outline: none;
+    box-shadow: inset 0 0 0 1px hsl(var(--ring) / 0.6);
+}
+
+/* Tree pane — file tree alongside the editor */
+.tree-pane {
+    flex-shrink: 0;
+    width: 15rem;
+    border-right: 1px solid hsl(var(--border));
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.tree-pane__list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.5rem 0 1rem;
+    scrollbar-width: thin;
+}
+
+/* Docked creation affordance — the pane's one button. */
+.tree-pane__new {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    margin: 0.5rem;
+    padding: 0.45rem 0;
+    border: 1px dashed hsl(var(--border));
+    border-radius: 0.35rem;
+    background: none;
+    font-size: 0.8rem;
+    color: hsl(var(--muted-foreground));
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s, background-color 0.15s;
+}
+.tree-pane__new:hover {
+    color: hsl(var(--foreground));
+    border-color: hsl(var(--muted-foreground) / 0.6);
+    background: hsl(var(--muted) / 0.5);
+}
 
 .tree-item {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.28rem 0.5rem;
-  font-size: 0.85rem;
-  text-decoration: none;
-  color: hsl(var(--foreground));
-  border-left: 2px solid transparent;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.25rem 0.75rem 0.25rem 0.5rem;
+    font-size: 0.8rem;
+    color: hsl(var(--muted-foreground));
+    text-decoration: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    border-radius: 0.2rem;
+    margin: 0 0.25rem;
+    transition: color 0.15s, background-color 0.15s;
 }
-.tree-item:hover { background: hsl(var(--accent)); }
+
+.tree-item--file:hover {
+    color: hsl(var(--foreground));
+    background: hsl(var(--muted));
+}
+
 .tree-item--active {
-  background: hsl(var(--accent));
-  border-left-color: hsl(var(--primary));
+    color: hsl(var(--foreground));
+    background: hsl(var(--muted));
+    font-weight: 500;
+}
+
+.tree-item--folder {
+    color: hsl(var(--muted-foreground));
+    font-weight: 500;
+    font-size: 0.75rem;
+    text-transform: none;
+    padding-top: 0.35rem;
 }
 
 .tree-item__chev {
-  width: 0.9rem;
-  color: hsl(var(--muted-foreground));
-  font-size: 0.7rem;
-  flex: none;
-  text-align: center;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 0.9rem;
+    margin-left: -0.2rem;
+    padding: 0;
+    background: none;
+    border: none;
+    color: hsl(var(--muted-foreground));
+    cursor: pointer;
 }
-.tree-item__chev--blank { visibility: hidden; }
-.tree-item__icon { font-size: 0.8rem; flex: none; }
-.tree-item__name {
-  flex: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.tree-item__chev .chev-glyph {
+    transition: transform 0.12s ease;
 }
-.tree-item__del {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: hsl(var(--muted-foreground));
-  font-size: 0.7rem;
-  padding: 0 0.2rem;
-  opacity: 0;
+.tree-item--collapsed .tree-item__chev .chev-glyph {
+    transform: rotate(-90deg);
 }
-.tree-item:hover .tree-item__del { opacity: 1; }
-.tree-item__del:hover { color: hsl(var(--destructive)); }
+.tree-item__chev:hover { color: hsl(var(--foreground)); }
 
-/* --- Editor pane --- */
+.tree-item__icon { flex-shrink: 0; opacity: 0.7; }
 
-.vault-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  padding: 1rem 1.25rem;
-  overflow-y: auto;
+.tree-item__dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: 0.35rem;
+    flex-shrink: 0;
+}
+.tree-item__dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: hsl(var(--muted-foreground) / 0.5);
 }
 
-.vault-main__empty {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.9rem;
+/* Row context menu (right-click) */
+.ctx-menu {
+    position: fixed;
+    z-index: 80;
+    min-width: 11rem;
+    padding: 0.3rem;
+    display: flex;
+    flex-direction: column;
+    background: hsl(var(--popover));
+    border: 1px solid hsl(var(--border));
+    border-radius: 0.35rem;
+    box-shadow: 0 8px 24px hsl(var(--foreground) / 0.1);
 }
+.ctx-menu__item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0.55rem;
+    border: none;
+    background: none;
+    border-radius: 0.25rem;
+    font-size: 0.8rem;
+    color: hsl(var(--muted-foreground));
+    text-align: left;
+    cursor: pointer;
+    transition: color 0.12s, background-color 0.12s;
+}
+.ctx-menu__item:hover {
+    color: hsl(var(--foreground));
+    background: hsl(var(--muted));
+}
+
+
+.editor-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    position: relative;
+}
+
+.editor-body {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: none;
+    /* ProseMirror calls scrollIntoView after selection changes; combined
+       with the editor-container padding, each click was nudging scroll down.
+       scroll-padding matches the container padding so scrollIntoView is a
+       no-op for any caret already within the padded content area.
+       overflow-anchor:none prevents the browser from re-anchoring scroll
+       position when Crepe mounts/unmounts floating UI. */
+    overflow-anchor: none;
+    scroll-padding-block: 1.75rem 6rem;
+}
+
+.editor-body::-webkit-scrollbar { display: none; }
 
 .editor-container {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-}
-
-.editor-title-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding-bottom: 0.6rem;
-  border-bottom: 1px solid hsl(var(--border));
-  margin-bottom: 0.75rem;
+    max-width: 44rem;
+    margin: 0 auto;
+    padding: 1.25rem 2rem 6rem;
 }
 
 .editor-title {
-  font-weight: 600;
-  font-size: 1rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+    font-size: 2rem;
+    font-weight: 600;
+    line-height: 1.2;
+    color: hsl(var(--foreground));
+    margin: 0 0 0.5rem;
+    letter-spacing: -0.015em;
 }
 
-.editor-dirty { color: hsl(var(--primary)); font-size: 0.6rem; }
-.editor-spacer { flex: 1; }
+.editor-title-row {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin: 0 0 0.5rem;
+}
+
+.editor-title-row .editor-title {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+}
+
+.editor-title--input {
+    width: 100%;
+    background: transparent;
+    border: none;
+    outline: none;
+    padding: 0.1rem 0.25rem;
+    margin: -0.1rem -0.25rem;
+    font-family: inherit;
+    border-radius: 0.25rem;
+    transition: background-color 0.15s, box-shadow 0.15s;
+}
+
+.editor-title--input::placeholder { color: hsl(var(--muted-foreground) / 0.4); }
+
+.editor-title--input:hover {
+    background: hsl(var(--muted) / 0.5);
+}
+
+.editor-title--input:focus {
+    background: hsl(var(--muted) / 0.8);
+    box-shadow: inset 0 0 0 1px hsl(var(--border));
+}
+
+#save-status:empty { display: none; }
+
+.editor-tabs {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    padding: 0.2rem;
+    border: 1px solid hsl(var(--border));
+    border-radius: 0.45rem;
+    background: hsl(var(--muted) / 0.3);
+}
+
+/* Lock renders as a <button> in the tabs cluster — same box, reset chrome. */
+.editor-tab--btn {
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    font: inherit;
+}
+#lock-toggle .lock-icon--locked { display: none; }
+#lock-toggle[data-locked="true"] .lock-icon--locked { display: inline-flex; }
+#lock-toggle[data-locked="true"] .lock-icon--open { display: none; }
+
+.editor-tab--locked { color: hsl(35 70% 45%); }
+.editor-tab--locked:hover { color: hsl(35 70% 38%); }
 
 .editor-tab {
-  background: none;
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  color: hsl(var(--muted-foreground));
-  font-size: 0.78rem;
-  padding: 0.2rem 0.55rem;
-  cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.1rem;
+    height: 2.1rem;
+    border-radius: 0.3rem;
+    color: hsl(var(--muted-foreground));
+    transition: color 0.15s, background-color 0.15s;
 }
+
+.editor-tab:hover {
+    color: hsl(var(--foreground));
+    background: hsl(var(--muted));
+}
+
 .editor-tab--active {
-  color: hsl(var(--foreground));
-  border-color: hsl(var(--border));
-  background: hsl(var(--accent));
+    color: hsl(var(--foreground));
+    background: hsl(var(--background));
+    box-shadow: 0 1px 2px hsl(0 0% 0% / 0.08);
 }
 
-.btn--primary {
-  background: hsl(var(--primary));
-  color: hsl(var(--primary-foreground));
-  border-color: hsl(var(--primary));
-}
-.btn--primary:disabled { opacity: 0.45; cursor: default; }
+/* In-editor tab content (chunks / history replacing the markdown editor) */
 
-.editor-status { font-size: 0.75rem; padding-bottom: 0.4rem; }
-
-.editor-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
+.document-view {
+    font-size: 1.05rem;
+    line-height: 1.85;
+    max-width: 60ch;
+    white-space: pre-wrap;
+    word-wrap: break-word;
 }
 
 .editor-textarea {
-  flex: 1;
-  min-height: 50vh;
-  resize: vertical;
-  background: hsl(var(--background));
-  color: hsl(var(--foreground));
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius);
-  font-family: var(--font-mono);
-  font-size: 0.85rem;
-  line-height: 1.55;
-  padding: 0.9rem 1rem;
+    font-size: 1.05rem;
+    line-height: 1.85;
+    resize: vertical;
 }
-.editor-textarea:focus {
-  outline: none;
-  border-color: hsl(var(--ring));
-}
-
-.editor-plain {
-  flex: 1;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 0.82rem;
-  margin: 0;
-}
-
-.editor-media { max-width: 100%; max-height: 70vh; border-radius: var(--radius); }
-.editor-frame {
-  width: 100%;
-  height: 70vh;
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius);
-}
-.editor-nopreview { font-size: 0.85rem; }
-
-/* --- Markdown prose (preview) --- */
 
 .prose {
-  flex: 1;
-  overflow-y: auto;
-  max-width: 46rem;
-  line-height: 1.65;
-  font-size: 0.92rem;
+    font-size: 1.05rem;
+    line-height: 1.85;
+    max-width: 60ch;
+    color: hsl(var(--foreground));
 }
-.prose h1, .prose h2, .prose h3 { margin: 1.2em 0 0.45em; line-height: 1.25; }
-.prose h1 { font-size: 1.45rem; }
-.prose h2 { font-size: 1.18rem; }
-.prose h3 { font-size: 1rem; }
-.prose p, .prose ul, .prose ol, .prose blockquote { margin: 0 0 0.85em; }
-.prose ul, .prose ol { padding-left: 1.4em; }
-.prose a { color: hsl(var(--primary)); }
+
+.prose h1, .prose h2, .prose h3, .prose h4 {
+    font-weight: 600;
+    margin-top: 1.5em;
+    margin-bottom: 0.5em;
+    line-height: 1.3;
+}
+
+.prose h1 { font-size: 1.5em; }
+.prose h2 { font-size: 1.25em; }
+.prose h3 { font-size: 1.1em; }
+.prose p { margin-bottom: 1em; }
+
+.prose a {
+    color: hsl(var(--foreground));
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+}
+
 .prose code {
-  font-family: var(--font-mono);
-  font-size: 0.85em;
-  background: hsl(var(--muted));
-  padding: 0.1em 0.35em;
-  border-radius: 3px;
+    font-size: 0.9em;
+    background: hsl(var(--muted));
+    padding: 0.15em 0.35em;
+    border-radius: 0.2em;
 }
+
 .prose pre {
-  background: hsl(var(--muted));
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius);
-  padding: 0.8rem 1rem;
-  overflow-x: auto;
-  margin: 0 0 0.85em;
+    background: hsl(var(--muted));
+    padding: 1em;
+    border-radius: var(--radius);
+    overflow-x: auto;
+    margin: 1em 0;
 }
+
 .prose pre code { background: none; padding: 0; }
+
 .prose blockquote {
-  border-left: 3px solid hsl(var(--border));
-  padding-left: 1rem;
-  color: hsl(var(--muted-foreground));
+    border-left: 3px solid hsl(var(--border));
+    padding-left: 1em;
+    color: hsl(var(--muted-foreground));
+    margin: 1em 0;
 }
-.prose hr { border: none; border-top: 1px solid hsl(var(--border)); margin: 1.2em 0; }
-.prose table { border-collapse: collapse; margin: 0 0 0.85em; }
-.prose th, .prose td { border: 1px solid hsl(var(--border)); padding: 0.3em 0.7em; }
-.prose img { max-width: 100%; }
+
+.prose ul, .prose ol { padding-left: 1.5em; margin-bottom: 1em; }
+.prose li { margin-bottom: 0.25em; }
+.prose ul { list-style-type: disc; }
+.prose ol { list-style-type: decimal; }
+
+.prose hr {
+    border: none;
+    border-top: 1px solid hsl(var(--border));
+    margin: 2em 0;
+}
+
+.prose table { width: 100%; border-collapse: collapse; margin: 1em 0; }
+.prose th, .prose td { border: 1px solid hsl(var(--border)); padding: 0.5em 0.75em; text-align: left; }
+.prose th { background: hsl(var(--muted)); font-weight: 600; }
+.prose img { max-width: 100%; border-radius: var(--radius); }
+
+
+/* --- zim additions on top of the pack port ------------------------- */
+
+/* Document-feel editing: the textarea disappears into the page (pack
+ * edits in-place via Milkdown; explicit-save textarea keeps the same
+ * look until Milkdown lands). */
+.editor-textarea--doc {
+  width: 100%;
+  min-height: 60vh;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  color: hsl(var(--foreground));
+  font-family: var(--font-sans);
+  font-size: 1.05rem;
+  line-height: 1.75;
+}
+
+/* Save affordance in the tabs cluster. */
+.editor-tab--save {
+  width: auto;
+  padding: 0 0.7rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: hsl(var(--primary));
+}
+.editor-tab--save:disabled { color: hsl(var(--muted-foreground) / 0.5); cursor: default; }
+
+.editor-dirty-dot { color: hsl(var(--primary)); font-size: 0.55rem; margin-left: 0.3rem; }
+
+/* Vault switcher: an app-menu docked in the breadcrumb slot. */
+.vault-switch summary { list-style: none; cursor: pointer; }
+.vault-switch summary::-webkit-details-marker { display: none; }
+
+/* Empty editor state */
+.doc-empty {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: hsl(var(--muted-foreground));
+  font-size: 0.9rem;
+}
+
+/* Media previews inside the document container */
+.editor-media { max-width: 100%; max-height: 70vh; border-radius: var(--radius); }
+.editor-frame { width: 100%; height: 70vh; border: 1px solid hsl(var(--border)); border-radius: var(--radius); }
+
+/* Details card (vault metadata) shown above the document */
+.vault-details { margin-bottom: 1.25rem; font-size: 0.85rem; }

@@ -16,9 +16,9 @@ use yew::prelude::*;
 use yew_router::prelude::*;
 use zim_wasm::WasmFs;
 
-use crate::api::{fetch_devices, fetch_me, Device, FsEntry};
+use crate::api::{fetch_devices, fetch_me, fetch_vaults, Device, FsEntry, VaultItem};
 use crate::pages::vault_editor::{EditorPane, OpenFile};
-use crate::pages::vault_tree::{build_rows, TreeNode, TreePane};
+use crate::pages::vault_tree::{build_rows, CtxMenu, CtxTarget, TreeNode, TreePane};
 use crate::routes::Route;
 use crate::util::{jserr, origin};
 
@@ -216,6 +216,16 @@ async fn load_file(fs: &FsHandle, path: String) -> Result<OpenFile, String> {
     })
 }
 
+
+/// Join `dir` + `name` into a vault path.
+fn joined(dir: &str, name: &str) -> String {
+    if dir == "/" {
+        format!("/{name}")
+    } else {
+        format!("{dir}/{name}")
+    }
+}
+
 #[function_component(VaultTree)]
 pub fn vault_tree(props: &Props) -> Html {
     let fs: FsHandle = use_mut_ref(|| None::<WasmFs>);
@@ -224,12 +234,15 @@ pub fn vault_tree(props: &Props) -> Html {
     let open_file = use_state(|| None::<OpenFile>);
     let error = use_state(String::new);
     let status = use_state(String::new);
+    let dirty = use_state(|| false);
     let meta = use_state(|| None::<VaultMeta>);
     let devices = use_state(Vec::<Device>::new);
-    // The account's `did:web` — shown for the web key in the shareholders list
-    // instead of its raw `did:key`. Empty until `/me` resolves.
     let web_did = use_state(String::new);
     let show_details = use_state(|| false);
+    let vaults = use_state(Vec::<VaultItem>::new);
+    let ctx = use_state(|| None::<CtxMenu>);
+    let upload_dir = use_state(|| "/".to_string());
+    let upload_input = use_node_ref();
 
     // Rebuild the whole visible tree: refresh from the hub, walk root +
     // every expanded dir, refresh manifest metadata. Expansion state is
@@ -267,13 +280,15 @@ pub fn vault_tree(props: &Props) -> Html {
         })
     };
 
-    // Open on mount, then build the root tree.
+    // Open on mount, then build the root tree; load the account's vault
+    // list (switcher) + devices (details panel).
     {
         let fs = fs.clone();
         let rebuild = rebuild.clone();
         let error = error.clone();
         let devices = devices.clone();
         let web_did = web_did.clone();
+        let vaults = vaults.clone();
         let vault_id = props.vault_id.clone();
         use_effect_with(vault_id.clone(), move |_| {
             let fs = fs.clone();
@@ -281,6 +296,7 @@ pub fn vault_tree(props: &Props) -> Html {
             let error = error.clone();
             let devices = devices.clone();
             let web_did = web_did.clone();
+            let vaults = vaults.clone();
             yew::platform::spawn_local(async move {
                 match open(&fs, vault_id).await {
                     Ok(()) => rebuild.emit(()),
@@ -292,7 +308,20 @@ pub fn vault_tree(props: &Props) -> Html {
                 if let Ok(Some(me)) = fetch_me().await {
                     web_did.set(me.did);
                 }
+                if let Ok(v) = fetch_vaults().await {
+                    vaults.set(v);
+                }
             });
+            || ()
+        });
+    }
+
+    // Expansion set drives the tree; rebuild on every change.
+    {
+        let rebuild = rebuild.clone();
+        let expanded_now = (*expanded).clone();
+        use_effect_with(expanded_now, move |_| {
+            rebuild.emit(());
             || ()
         });
     }
@@ -310,8 +339,6 @@ pub fn vault_tree(props: &Props) -> Html {
         });
     }
 
-    // Toggling only mutates the expansion set; the effect below owns
-    // the rebuild so it always sees the freshly-set value.
     let on_toggle = {
         let expanded = expanded.clone();
         Callback::from(move |path: String| {
@@ -322,15 +349,6 @@ pub fn vault_tree(props: &Props) -> Html {
             expanded.set(next);
         })
     };
-
-    {
-        let rebuild = rebuild.clone();
-        let expanded_now = (*expanded).clone();
-        use_effect_with(expanded_now, move |_| {
-            rebuild.emit(());
-            || ()
-        });
-    }
 
     let on_open = {
         let fs = fs.clone();
@@ -368,8 +386,7 @@ pub fn vault_tree(props: &Props) -> Html {
             yew::platform::spawn_local(async move {
                 match add_and_save(&fs, path.clone(), text.into_bytes()).await {
                     Ok(()) => {
-                        status.set(String::new());
-                        // Reload so the buffer/url reflect the committed state.
+                        status.set("saved".to_string());
                         if let Ok(f) = load_file(&fs, path).await {
                             open_file.set(Some(f));
                         }
@@ -384,12 +401,100 @@ pub fn vault_tree(props: &Props) -> Html {
         })
     };
 
-    let on_close = {
-        let open_file = open_file.clone();
-        Callback::from(move |_: ()| open_file.set(None))
+    let on_dirty = {
+        let status = status.clone();
+        let dirty = dirty.clone();
+        Callback::from(move |d: bool| {
+            dirty.set(d);
+            if d {
+                status.set("unsaved changes".to_string());
+            } else {
+                status.set(String::new());
+            }
+        })
     };
 
-    let on_remove = {
+    // --- creation / destruction (ctx menu + docked New) ---
+
+    let new_note_in = {
+        let fs = fs.clone();
+        let open_file = open_file.clone();
+        let error = error.clone();
+        let status = status.clone();
+        let rebuild = rebuild.clone();
+        Callback::from(move |dir: String| {
+            let name = web_sys::window()
+                .and_then(|w| w.prompt_with_message("Note name:").ok().flatten())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            let Some(mut name) = name else {
+                return;
+            };
+            if !name.to_ascii_lowercase().ends_with(".md") {
+                name.push_str(".md");
+            }
+            let title = name.trim_end_matches(".md").to_string();
+            let fs = fs.clone();
+            let path = joined(&dir, &name);
+            let open_file = open_file.clone();
+            let error = error.clone();
+            let status = status.clone();
+            let rebuild = rebuild.clone();
+            status.set(format!("creating {name}\u{2026}"));
+            yew::platform::spawn_local(async move {
+                let body = format!("# {title}\n\n");
+                match add_and_save(&fs, path.clone(), body.into_bytes()).await {
+                    Ok(()) => {
+                        status.set(String::new());
+                        if let Ok(f) = load_file(&fs, path).await {
+                            open_file.set(Some(f));
+                        }
+                        rebuild.emit(());
+                    }
+                    Err(e) => {
+                        status.set(String::new());
+                        error.set(e);
+                    }
+                }
+            });
+        })
+    };
+
+    let new_folder_in = {
+        let fs = fs.clone();
+        let error = error.clone();
+        let status = status.clone();
+        let rebuild = rebuild.clone();
+        Callback::from(move |dir: String| {
+            let name = web_sys::window()
+                .and_then(|w| w.prompt_with_message("Folder name:").ok().flatten())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            let Some(name) = name else {
+                return;
+            };
+            let fs = fs.clone();
+            let path = joined(&dir, &name);
+            let error = error.clone();
+            let status = status.clone();
+            let rebuild = rebuild.clone();
+            status.set(format!("creating {name}\u{2026}"));
+            yew::platform::spawn_local(async move {
+                match mkdir_and_save(&fs, path).await {
+                    Ok(()) => {
+                        status.set(String::new());
+                        rebuild.emit(());
+                    }
+                    Err(e) => {
+                        status.set(String::new());
+                        error.set(e);
+                    }
+                }
+            });
+        })
+    };
+
+    let remove_path = {
         let fs = fs.clone();
         let open_file = open_file.clone();
         let error = error.clone();
@@ -427,89 +532,12 @@ pub fn vault_tree(props: &Props) -> Html {
         })
     };
 
-    let new_note = {
-        let fs = fs.clone();
-        let open_file = open_file.clone();
-        let error = error.clone();
-        let status = status.clone();
-        let rebuild = rebuild.clone();
-        Callback::from(move |_: MouseEvent| {
-            let name = web_sys::window()
-                .and_then(|w| w.prompt_with_message("Note name:").ok().flatten())
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
-            let Some(mut name) = name else {
-                return;
-            };
-            if !name.to_ascii_lowercase().ends_with(".md") {
-                name.push_str(".md");
-            }
-            let title = name.trim_end_matches(".md").to_string();
-            let fs = fs.clone();
-            let path = format!("/{name}");
-            let open_file = open_file.clone();
-            let error = error.clone();
-            let status = status.clone();
-            let rebuild = rebuild.clone();
-            status.set(format!("creating {name}\u{2026}"));
-            yew::platform::spawn_local(async move {
-                let body = format!("# {title}\n\n");
-                match add_and_save(&fs, path.clone(), body.into_bytes()).await {
-                    Ok(()) => {
-                        status.set(String::new());
-                        if let Ok(f) = load_file(&fs, path).await {
-                            open_file.set(Some(f));
-                        }
-                        rebuild.emit(());
-                    }
-                    Err(e) => {
-                        status.set(String::new());
-                        error.set(e);
-                    }
-                }
-            });
-        })
-    };
-
-    let new_folder = {
+    let upload_files = {
         let fs = fs.clone();
         let error = error.clone();
         let status = status.clone();
         let rebuild = rebuild.clone();
-        Callback::from(move |_: MouseEvent| {
-            let name = web_sys::window()
-                .and_then(|w| w.prompt_with_message("Folder name:").ok().flatten())
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
-            let Some(name) = name else {
-                return;
-            };
-            let fs = fs.clone();
-            let path = format!("/{name}");
-            let error = error.clone();
-            let status = status.clone();
-            let rebuild = rebuild.clone();
-            status.set(format!("creating {name}\u{2026}"));
-            yew::platform::spawn_local(async move {
-                match mkdir_and_save(&fs, path).await {
-                    Ok(()) => {
-                        status.set(String::new());
-                        rebuild.emit(());
-                    }
-                    Err(e) => {
-                        status.set(String::new());
-                        error.set(e);
-                    }
-                }
-            });
-        })
-    };
-
-    let upload = {
-        let fs = fs.clone();
-        let error = error.clone();
-        let status = status.clone();
-        let rebuild = rebuild.clone();
+        let upload_dir = upload_dir.clone();
         Callback::from(move |e: Event| {
             let input: HtmlInputElement = e.target_unchecked_into();
             let Some(files) = input.files() else {
@@ -525,6 +553,7 @@ pub fn vault_tree(props: &Props) -> Html {
                 return;
             }
             let fs = fs.clone();
+            let dir = (*upload_dir).clone();
             let error = error.clone();
             let status = status.clone();
             let rebuild = rebuild.clone();
@@ -540,7 +569,7 @@ pub fn vault_tree(props: &Props) -> Html {
                             return;
                         }
                     };
-                    if let Err(e) = add_and_save(&fs, format!("/{name}"), bytes).await {
+                    if let Err(e) = add_and_save(&fs, joined(&dir, &name), bytes).await {
                         status.set(String::new());
                         error.set(e);
                         return;
@@ -552,71 +581,180 @@ pub fn vault_tree(props: &Props) -> Html {
         })
     };
 
+    // Context menu plumbing: open from the tree, act + close here.
+    let on_ctx = {
+        let ctx = ctx.clone();
+        Callback::from(move |m: CtxMenu| ctx.set(Some(m)))
+    };
+    let close_ctx = {
+        let ctx = ctx.clone();
+        Callback::from(move |_: MouseEvent| ctx.set(None))
+    };
+
+    let ctx_menu_html = (*ctx).as_ref().map(|m| {
+        let style = format!("left:{}px;top:{}px;", m.x, m.y);
+        let dir = match &m.target {
+            CtxTarget::Folder(p) => p.clone(),
+            _ => "/".to_string(),
+        };
+        let item = |label: &str, action: Callback<MouseEvent>| {
+            html! { <button type="button" class="ctx-menu__item" onclick={action}>{ label }</button> }
+        };
+        let mk = |cb: Callback<String>, arg: String, ctx: &UseStateHandle<Option<CtxMenu>>| {
+            let ctx = ctx.clone();
+            Callback::from(move |_: MouseEvent| {
+                ctx.set(None);
+                cb.emit(arg.clone());
+            })
+        };
+        let trigger_upload = {
+            let upload_dir = upload_dir.clone();
+            let upload_input = upload_input.clone();
+            let ctx = ctx.clone();
+            let dir = dir.clone();
+            Callback::from(move |_: MouseEvent| {
+                upload_dir.set(dir.clone());
+                ctx.set(None);
+                if let Some(input) = upload_input.cast::<HtmlInputElement>() {
+                    input.click();
+                }
+            })
+        };
+        html! {
+            <>
+                <div style="position:fixed;inset:0;z-index:79;" onclick={close_ctx.clone()}
+                     oncontextmenu={close_ctx.clone()}></div>
+                <div class="ctx-menu" style={style}>
+                    { item("New note", mk(new_note_in.clone(), dir.clone(), &ctx)) }
+                    { item("New folder", mk(new_folder_in.clone(), dir.clone(), &ctx)) }
+                    { item("Upload here", trigger_upload) }
+                    {
+                        match &m.target {
+                            CtxTarget::File(p) | CtxTarget::Folder(p) => {
+                                html! { { item("Delete", mk(remove_path.clone(), p.clone(), &ctx)) } }
+                            }
+                            CtxTarget::Root => html! {},
+                        }
+                    }
+                </div>
+            </>
+        }
+    });
+
     let vault_title = match &*meta {
         Some(m) if !m.name.is_empty() => m.name.clone(),
         _ => short_id(&props.vault_id),
     };
     let active = (*open_file).as_ref().map(|f| f.path.clone());
 
+    // Breadcrumb: [vault switcher] / file / path / segments
+    let crumbs = {
+        let mut items: Vec<Html> = Vec::new();
+        items.push(html! {
+            <details class="app-menu vault-switch">
+                <summary class="app-header__crumb app-header__crumb--current">
+                    { vault_title.clone() }{ " \u{25BE}" }
+                </summary>
+                <nav class="app-menu__list">
+                    { for vaults.iter().map(|v| {
+                        let name = if v.name.is_empty() { short_id(&v.vault_id) } else { v.name.clone() };
+                        html! {
+                            <Link<Route> to={Route::Vault { id: v.vault_id.clone() }} classes="app-menu__item">
+                                { name }
+                            </Link<Route>>
+                        }
+                    }) }
+                    <Link<Route> to={Route::Workspace} classes="app-menu__item">{ "all vaults \u{2192}" }</Link<Route>>
+                </nav>
+            </details>
+        });
+        if let Some(f) = &*open_file {
+            for seg in f.path.trim_start_matches('/').split('/') {
+                items.push(html! { <span class="app-header__sep">{ "/" }</span> });
+                items.push(html! { <span class="app-header__crumb app-header__crumb--current">{ seg.to_string() }</span> });
+            }
+        }
+        items
+    };
+
+    let toggle_details = {
+        let show_details = show_details.clone();
+        Callback::from(move |_: MouseEvent| show_details.set(!*show_details))
+    };
+
     html! {
-        <div class="vault-shell">
-            <aside class="vault-side">
-                <div class="vault-side__head">
-                    <Link<Route> to={Route::Workspace} classes="vault-side__back">{ "\u{2190}" }</Link<Route>>
-                    <span class="vault-side__title" title={props.vault_id.clone()}>{ vault_title }</span>
-                    <button type="button" class="vault-side__details" title="Vault details" onclick={
-                        let show_details = show_details.clone();
-                        Callback::from(move |_: MouseEvent| show_details.set(!*show_details))
-                    }>{ "\u{24D8}" }</button>
+        <>
+            <header class="app-header">
+                <details class="app-menu" id="app-menu">
+                    <summary class="app-menu__trigger" aria-label="Menu">{ "\u{2630}" }</summary>
+                    <nav class="app-menu__list">
+                        <Link<Route> to={Route::Workspace} classes="app-menu__item">{ "Workspace" }</Link<Route>>
+                        <Link<Route> to={Route::Settings} classes="app-menu__item">{ "Settings" }</Link<Route>>
+                        <a href="/auth/logout" class="app-menu__item">{ "Sign out" }</a>
+                    </nav>
+                </details>
+                <div class="app-header__slot app-header__slot--left">{ crumbs }</div>
+                <div class="app-header__slot app-header__slot--right">
+                    <span id="save-status" class="app-header__status">{ (*status).clone() }</span>
+                    <button type="button" class="app-header__btn" title="Vault details" onclick={toggle_details}>
+                        { "\u{24D8}" }
+                    </button>
                 </div>
-                <div class="vault-side__actions">
-                    <button type="button" class="btn" onclick={new_note}>{ "New note" }</button>
-                    <button type="button" class="btn" onclick={new_folder}>{ "Folder" }</button>
-                    <label class="btn" style="cursor:pointer;">
-                        { "Upload" }
-                        <input type="file" multiple={true} style="display:none;" onchange={upload} />
-                    </label>
-                </div>
-                if !(*status).is_empty() {
-                    <div class="vault-side__status muted">{ (*status).clone() }</div>
-                }
+            </header>
+
+            <div class="editor-layout">
                 {
                     match &*rows {
-                        None => html! { <div class="muted tree-empty">{ "Loading\u{2026}" }</div> },
+                        None => html! {
+                            <aside class="tree-pane"><div class="doc-empty">{ "Loading\u{2026}" }</div></aside>
+                        },
                         Some(r) => html! {
                             <TreePane rows={r.clone()} active={active.clone()}
-                                on_toggle={on_toggle} on_open={on_open.clone()} on_remove={on_remove} />
+                                on_toggle={on_toggle} on_open={on_open.clone()}
+                                on_new_note={
+                                    let new_note_in = new_note_in.clone();
+                                    Callback::from(move |_: ()| new_note_in.emit("/".to_string()))
+                                }
+                                on_ctx={on_ctx} />
                         },
                     }
                 }
-            </aside>
-            <section class="vault-main">
-                if !(*error).is_empty() {
-                    <div class="error">{ (*error).clone() }</div>
-                }
-                if *show_details {
-                    {
-                        match &*meta {
-                            None => html! { <div class="card" style="padding:1rem;"><span class="muted">{ "Loading\u{2026}" }</span></div> },
-                            Some(m) => details_panel(m, &devices, &web_did),
+                <div class="editor-main">
+                    <div class="editor-body">
+                        if !(*error).is_empty() {
+                            <div class="error" style="margin:1rem 2rem 0;">{ (*error).clone() }</div>
                         }
-                    }
-                }
-                {
-                    match &*open_file {
-                        Some(f) => html! {
-                            <EditorPane file={f.clone()} on_save={on_save} on_close={on_close}
-                                status={(*status).clone()} />
-                        },
-                        None => html! {
-                            <div class="vault-main__empty muted">
-                                <p>{ "Select a file from the tree, or create a note." }</p>
+                        if *show_details {
+                            <div class="editor-container" style="padding-bottom:0;">
+                                {
+                                    match &*meta {
+                                        None => html! { <div class="vault-details muted">{ "Loading\u{2026}" }</div> },
+                                        Some(m) => details_panel(m, &devices, &web_did),
+                                    }
+                                }
                             </div>
-                        },
-                    }
-                }
-            </section>
-        </div>
+                        }
+                        {
+                            match &*open_file {
+                                Some(f) => html! {
+                                    <EditorPane file={f.clone()} on_save={on_save} on_dirty={on_dirty} />
+                                },
+                                None => html! {
+                                    <div class="doc-empty">
+                                        { "Select a file, or right-click the tree for more." }
+                                    </div>
+                                },
+                            }
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <input type="file" multiple={true} style="display:none;"
+                ref={upload_input} onchange={upload_files} />
+
+            { ctx_menu_html.unwrap_or_default() }
+        </>
     }
 }
 
@@ -624,7 +762,7 @@ pub fn vault_tree(props: &Props) -> Html {
 /// are the signed-in user's own enrolled devices.
 fn details_panel(meta: &VaultMeta, devices: &[Device], web_did: &str) -> Html {
     html! {
-        <div class="card" style="padding:1rem;margin-bottom:1rem;font-size:0.85rem;">
+        <div class="card vault-details" style="padding:1rem;">
             <div style="display:grid;grid-template-columns:auto 1fr;gap:0.35rem 1rem;align-items:baseline;">
                 <span class="muted">{ "name" }</span>
                 <span>{ meta.name.clone() }</span>

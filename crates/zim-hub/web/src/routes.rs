@@ -34,10 +34,10 @@ pub fn switch(route: Route, me: &Me) -> Html {
                 <pages::workspace::Workspace user_id={me.user_id.clone()} />
             </AppShell>
         },
+        // The vault workspace is pack's editor-layout: its own fixed
+        // header + tree + document chrome, no AppShell sidebar.
         Route::Vault { id } => html! {
-            <AppShell email={me.email.clone()}>
-                <pages::vault::VaultTree vault_id={id} />
-            </AppShell>
+            <pages::vault::VaultTree vault_id={id} />
         },
         // Settings is a full-screen layout of its own.
         Route::Settings => html! { <pages::settings::Settings me={me.clone()} /> },

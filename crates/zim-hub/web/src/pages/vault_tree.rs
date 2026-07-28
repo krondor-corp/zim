@@ -1,6 +1,8 @@
-//! The expandable file tree (pack's tree-pane pattern): a flat list of
-//! rows with depth padding; folders toggle open/closed, expansion state
-//! survives rebuilds so mutations (save/upload/rm) refresh in place.
+//! The pack tree-pane: flat rows with depth padding, folder rows with
+//! rotating chevrons, quiet file rows, a docked dashed "+ New" button,
+//! and a right-click context menu for the destructive/secondary
+//! actions. Markup and class names mirror
+//! `pack/crates/app/templates/partials/tree_pane.html`.
 
 use std::collections::BTreeSet;
 
@@ -33,8 +35,6 @@ fn sorted(entries: &[FsEntry]) -> Vec<FsEntry> {
 }
 
 /// Build the flat row list by walking root + every expanded dir.
-/// `ls` is an async closure over the open vault; expansion state is the
-/// caller-held set of expanded dir paths.
 pub async fn build_rows<F, Fut>(ls: F, expanded: &BTreeSet<String>) -> Result<Vec<TreeNode>, String>
 where
     F: Fn(String) -> Fut,
@@ -79,6 +79,22 @@ where
     })
 }
 
+/// What a context menu was opened on.
+#[derive(Clone, PartialEq)]
+pub enum CtxTarget {
+    File(String),
+    Folder(String),
+    Root,
+}
+
+/// An open context menu: viewport position + target.
+#[derive(Clone, PartialEq)]
+pub struct CtxMenu {
+    pub x: i32,
+    pub y: i32,
+    pub target: CtxTarget,
+}
+
 #[derive(Properties, PartialEq)]
 pub struct TreePaneProps {
     pub rows: Vec<TreeNode>,
@@ -86,59 +102,97 @@ pub struct TreePaneProps {
     pub active: Option<String>,
     pub on_toggle: Callback<String>,
     pub on_open: Callback<String>,
-    pub on_remove: Callback<String>,
+    pub on_new_note: Callback<()>,
+    /// Right-click anywhere in the tree → context menu.
+    pub on_ctx: Callback<CtxMenu>,
 }
 
 #[function_component(TreePane)]
 pub fn tree_pane(props: &TreePaneProps) -> Html {
+    let root_ctx = {
+        let on_ctx = props.on_ctx.clone();
+        Callback::from(move |e: MouseEvent| {
+            e.prevent_default();
+            on_ctx.emit(CtxMenu {
+                x: e.client_x(),
+                y: e.client_y(),
+                target: CtxTarget::Root,
+            });
+        })
+    };
+    let new_note = {
+        let cb = props.on_new_note.clone();
+        Callback::from(move |_: MouseEvent| cb.emit(()))
+    };
     html! {
-        <nav class="tree-list">
-            if props.rows.is_empty() {
-                <p class="muted tree-empty">{ "(empty vault)" }</p>
-            }
-            { for props.rows.iter().map(|n| row(n, props)) }
-        </nav>
+        <aside id="tree-pane" class="tree-pane">
+            <nav class="tree-pane__list" oncontextmenu={root_ctx}>
+                { for props.rows.iter().map(|n| row(n, props)) }
+            </nav>
+            <button type="button" class="tree-pane__new" onclick={new_note}>
+                { "+ New note" }
+            </button>
+        </aside>
     }
 }
 
 fn row(n: &TreeNode, props: &TreePaneProps) -> Html {
     let pad = format!("padding-left: {}px;", 8 + n.depth * 14);
     let active = props.active.as_deref() == Some(n.path.as_str());
-    let onclick = {
-        let path = n.path.clone();
-        let is_dir = n.is_dir;
-        let on_toggle = props.on_toggle.clone();
-        let on_open = props.on_open.clone();
-        Callback::from(move |e: MouseEvent| {
-            e.prevent_default();
-            if is_dir {
-                on_toggle.emit(path.clone());
-            } else {
-                on_open.emit(path.clone());
-            }
-        })
-    };
-    let on_del = {
-        let path = n.path.clone();
-        let on_remove = props.on_remove.clone();
+    let oncontextmenu = {
+        let on_ctx = props.on_ctx.clone();
+        let target = if n.is_dir {
+            CtxTarget::Folder(n.path.clone())
+        } else {
+            CtxTarget::File(n.path.clone())
+        };
         Callback::from(move |e: MouseEvent| {
             e.prevent_default();
             e.stop_propagation();
-            on_remove.emit(path.clone());
+            on_ctx.emit(CtxMenu {
+                x: e.client_x(),
+                y: e.client_y(),
+                target: target.clone(),
+            });
         })
     };
-    html! {
-        <a href="#" key={n.path.clone()}
-           class={classes!("tree-item", active.then_some("tree-item--active"))}
-           style={pad} {onclick}>
-            if n.is_dir {
-                <span class="tree-item__chev">{ if n.expanded { "\u{25BE}" } else { "\u{25B8}" } }</span>
-            } else {
-                <span class="tree-item__chev tree-item__chev--blank"></span>
-            }
-            <span class="tree-item__icon">{ if n.is_dir { "\u{1F4C1}" } else { "\u{1F4C4}" } }</span>
-            <span class="tree-item__name">{ n.name.clone() }</span>
-            <button type="button" class="tree-item__del" title="Delete" onclick={on_del}>{ "\u{2715}" }</button>
-        </a>
+
+    if n.is_dir {
+        let onclick = {
+            let path = n.path.clone();
+            let on_toggle = props.on_toggle.clone();
+            Callback::from(move |e: MouseEvent| {
+                e.prevent_default();
+                on_toggle.emit(path.clone());
+            })
+        };
+        html! {
+            <div key={n.path.clone()}
+                class={classes!("tree-item", "tree-item--folder",
+                    (!n.expanded).then_some("tree-item--collapsed"))}
+                style={pad} onclick={onclick} {oncontextmenu}>
+                <button type="button" class="tree-item__chev" tabindex="-1"
+                    aria-label={if n.expanded { "Collapse folder" } else { "Expand folder" }}>
+                    <span class="chev-glyph">{ "\u{25BE}" }</span>
+                </button>
+                <span class="tree-item__name">{ n.name.clone() }</span>
+            </div>
+        }
+    } else {
+        let onclick = {
+            let path = n.path.clone();
+            let on_open = props.on_open.clone();
+            Callback::from(move |e: MouseEvent| {
+                e.prevent_default();
+                on_open.emit(path.clone());
+            })
+        };
+        html! {
+            <a href="#" key={n.path.clone()}
+               class={classes!("tree-item", "tree-item--file", active.then_some("tree-item--active"))}
+               style={pad} {onclick} {oncontextmenu}>
+                <span class="tree-item__name">{ n.name.clone() }</span>
+            </a>
+        }
     }
 }

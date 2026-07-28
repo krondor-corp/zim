@@ -1,57 +1,81 @@
 ---
-title: Managing Devices
-order: 5
+title: Your devices
+order: 2
 ---
 
-# Managing Devices
+The web workspace is one device. This page connects the rest: sign the
+CLI into your account, sync your device roster, and (optionally) mount
+vaults as local folders.
 
-Your Zim account can have multiple devices: your laptop, your phone, and the web browser you're reading this on. Each device has its own private key and authenticates independently.
+## 1. Install and sign in on the CLI
 
-## Your Web Device
-
-When you first sign in to a Zim hub with Google, a keypair is created in your browser. You'll choose an unlock password — this encrypts the key before it's stored on the hub. The hub never sees your actual key.
-
-Every time you sign in, you'll enter your unlock password to access your buckets.
-
-## Adding a New Device (Phone, CLI, Desktop)
-
-1. Open the hub URL on your new device and sign in with Google.
-2. You'll see an "Enrol Device" page. Give it a name (e.g., "My Phone") and submit.
-3. On an **existing device** (like your web browser), a notification appears asking you to approve.
-4. Click **Approve** on your existing device.
-5. Done — the new device is registered and can access your buckets.
-
-**First device is automatic.** If you've never registered before, your first sign-in is auto-approved.
-
-## Adding a CLI Device
+Install the `zim` binary ([all the options]({{ '/docs/install/' | relative_url }})):
 
 ```bash
-zim hub register --hub https://hub.example.com
+curl -fsSL https://raw.githubusercontent.com/krondor-corp/zim/main/install.sh | sh
 ```
 
-This opens a browser window. Sign in with Google, name the device, and approve it from an existing device. The CLI stores its key locally at `~/.config/zim/<hub>/device.key`.
+Then pair this machine with your account:
 
-## What Happens When You Lose a Device
+```bash
+zim hub login --hub https://hub.zim.krondor.org
+```
 
-1. Sign in on any remaining device.
-2. Go to **Account → Devices**.
-3. Click **Revoke** on the lost device.
+The terminal prints a URL and a short code. Open the URL in a browser
+where you're already signed in, enter the code, and approve the device.
+That approval enrolls this machine's key into your account — the CLI
+never sees your Google credentials.
 
-The lost device immediately loses access — its keys stop working. If the lost device held bucket shares, those shares are invalidated for that device (other devices retain their own copies).
+## 2. Sync your device roster
 
-## Lost All Devices
+```bash
+zim hub peers sync
+```
 
-If you've lost every device (including the web browser where your key was stored):
+This pulls your account's device roster from the hub into this
+machine's address book — the web key, your other machines, and the hub
+itself.
 
-1. Sign in via Google on a fresh browser.
-2. The hub will walk you through creating a new web key with a new password.
-3. Your old encrypted key blob is unrecoverable (the old password is gone).
-4. Revoke all old devices from **Account → Devices**.
-5. Ask the bucket owner to re-authorize you (they need to issue new shares for your new device keys).
+> **This step is what connects web and local.** Until a device has
+> synced the roster, it doesn't know your other devices exist — vaults
+> created in the browser **will not appear** on the CLI, and vaults
+> shared from the CLI won't reach the web, no matter how long you wait.
+> If the two sides ever look out of sync, run `zim hub peers sync`
+> again first.
 
-## Security Notes
+Check what the account knows:
 
-- Each device has its own ed25519 keypair. Compromising one device doesn't compromise the others.
-- The hub never holds your private key in plaintext — only the web device's encrypted blob.
-- Revoking a device = deleting its public key from the hub. Any JWTs it signed immediately fail verification.
-- Your unlock password is not stored anywhere. Use a strong, unique password.
+```bash
+zim hub peers ls
+```
+
+Devices marked as in your address book are the ones this machine will
+sync with. From here, vaults flow both ways automatically — browser
+edits land on your machine within moments, and local writes appear in
+the web workspace.
+
+## 3. Mount a vault (optional, needs FUSE)
+
+If FUSE is installed ([macFUSE](https://macfuse.github.io) on macOS,
+`fuse3` on Linux) and you installed the FUSE build of zim, a vault can
+be mounted as a real folder:
+
+```bash
+zim mount add <vault> ~/zim/notes
+```
+
+Anything you drop in the folder is encrypted and versioned like any
+other vault write — and syncs everywhere, including the web workspace.
+See [Mounting]({{ '/docs/mounting/' | relative_url }}) for the full
+lifecycle (auto-mount, read-only, unmounting).
+
+## Day-to-day
+
+```bash
+zim vault list                  # vaults this machine holds
+zim vault cat <vault> /note.md  # read a file
+zim vault add <vault> /note.md  # write a file (stdin)
+zim update                      # update the binary + daemon
+```
+
+The full command surface is in the [CLI reference]({{ '/docs/cli/' | relative_url }}).

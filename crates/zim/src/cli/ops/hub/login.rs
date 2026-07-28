@@ -30,12 +30,12 @@ use crate::cli::ui;
 use crate::context::{paths, ContextError};
 
 /// Default `--hub` target. Debug builds point at the local dev hub
-/// (`make hub` serves `127.0.0.1:8080`); release points at the hosted
-/// hub. Passing `--hub` explicitly always wins.
+/// (`./bin/dev hub` serves `127.0.0.1:17190`); release points at the
+/// hosted hub. Passing `--hub` explicitly always wins.
 pub const DEFAULT_HUB: &str = if cfg!(debug_assertions) {
-    "http://127.0.0.1:8080"
+    "http://127.0.0.1:17190"
 } else {
-    "https://zim.krondor.org"
+    "https://hub.zim.krondor.org"
 };
 
 #[derive(Args, Debug, Clone)]
@@ -202,10 +202,10 @@ impl Op for Login {
         //    Read the DID off the hub's own /.well-known/did.json
         //    rather than deriving it from `--hub`. A user typing
         //    `--hub http://localhost:8080` against a hub configured
-        //    with `ZIM_HUB_HOST=127.0.0.1:8080` would otherwise get
+        //    with `ZIM_HUB_HOST=127.0.0.1:17190` would otherwise get
         //    `did:web:localhost%3A8080` in their peer book, which
         //    then fails to resolve because the document at that URL
-        //    self-identifies as `did:web:127.0.0.1%3A8080` and the
+        //    self-identifies as `did:web:127.0.0.1%3A17190` and the
         //    resolver insists the two match. The hub is the
         //    authority on its own DID.
         let (hub_did, hub_nick) = if self.no_peer_add {

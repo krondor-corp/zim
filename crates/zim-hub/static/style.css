@@ -1571,3 +1571,8 @@ a.app-header__crumb:hover {
 /* Wider dialog for the vault-details panel. */
 .dialog--wide { width: 34rem; }
 .dialog--wide .vault-details { margin: 0; max-height: 60vh; overflow-y: auto; }
+
+/* Web-key gate — flat centered form (the onboarding shell frames it;
+ * no card-in-panel double-wrap). */
+.gate { display: flex; flex-direction: column; }
+.gate h3 { margin: 0 0 0.5rem; font-size: 1.15rem; }

@@ -10,6 +10,7 @@ use yew::prelude::*;
 
 use crate::api::{delete_device, fetch_devices, fetch_me, Device};
 use crate::components::copy_button;
+use crate::components::dialog::ConfirmDialog;
 
 #[function_component(Devices)]
 pub fn devices() -> Html {
@@ -49,16 +50,19 @@ pub fn devices() -> Html {
         });
     }
 
+    // Which device the user is confirming removal of.
+    let pending = use_state(|| None::<String>);
     let on_delete = {
+        let pending = pending.clone();
+        Callback::from(move |pubkey: String| pending.set(Some(pubkey)))
+    };
+    let confirm_delete = {
         let reload = reload.clone();
         let error = error.clone();
-        Callback::from(move |pubkey: String| {
-            let confirmed = web_sys::window()
-                .and_then(|w| w.confirm_with_message("Remove this device?").ok())
-                .unwrap_or(false);
-            if !confirmed {
-                return;
-            }
+        let pending = pending.clone();
+        Callback::from(move |_: ()| {
+            let Some(pubkey) = (*pending).clone() else { return; };
+            pending.set(None);
             let reload = reload.clone();
             let error = error.clone();
             spawn_local(async move {
@@ -117,6 +121,13 @@ pub fn devices() -> Html {
                     }
                 }
             </section>
+            if pending.is_some() {
+                <ConfirmDialog title="Remove device?"
+                    body="This key can no longer decrypt vaults shared with it. Vaults it authored keep their history."
+                    action="Remove"
+                    on_cancel={let p = pending.clone(); Callback::from(move |_: ()| p.set(None))}
+                    on_confirm={confirm_delete} />
+            }
         </>
     }
 }

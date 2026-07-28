@@ -12,6 +12,7 @@ use yew_router::prelude::*;
 use zim_wasm::WasmFs;
 
 use crate::api::fetch_vaults;
+use crate::components::dialog::PromptDialog;
 use crate::routes::Route;
 use crate::util::{jserr, origin};
 
@@ -32,20 +33,9 @@ fn last_vault() -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
-/// Prompt for a name and create a vault; navigates into it on success.
-/// Shared by the empty state here and the switcher's "+ New vault".
-pub fn create_vault_flow(
-    user_id: String,
-    navigator: Navigator,
-    error: Callback<String>,
-) {
-    let name = web_sys::window()
-        .and_then(|w| w.prompt_with_message("New vault name:").ok().flatten())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let Some(name) = name else {
-        return;
-    };
+/// Create a vault with `name` and navigate into it. Shared by the
+/// empty-state dialog here and the switcher's "+ New vault" dialog.
+pub fn create_vault(name: String, user_id: String, navigator: Navigator, error: Callback<String>) {
     spawn_local(async move {
         match WasmFs::init(name, origin(), user_id).await {
             Ok(fs) => {
@@ -96,18 +86,28 @@ pub fn workspace(props: &Props) -> Html {
         });
     }
 
-    let create = {
+    let show_dialog = use_state(|| false);
+    let open_dialog = {
+        let show_dialog = show_dialog.clone();
+        Callback::from(move |_: MouseEvent| show_dialog.set(true))
+    };
+    let dialog_html = if *show_dialog {
+        let show_dialog = show_dialog.clone();
         let user_id = props.user_id.clone();
         let navigator = navigator.clone();
         let error = error.clone();
-        Callback::from(move |_: MouseEvent| {
-            let error = error.clone();
-            create_vault_flow(
-                user_id.clone(),
-                navigator.clone(),
-                Callback::from(move |e: String| error.set(e)),
-            );
-        })
+        html! {
+            <PromptDialog title="New vault" label="Name"
+                on_cancel={let s = show_dialog.clone(); Callback::from(move |_: ()| s.set(false))}
+                on_submit={Callback::from(move |name: String| {
+                    show_dialog.set(false);
+                    let error = error.clone();
+                    create_vault(name, user_id.clone(), navigator.clone(),
+                        Callback::from(move |e: String| error.set(e)));
+                })} />
+        }
+    } else {
+        Html::default()
     };
 
     html! {
@@ -121,13 +121,14 @@ pub fn workspace(props: &Props) -> Html {
                     Some(_) => html! {
                         <>
                             <p>{ "No vaults yet. A vault is an encrypted, versioned folder that syncs to all your devices." }</p>
-                            <button type="button" class="tree-pane__new" style="padding:0.5rem 1.2rem;" onclick={create}>
+                            <button type="button" class="tree-pane__new" style="padding:0.5rem 1.2rem;" onclick={open_dialog}>
                                 { "+ Create your first vault" }
                             </button>
                         </>
                     },
                 }
             }
+            { dialog_html }
         </div>
     }
 }

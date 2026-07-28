@@ -1,6 +1,8 @@
 //! Component library — small, reusable, presentational pieces. No fetching,
 //! no routing; pages compose these.
 
+pub mod dialog;
+
 use yew::prelude::*;
 
 /// A copy-to-clipboard button for a fixed string value. Fire-and-forget:

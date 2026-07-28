@@ -19,6 +19,7 @@ use zim_wasm::WasmFs;
 use crate::api::{fetch_devices, fetch_me, fetch_vaults, Device, FsEntry, VaultItem};
 use crate::pages::vault_editor::{EditorPane, OpenFile};
 use crate::pages::vault_tree::{build_rows, CtxMenu, CtxTarget, TreeNode, TreePane};
+use crate::components::dialog::{ConfirmDialog, PromptDialog};
 use crate::layouts::HeaderMenu;
 use crate::routes::Route;
 use crate::util::{jserr, origin};
@@ -103,6 +104,15 @@ fn object_url(bytes: &[u8], mime: &str) -> Result<String, String> {
     let blob =
         web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &opts).map_err(jserr)?;
     web_sys::Url::create_object_url_with_blob(&blob).map_err(jserr)
+}
+
+/// Which first-class dialog is open (replaces browser prompt/confirm).
+#[derive(Clone, PartialEq)]
+enum Dialog {
+    NewNote { dir: String },
+    NewFolder { dir: String },
+    Delete { path: String },
+    NewVault,
 }
 
 #[derive(Properties, PartialEq)]
@@ -248,6 +258,7 @@ pub fn vault_tree(props: &Props) -> Html {
     let show_details = use_state(|| false);
     let vaults = use_state(Vec::<VaultItem>::new);
     let ctx = use_state(|| None::<CtxMenu>);
+    let dialog = use_state(|| None::<Dialog>);
     let upload_dir = use_state(|| "/".to_string());
     let upload_input = use_node_ref();
 
@@ -454,14 +465,7 @@ pub fn vault_tree(props: &Props) -> Html {
         let error = error.clone();
         let status = status.clone();
         let rebuild = rebuild.clone();
-        Callback::from(move |dir: String| {
-            let name = web_sys::window()
-                .and_then(|w| w.prompt_with_message("Note name:").ok().flatten())
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
-            let Some(mut name) = name else {
-                return;
-            };
+        Callback::from(move |(dir, mut name): (String, String)| {
             if !name.to_ascii_lowercase().ends_with(".md") {
                 name.push_str(".md");
             }
@@ -495,14 +499,7 @@ pub fn vault_tree(props: &Props) -> Html {
         let error = error.clone();
         let status = status.clone();
         let rebuild = rebuild.clone();
-        Callback::from(move |dir: String| {
-            let name = web_sys::window()
-                .and_then(|w| w.prompt_with_message("Folder name:").ok().flatten())
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
-            let Some(name) = name else {
-                return;
-            };
+        Callback::from(move |(dir, name): (String, String)| {
             let fs = fs.clone();
             let path = joined(&dir, &name);
             let error = error.clone();
@@ -532,12 +529,6 @@ pub fn vault_tree(props: &Props) -> Html {
         let rebuild = rebuild.clone();
         Callback::from(move |path: String| {
             let name = path.rsplit('/').next().unwrap_or_default().to_string();
-            let ok = web_sys::window()
-                .and_then(|w| w.confirm_with_message(&format!("Delete {name}?")).ok())
-                .unwrap_or(false);
-            if !ok {
-                return;
-            }
             let fs = fs.clone();
             let open_file = open_file.clone();
             let error = error.clone();
@@ -630,13 +621,6 @@ pub fn vault_tree(props: &Props) -> Html {
         let item = |label: &str, action: Callback<MouseEvent>| {
             html! { <button type="button" class="ctx-menu__item" onclick={action}>{ label }</button> }
         };
-        let mk = |cb: Callback<String>, arg: String, ctx: &UseStateHandle<Option<CtxMenu>>| {
-            let ctx = ctx.clone();
-            Callback::from(move |_: MouseEvent| {
-                ctx.set(None);
-                cb.emit(arg.clone());
-            })
-        };
         let trigger_upload = {
             let upload_dir = upload_dir.clone();
             let upload_input = upload_input.clone();
@@ -655,13 +639,35 @@ pub fn vault_tree(props: &Props) -> Html {
                 <div style="position:fixed;inset:0;z-index:79;" onclick={close_ctx.clone()}
                      oncontextmenu={close_ctx.clone()}></div>
                 <div class="ctx-menu" style={style}>
-                    { item("New note", mk(new_note_in.clone(), dir.clone(), &ctx)) }
-                    { item("New folder", mk(new_folder_in.clone(), dir.clone(), &ctx)) }
+                    { item("New note", {
+                        let dialog = dialog.clone();
+                        let ctx2 = ctx.clone();
+                        let dir = dir.clone();
+                        Callback::from(move |_: MouseEvent| {
+                            ctx2.set(None);
+                            dialog.set(Some(Dialog::NewNote { dir: dir.clone() }));
+                        })
+                    }) }
+                    { item("New folder", {
+                        let dialog = dialog.clone();
+                        let ctx2 = ctx.clone();
+                        let dir = dir.clone();
+                        Callback::from(move |_: MouseEvent| {
+                            ctx2.set(None);
+                            dialog.set(Some(Dialog::NewFolder { dir: dir.clone() }));
+                        })
+                    }) }
                     { item("Upload here", trigger_upload) }
                     {
                         match &m.target {
                             CtxTarget::File(p) | CtxTarget::Folder(p) => {
-                                html! { { item("Delete", mk(remove_path.clone(), p.clone(), &ctx)) } }
+                                let dialog = dialog.clone();
+                                let ctx2 = ctx.clone();
+                                let p = p.clone();
+                                html! { { item("Delete", Callback::from(move |_: MouseEvent| {
+                                    ctx2.set(None);
+                                    dialog.set(Some(Dialog::Delete { path: p.clone() }));
+                                })) } }
                             }
                             CtxTarget::Root => html! {},
                         }
@@ -671,18 +677,10 @@ pub fn vault_tree(props: &Props) -> Html {
         }
     });
 
+    let navigator = use_navigator().expect("router context");
     let new_vault = {
-        let user_id = props.user_id.clone();
-        let navigator = use_navigator().expect("router context");
-        let error = error.clone();
-        Callback::from(move |_: MouseEvent| {
-            let error = error.clone();
-            crate::pages::workspace::create_vault_flow(
-                user_id.clone(),
-                navigator.clone(),
-                Callback::from(move |e: String| error.set(e)),
-            );
-        })
+        let dialog = dialog.clone();
+        Callback::from(move |_: MouseEvent| dialog.set(Some(Dialog::NewVault)))
     };
 
     let vault_title = match &*meta {
@@ -757,8 +755,8 @@ pub fn vault_tree(props: &Props) -> Html {
                             <TreePane rows={r.clone()} active={active.clone()}
                                 on_toggle={on_toggle} on_open={on_open.clone()}
                                 on_new_note={
-                                    let new_note_in = new_note_in.clone();
-                                    Callback::from(move |_: ()| new_note_in.emit("/".to_string()))
+                                    let dialog = dialog.clone();
+                                    Callback::from(move |_: ()| dialog.set(Some(Dialog::NewNote { dir: "/".to_string() })))
                                 }
                                 on_upload={
                                     let upload_dir = upload_dir.clone();
@@ -809,6 +807,77 @@ pub fn vault_tree(props: &Props) -> Html {
                 ref={upload_input} onchange={upload_files} />
 
             { ctx_menu_html.unwrap_or_default() }
+            {
+                match &*dialog {
+                    None => html! {},
+                    Some(d) => {
+                        let close = {
+                            let dialog = dialog.clone();
+                            Callback::from(move |_: ()| dialog.set(None))
+                        };
+                        match d.clone() {
+                            Dialog::NewNote { dir } => {
+                                let dialog = dialog.clone();
+                                let new_note_in = new_note_in.clone();
+                                html! {
+                                    <PromptDialog title="New note" label="Name" value="note.md"
+                                        on_cancel={close}
+                                        on_submit={Callback::from(move |name: String| {
+                                            dialog.set(None);
+                                            new_note_in.emit((dir.clone(), name));
+                                        })} />
+                                }
+                            }
+                            Dialog::NewFolder { dir } => {
+                                let dialog = dialog.clone();
+                                let new_folder_in = new_folder_in.clone();
+                                html! {
+                                    <PromptDialog title="New folder" label="Name"
+                                        on_cancel={close}
+                                        on_submit={Callback::from(move |name: String| {
+                                            dialog.set(None);
+                                            new_folder_in.emit((dir.clone(), name));
+                                        })} />
+                                }
+                            }
+                            Dialog::Delete { path } => {
+                                let dialog = dialog.clone();
+                                let remove_path = remove_path.clone();
+                                let name = path.rsplit('/').next().unwrap_or_default().to_string();
+                                html! {
+                                    <ConfirmDialog title={format!("Delete {name}?")}
+                                        body="This removes it from the vault's current version. Prior versions keep their history."
+                                        on_cancel={close}
+                                        on_confirm={Callback::from(move |_| {
+                                            dialog.set(None);
+                                            remove_path.emit(path.clone());
+                                        })} />
+                                }
+                            }
+                            Dialog::NewVault => {
+                                let dialog = dialog.clone();
+                                let user_id = props.user_id.clone();
+                                let navigator = navigator.clone();
+                                let error = error.clone();
+                                html! {
+                                    <PromptDialog title="New vault" label="Name"
+                                        on_cancel={close}
+                                        on_submit={Callback::from(move |name: String| {
+                                            dialog.set(None);
+                                            let error = error.clone();
+                                            crate::pages::workspace::create_vault(
+                                                name,
+                                                user_id.clone(),
+                                                navigator.clone(),
+                                                Callback::from(move |e: String| error.set(e)),
+                                            );
+                                        })} />
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         </>
     }
 }

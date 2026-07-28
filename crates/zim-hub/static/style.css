@@ -1433,3 +1433,16 @@ a.app-header__crumb:hover {
 .app-menu__trigger { background: none; border: none; font: inherit; }
 .vault-switch__trigger { width: auto; height: auto; padding: 0.15rem 0.25rem; cursor: pointer; }
 .app-menu .app-menu__list { z-index: 60; }
+
+/* The vault switcher's dropdown lives INSIDE the left crumb slot —
+ * pack's overflow:hidden (crumb ellipsis) would clip it into nothing.
+ * Ellipsis moves to the individual crumb spans instead. */
+.app-header__slot--left { overflow: visible; }
+.app-header__crumb {
+  max-width: 18rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  vertical-align: middle;
+}

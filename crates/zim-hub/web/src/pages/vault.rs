@@ -293,6 +293,9 @@ pub fn vault_tree(props: &Props) -> Html {
         let devices = devices.clone();
         let web_did = web_did.clone();
         let vaults = vaults.clone();
+        let expanded = expanded.clone();
+        let rows = rows.clone();
+        let open_file = open_file.clone();
         let vault_id = props.vault_id.clone();
         use_effect_with(vault_id.clone(), move |_| {
             let fs = fs.clone();
@@ -301,6 +304,11 @@ pub fn vault_tree(props: &Props) -> Html {
             let devices = devices.clone();
             let web_did = web_did.clone();
             let vaults = vaults.clone();
+            // Fresh vault, fresh view state: expansion paths and the
+            // open file belong to the PREVIOUS vault.
+            expanded.set(BTreeSet::new());
+            rows.set(None);
+            open_file.set(None);
             yew::platform::spawn_local(async move {
                 match open(&fs, vault_id).await {
                     Ok(()) => rebuild.emit(()),

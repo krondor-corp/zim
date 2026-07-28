@@ -103,6 +103,7 @@ pub struct TreePaneProps {
     pub on_toggle: Callback<String>,
     pub on_open: Callback<String>,
     pub on_new_note: Callback<()>,
+    pub on_upload: Callback<()>,
     /// Right-click anywhere in the tree → context menu.
     pub on_ctx: Callback<CtxMenu>,
 }
@@ -124,14 +125,23 @@ pub fn tree_pane(props: &TreePaneProps) -> Html {
         let cb = props.on_new_note.clone();
         Callback::from(move |_: MouseEvent| cb.emit(()))
     };
+    let upload = {
+        let cb = props.on_upload.clone();
+        Callback::from(move |_: MouseEvent| cb.emit(()))
+    };
     html! {
         <aside id="tree-pane" class="tree-pane">
             <nav class="tree-pane__list" oncontextmenu={root_ctx}>
                 { for props.rows.iter().map(|n| row(n, props)) }
             </nav>
-            <button type="button" class="tree-pane__new" onclick={new_note}>
-                { "+ New note" }
-            </button>
+            <div class="tree-pane__dock">
+                <button type="button" class="tree-pane__new" onclick={new_note}>
+                    { "+ New note" }
+                </button>
+                <button type="button" class="tree-pane__new" onclick={upload}>
+                    { "\u{2191} Upload" }
+                </button>
+            </div>
         </aside>
     }
 }

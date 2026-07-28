@@ -85,3 +85,39 @@ pub fn onboarding_shell(props: &OnboardingShellProps) -> Html {
         </div>
     }
 }
+
+
+/// Pack's slim chrome for non-vault pages (Settings, Workspace, …):
+/// the same fixed app-header the vault workspace renders, wrapping a
+/// centered content column. One design language everywhere.
+#[derive(Properties, PartialEq)]
+pub struct PackChromeProps {
+    /// Breadcrumb label for the header's left slot.
+    pub crumb: String,
+    pub children: Html,
+}
+
+#[function_component(PackChrome)]
+pub fn pack_chrome(props: &PackChromeProps) -> Html {
+    html! {
+        <>
+            <header class="app-header">
+                <details class="app-menu">
+                    <summary class="app-menu__trigger" aria-label="Menu">{ "\u{2630}" }</summary>
+                    <nav class="app-menu__list">
+                        <Link<Route> to={Route::Workspace} classes="app-menu__item">{ "Workspace" }</Link<Route>>
+                        <Link<Route> to={Route::Settings} classes="app-menu__item">{ "Settings" }</Link<Route>>
+                        <a href="/auth/logout" class="app-menu__item">{ "Sign out" }</a>
+                    </nav>
+                </details>
+                <div class="app-header__slot app-header__slot--left">
+                    <span class="app-header__crumb app-header__crumb--current">{ props.crumb.clone() }</span>
+                </div>
+                <div class="app-header__slot app-header__slot--right"></div>
+            </header>
+            <main class="pack-main">
+                { props.children.clone() }
+            </main>
+        </>
+    }
+}

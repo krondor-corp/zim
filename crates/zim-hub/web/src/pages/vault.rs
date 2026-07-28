@@ -234,7 +234,10 @@ pub fn vault_tree(props: &Props) -> Html {
     let open_file = use_state(|| None::<OpenFile>);
     let error = use_state(String::new);
     let status = use_state(String::new);
-    let dirty = use_state(|| false);
+    // The in-flight edit: Some(text) once the open file's content has
+    // been touched; cleared on save / file switch. Drives the header's
+    // Save affordance.
+    let draft = use_state(|| None::<String>);
     let meta = use_state(|| None::<VaultMeta>);
     let devices = use_state(Vec::<Device>::new);
     let web_did = use_state(String::new);
@@ -369,16 +372,35 @@ pub fn vault_tree(props: &Props) -> Html {
             });
         })
     };
+    // Switching files abandons the draft.
+    {
+        let draft = draft.clone();
+        let status = status.clone();
+        let path_now = (*open_file).as_ref().map(|f| f.path.clone());
+        use_effect_with(path_now, move |_| {
+            draft.set(None);
+            status.set(String::new());
+            || ()
+        });
+    }
 
-    let on_save = {
+    let save_draft = {
         let fs = fs.clone();
         let open_file = open_file.clone();
+        let draft = draft.clone();
         let error = error.clone();
         let status = status.clone();
         let rebuild = rebuild.clone();
-        Callback::from(move |(path, text): (String, String)| {
+        Callback::from(move |_: MouseEvent| {
+            let Some(path) = (*open_file).as_ref().map(|f| f.path.clone()) else {
+                return;
+            };
+            let Some(text) = (*draft).clone() else {
+                return;
+            };
             let fs = fs.clone();
             let open_file = open_file.clone();
+            let draft = draft.clone();
             let error = error.clone();
             let status = status.clone();
             let rebuild = rebuild.clone();
@@ -387,6 +409,7 @@ pub fn vault_tree(props: &Props) -> Html {
                 match add_and_save(&fs, path.clone(), text.into_bytes()).await {
                     Ok(()) => {
                         status.set("saved".to_string());
+                        draft.set(None);
                         if let Ok(f) = load_file(&fs, path).await {
                             open_file.set(Some(f));
                         }
@@ -401,16 +424,12 @@ pub fn vault_tree(props: &Props) -> Html {
         })
     };
 
-    let on_dirty = {
+    let on_change = {
+        let draft = draft.clone();
         let status = status.clone();
-        let dirty = dirty.clone();
-        Callback::from(move |d: bool| {
-            dirty.set(d);
-            if d {
-                status.set("unsaved changes".to_string());
-            } else {
-                status.set(String::new());
-            }
+        Callback::from(move |text: String| {
+            draft.set(Some(text));
+            status.set(String::new());
         })
     };
 
@@ -433,7 +452,6 @@ pub fn vault_tree(props: &Props) -> Html {
             if !name.to_ascii_lowercase().ends_with(".md") {
                 name.push_str(".md");
             }
-            let title = name.trim_end_matches(".md").to_string();
             let fs = fs.clone();
             let path = joined(&dir, &name);
             let open_file = open_file.clone();
@@ -442,8 +460,7 @@ pub fn vault_tree(props: &Props) -> Html {
             let rebuild = rebuild.clone();
             status.set(format!("creating {name}\u{2026}"));
             yew::platform::spawn_local(async move {
-                let body = format!("# {title}\n\n");
-                match add_and_save(&fs, path.clone(), body.into_bytes()).await {
+                match add_and_save(&fs, path.clone(), Vec::new()).await {
                     Ok(()) => {
                         status.set(String::new());
                         if let Ok(f) = load_file(&fs, path).await {
@@ -696,6 +713,11 @@ pub fn vault_tree(props: &Props) -> Html {
                 <div class="app-header__slot app-header__slot--left">{ crumbs }</div>
                 <div class="app-header__slot app-header__slot--right">
                     <span id="save-status" class="app-header__status">{ (*status).clone() }</span>
+                    if draft.is_some() {
+                        <button type="button" class="app-header__btn app-header__btn--save" onclick={save_draft.clone()}>
+                            { "Save" }
+                        </button>
+                    }
                     <button type="button" class="app-header__btn" title="Vault details" onclick={toggle_details}>
                         { "\u{24D8}" }
                     </button>
@@ -714,6 +736,16 @@ pub fn vault_tree(props: &Props) -> Html {
                                 on_new_note={
                                     let new_note_in = new_note_in.clone();
                                     Callback::from(move |_: ()| new_note_in.emit("/".to_string()))
+                                }
+                                on_upload={
+                                    let upload_dir = upload_dir.clone();
+                                    let upload_input = upload_input.clone();
+                                    Callback::from(move |_: ()| {
+                                        upload_dir.set("/".to_string());
+                                        if let Some(input) = upload_input.cast::<HtmlInputElement>() {
+                                            input.click();
+                                        }
+                                    })
                                 }
                                 on_ctx={on_ctx} />
                         },
@@ -737,7 +769,7 @@ pub fn vault_tree(props: &Props) -> Html {
                         {
                             match &*open_file {
                                 Some(f) => html! {
-                                    <EditorPane file={f.clone()} on_save={on_save} on_dirty={on_dirty} />
+                                    <EditorPane file={f.clone()} on_change={on_change.clone()} />
                                 },
                                 None => html! {
                                     <div class="doc-empty">

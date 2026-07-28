@@ -1400,3 +1400,26 @@ a.app-header__crumb:hover {
 
 /* Details card (vault metadata) shown above the document */
 .vault-details { margin-bottom: 1.25rem; font-size: 0.85rem; }
+
+/* Non-vault pages under the pack header: centered content column. */
+.pack-main {
+  padding: calc(var(--header-h) + 1.5rem) 1.5rem 3rem;
+  max-width: 52rem;
+  margin: 0 auto;
+}
+
+/* Docked pair: New note + Upload share the tree pane's bottom row. */
+.tree-pane__dock { display: flex; gap: 0.4rem; padding: 0 0.5rem 0.5rem; }
+.tree-pane__dock .tree-pane__new { flex: 1; margin: 0; }
+
+/* Header Save — the one loud affordance, violet like the app's primary. */
+.app-header__btn--save {
+  color: hsl(var(--primary));
+  border-color: hsl(var(--primary) / 0.5);
+  font-weight: 600;
+}
+.app-header__btn--save:hover {
+  color: hsl(var(--primary));
+  background: hsl(var(--primary) / 0.12);
+  border-color: hsl(var(--primary));
+}

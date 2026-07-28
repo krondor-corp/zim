@@ -1559,3 +1559,15 @@ a.app-header__crumb:hover {
 .dialog__btn--danger:hover { opacity: 0.9; }
 
 .dialog__btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Drag & drop moves (pack): dragged row dims, folder/root highlights. */
+.tree-item--dragging { opacity: 0.4; }
+.tree-item--drop-target {
+  background: hsl(var(--primary) / 0.15);
+  outline: 1px dashed hsl(var(--primary) / 0.5);
+  outline-offset: -1px;
+}
+
+/* Wider dialog for the vault-details panel. */
+.dialog--wide { width: 34rem; }
+.dialog--wide .vault-details { margin: 0; max-height: 60vh; overflow-y: auto; }

@@ -211,6 +211,15 @@ async fn rm_and_save(fs: &FsHandle, path: String) -> Result<(), String> {
     .await
 }
 
+async fn mv_and_save(fs: &FsHandle, from: String, to: String) -> Result<(), String> {
+    save_with_retry(fs, async |f: &mut WasmFs| {
+        f.mv(from.clone(), to.clone())
+            .await
+            .map_err(|e| jserr(e.into()))
+    })
+    .await
+}
+
 /// Load `path` into an [`OpenFile`] (decrypt, object-URL, decode text).
 async fn load_file(fs: &FsHandle, path: String) -> Result<OpenFile, String> {
     let bytes = cat(fs, path.clone()).await?;
@@ -259,6 +268,7 @@ pub fn vault_tree(props: &Props) -> Html {
     let vaults = use_state(Vec::<VaultItem>::new);
     let ctx = use_state(|| None::<CtxMenu>);
     let dialog = use_state(|| None::<Dialog>);
+    let dragging = use_state(|| None::<String>);
     let upload_dir = use_state(|| "/".to_string());
     let upload_input = use_node_ref();
 
@@ -602,6 +612,54 @@ pub fn vault_tree(props: &Props) -> Html {
         })
     };
 
+    // Drag & drop: move `from` into directory `into` (append its name).
+    let on_move = {
+        let fs = fs.clone();
+        let open_file = open_file.clone();
+        let error = error.clone();
+        let status = status.clone();
+        let rebuild = rebuild.clone();
+        Callback::from(move |(from, into): (String, String)| {
+            let name = from.rsplit('/').next().unwrap_or_default().to_string();
+            let to = joined(&into, &name);
+            if to == from {
+                return;
+            }
+            let fs = fs.clone();
+            let open_file = open_file.clone();
+            let error = error.clone();
+            let status = status.clone();
+            let rebuild = rebuild.clone();
+            status.set(format!("moving {name}\u{2026}"));
+            yew::platform::spawn_local(async move {
+                match mv_and_save(&fs, from.clone(), to.clone()).await {
+                    Ok(()) => {
+                        status.set(String::new());
+                        // If the open file moved, follow it to the new path.
+                        if (*open_file).as_ref().is_some_and(|f| f.path == from) {
+                            if let Ok(f) = load_file(&fs, to).await {
+                                open_file.set(Some(f));
+                            }
+                        }
+                        rebuild.emit(());
+                    }
+                    Err(e) => {
+                        status.set(String::new());
+                        error.set(e);
+                    }
+                }
+            });
+        })
+    };
+    let on_drag_start = {
+        let dragging = dragging.clone();
+        Callback::from(move |path: String| dragging.set(Some(path)))
+    };
+    let on_drag_end = {
+        let dragging = dragging.clone();
+        Callback::from(move |_: ()| dragging.set(None))
+    };
+
     // Context menu plumbing: open from the tree, act + close here.
     let on_ctx = {
         let ctx = ctx.clone();
@@ -724,6 +782,34 @@ pub fn vault_tree(props: &Props) -> Html {
         Callback::from(move |_: MouseEvent| show_details.set(!*show_details))
     };
 
+    let details_modal = if *show_details {
+        let close = {
+            let show_details = show_details.clone();
+            Callback::from(move |_: MouseEvent| show_details.set(false))
+        };
+        html! {
+            <>
+                <div class="dialog-backdrop" onclick={close.clone()}></div>
+                <div class="dialog dialog--wide" role="dialog" aria-modal="true">
+                    <div class="dialog__form">
+                        <div style="display:flex;align-items:center;gap:0.75rem;">
+                            <h2 class="dialog__title" style="flex:1;margin:0;">{ "Vault details" }</h2>
+                            <button type="button" class="dialog__btn" onclick={close}>{ "Close" }</button>
+                        </div>
+                        {
+                            match &*meta {
+                                None => html! { <div class="vault-details muted">{ "Loading\u{2026}" }</div> },
+                                Some(m) => details_panel(m, &devices, &web_did),
+                            }
+                        }
+                    </div>
+                </div>
+            </>
+        }
+    } else {
+        Html::default()
+    };
+
     html! {
         <>
             <header class="app-header">
@@ -768,7 +854,11 @@ pub fn vault_tree(props: &Props) -> Html {
                                         }
                                     })
                                 }
-                                on_ctx={on_ctx} />
+                                on_ctx={on_ctx}
+                                on_move={on_move}
+                                dragging={(*dragging).clone()}
+                                on_drag_start={on_drag_start}
+                                on_drag_end={on_drag_end} />
                         },
                     }
                 }
@@ -776,16 +866,6 @@ pub fn vault_tree(props: &Props) -> Html {
                     <div class="editor-body">
                         if !(*error).is_empty() {
                             <div class="error" style="margin:1rem 2rem 0;">{ (*error).clone() }</div>
-                        }
-                        if *show_details {
-                            <div class="editor-container" style="padding-bottom:0;">
-                                {
-                                    match &*meta {
-                                        None => html! { <div class="vault-details muted">{ "Loading\u{2026}" }</div> },
-                                        Some(m) => details_panel(m, &devices, &web_did),
-                                    }
-                                }
-                            </div>
                         }
                         {
                             match &*open_file {
@@ -807,6 +887,7 @@ pub fn vault_tree(props: &Props) -> Html {
                 ref={upload_input} onchange={upload_files} />
 
             { ctx_menu_html.unwrap_or_default() }
+            { details_modal }
             {
                 match &*dialog {
                     None => html! {},

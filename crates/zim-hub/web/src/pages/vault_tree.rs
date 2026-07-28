@@ -6,6 +6,7 @@
 
 use std::collections::BTreeSet;
 
+use web_sys::DragEvent;
 use yew::prelude::*;
 
 use crate::api::FsEntry;
@@ -106,6 +107,12 @@ pub struct TreePaneProps {
     pub on_upload: Callback<()>,
     /// Right-click anywhere in the tree → context menu.
     pub on_ctx: Callback<CtxMenu>,
+    /// Move `from` path into destination directory `into` (drag & drop).
+    pub on_move: Callback<(String, String)>,
+    /// The path currently being dragged (drives dim/drop-target styling).
+    pub dragging: Option<String>,
+    pub on_drag_start: Callback<String>,
+    pub on_drag_end: Callback<()>,
 }
 
 #[function_component(TreePane)]
@@ -131,7 +138,21 @@ pub fn tree_pane(props: &TreePaneProps) -> Html {
     };
     html! {
         <aside id="tree-pane" class="tree-pane">
-            <nav class="tree-pane__list" oncontextmenu={root_ctx}>
+            <nav class="tree-pane__list" oncontextmenu={root_ctx}
+                ondragover={Callback::from(|e: DragEvent| e.prevent_default())}
+                ondrop={
+                    let on_move = props.on_move.clone();
+                    let on_drag_end = props.on_drag_end.clone();
+                    Callback::from(move |e: DragEvent| {
+                        e.prevent_default();
+                        if let Some(dt) = e.data_transfer() {
+                            if let Ok(from) = dt.get_data("text/plain") {
+                                if !from.is_empty() { on_move.emit((from, "/".to_string())); }
+                            }
+                        }
+                        on_drag_end.emit(());
+                    })
+                }>
                 { for props.rows.iter().map(|n| row(n, props)) }
             </nav>
             <div class="tree-pane__dock">
@@ -167,6 +188,23 @@ fn row(n: &TreeNode, props: &TreePaneProps) -> Html {
         })
     };
 
+    let dragging_this = props.dragging.as_deref() == Some(n.path.as_str());
+    let ondragstart = {
+        let path = n.path.clone();
+        let on_drag_start = props.on_drag_start.clone();
+        Callback::from(move |e: DragEvent| {
+            if let Some(dt) = e.data_transfer() {
+                let _ = dt.set_data("text/plain", &path);
+                dt.set_effect_allowed("move");
+            }
+            on_drag_start.emit(path.clone());
+        })
+    };
+    let ondragend = {
+        let on_drag_end = props.on_drag_end.clone();
+        Callback::from(move |_: DragEvent| on_drag_end.emit(()))
+    };
+
     if n.is_dir {
         let onclick = {
             let path = n.path.clone();
@@ -176,11 +214,52 @@ fn row(n: &TreeNode, props: &TreePaneProps) -> Html {
                 on_toggle.emit(path.clone());
             })
         };
+        // A folder can't be dropped into itself or its own descendants.
+        let dragged = props.dragging.clone();
+        let self_path = n.path.clone();
+        let is_valid_drop = move |from: &str| {
+            from != self_path
+                && !self_path.starts_with(&format!("{from}/"))
+                && crate::pages::vault_tree::parent_of(from) != self_path
+        };
+        let droppable = dragged
+            .as_deref()
+            .map(|f| is_valid_drop(f))
+            .unwrap_or(false);
+        let ondragover = {
+            Callback::from(move |e: DragEvent| {
+                if droppable {
+                    e.prevent_default();
+                    if let Some(dt) = e.data_transfer() {
+                        dt.set_drop_effect("move");
+                    }
+                }
+            })
+        };
+        let ondrop = {
+            let path = n.path.clone();
+            let on_move = props.on_move.clone();
+            let on_drag_end = props.on_drag_end.clone();
+            Callback::from(move |e: DragEvent| {
+                e.prevent_default();
+                e.stop_propagation();
+                if let Some(dt) = e.data_transfer() {
+                    if let Ok(from) = dt.get_data("text/plain") {
+                        if !from.is_empty() {
+                            on_move.emit((from, path.clone()));
+                        }
+                    }
+                }
+                on_drag_end.emit(());
+            })
+        };
         html! {
-            <div key={n.path.clone()}
+            <div key={n.path.clone()} draggable="true"
                 class={classes!("tree-item", "tree-item--folder",
-                    (!n.expanded).then_some("tree-item--collapsed"))}
-                style={pad} onclick={onclick} {oncontextmenu}>
+                    (!n.expanded).then_some("tree-item--collapsed"),
+                    dragging_this.then_some("tree-item--dragging"))}
+                style={pad} onclick={onclick} {oncontextmenu}
+                {ondragstart} {ondragend} {ondragover} {ondrop}>
                 <button type="button" class="tree-item__chev" tabindex="-1"
                     aria-label={if n.expanded { "Collapse folder" } else { "Expand folder" }}>
                     <span class="chev-glyph">{ "\u{25BE}" }</span>
@@ -198,11 +277,20 @@ fn row(n: &TreeNode, props: &TreePaneProps) -> Html {
             })
         };
         html! {
-            <a href="#" key={n.path.clone()}
-               class={classes!("tree-item", "tree-item--file", active.then_some("tree-item--active"))}
-               style={pad} {onclick} {oncontextmenu}>
+            <a href="#" key={n.path.clone()} draggable="true"
+               class={classes!("tree-item", "tree-item--file", active.then_some("tree-item--active"),
+                   dragging_this.then_some("tree-item--dragging"))}
+               style={pad} {onclick} {oncontextmenu} {ondragstart} {ondragend}>
                 <span class="tree-item__name">{ n.name.clone() }</span>
             </a>
         }
+    }
+}
+
+/// Parent directory of a vault path (`"/a/b"` → `"/a"`, `"/a"` → `"/"`).
+pub fn parent_of(path: &str) -> String {
+    match path.rfind('/') {
+        Some(0) | None => "/".to_string(),
+        Some(i) => path[..i].to_string(),
     }
 }

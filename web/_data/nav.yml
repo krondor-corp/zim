@@ -8,8 +8,8 @@
   items:
     - cli
     - mounting
+    - sharing
 
-- title: Account
+- title: Reference
   items:
-    - viewer-enrolment
     - security

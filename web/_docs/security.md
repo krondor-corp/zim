@@ -1,39 +1,55 @@
 ---
 title: Security
-order: 6
+order: 7
 ---
 
-# Security
+## End-to-end encryption
 
-## End-to-End Encryption
+All vault content is encrypted with ChaCha20-Poly1305 before it leaves
+your device. Only devices holding a share can decrypt. The hub stores
+and relays only ciphertext.
 
-All bucket content is encrypted with ChaCha20-Poly1305 before it leaves your device. Only members with a share can decrypt. The hub stores only ciphertext.
+## Device model
 
-## Device Model
-
-- Each device (phone, laptop, web browser) gets its own ed25519 keypair.
+- Each device (browser, laptop, phone) gets its own Ed25519 keypair.
 - Device private keys never leave the device they were created on.
-- The web device's key is encrypted with your unlock password (Argon2id + ChaCha20-Poly1305) and stored on the hub. The hub cannot decrypt it without your password.
+- The browser device's key is encrypted with your passphrase and stored
+  on the hub. The hub cannot decrypt it without your passphrase, which
+  is never sent to the hub.
 
 ## Authentication
 
-- **Web sessions**: Google OAuth establishes identity; your unlock password proves key custody.
-- **CLI / mobile / desktop**: ed25519-signed JWTs (5-minute lifetime). The device signs a fresh token for each request. No long-lived secrets stored server-side.
-- **Bucket access**: per-device shares. Each device's public key is individually authorized by the bucket owner.
+- **Browser sessions** — Google sign-in establishes your account
+  identity; your passphrase unlocks (proves custody of) your web key.
+- **CLI devices** — Ed25519-signed tokens, minted fresh per request and
+  short-lived. No long-lived secret is stored server-side.
+- **Vault access** — per-device shares. Each device is granted access
+  individually; add or revoke a device by adding or removing its share,
+  no key rotation required.
 
-## What the Hub Cannot Do
+## What the hub cannot do
 
-- Decrypt your bucket content (no bucket secret).
-- Decrypt your web device's private key (needs your password, which is never sent to the hub).
-- Impersonate you to other peers (would need your private key).
-- Access buckets on your behalf without your browser being active.
+- Decrypt your vault content (it never holds a vault secret).
+- Decrypt your web key (that needs your passphrase, which it never sees).
+- Impersonate you to other peers (that needs your device's private key).
 
-## What You Should Do
+## The hub as a relay
 
-- Use a strong, unique unlock password (not your Google password).
-- Revoke lost devices immediately from Account → Devices.
-- Verify your hub's TLS certificate if handling sensitive content.
+The hub runs as a peer that pins **ciphertext** for your vaults, so your
+data stays available and syncs between your devices even when some are
+offline. It is a durability and rendezvous point, not a member of your
+vaults — it cannot read anything it stores.
 
-## Mirror Peers
+You are trusting the hub for availability and for your account roster
+(which devices belong to you). It is a trusted coordinator by design;
+the encryption is what keeps your content private regardless.
 
-The hub runs a mirror peer (its own operator key) that pins ciphertext for your buckets. This provides durability — your data is available even when your devices are offline. The mirror peer cannot decrypt your data.
+## What you should do
+
+- Use a strong, unique passphrase — it is not recoverable, and it
+  protects the key that decrypts everything.
+- Revoke lost devices promptly from the devices page.
+- Prefer a hub you run or trust for anything sensitive.
+
+> Zim has not been independently audited. Don't use it to protect data
+> you can't afford to lose.

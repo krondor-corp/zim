@@ -108,6 +108,9 @@ fn object_url(bytes: &[u8], mime: &str) -> Result<String, String> {
 #[derive(Properties, PartialEq)]
 pub struct Props {
     pub vault_id: String,
+    /// Signed-in user id — the switcher's "+ New vault" shares new
+    /// vaults with all the account's devices.
+    pub user_id: String,
 }
 
 /// Abbreviate a 64-char hex vault id for display: `01fc44f0\u{2026}405e38`.
@@ -309,6 +312,7 @@ pub fn vault_tree(props: &Props) -> Html {
             expanded.set(BTreeSet::new());
             rows.set(None);
             open_file.set(None);
+            crate::pages::workspace::remember_vault(&vault_id);
             yew::platform::spawn_local(async move {
                 match open(&fs, vault_id).await {
                     Ok(()) => rebuild.emit(()),
@@ -667,6 +671,20 @@ pub fn vault_tree(props: &Props) -> Html {
         }
     });
 
+    let new_vault = {
+        let user_id = props.user_id.clone();
+        let navigator = use_navigator().expect("router context");
+        let error = error.clone();
+        Callback::from(move |_: MouseEvent| {
+            let error = error.clone();
+            crate::pages::workspace::create_vault_flow(
+                user_id.clone(),
+                navigator.clone(),
+                Callback::from(move |e: String| error.set(e)),
+            );
+        })
+    };
+
     let vault_title = match &*meta {
         Some(m) if !m.name.is_empty() => m.name.clone(),
         _ => short_id(&props.vault_id),
@@ -688,7 +706,10 @@ pub fn vault_tree(props: &Props) -> Html {
                         </Link<Route>>
                     }
                 }) }
-                <Link<Route> to={Route::Workspace} classes="app-menu__item">{ "all vaults \u{2192}" }</Link<Route>>
+                <button type="button" class="app-menu__item" onclick={new_vault.clone()}
+                    style="background:none;border:none;width:100%;cursor:pointer;">
+                    { "+ New vault" }
+                </button>
             </HeaderMenu>
         });
         if let Some(f) = &*open_file {
@@ -709,7 +730,6 @@ pub fn vault_tree(props: &Props) -> Html {
         <>
             <header class="app-header">
                 <HeaderMenu trigger={html! { "\u{2630}" }}>
-                    <Link<Route> to={Route::Workspace} classes="app-menu__item">{ "Workspace" }</Link<Route>>
                     <Link<Route> to={Route::Settings} classes="app-menu__item">{ "Settings" }</Link<Route>>
                     <a href="/auth/logout" class="app-menu__item">{ "Sign out" }</a>
                 </HeaderMenu>

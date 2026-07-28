@@ -147,7 +147,7 @@ pub fn pack_chrome(props: &PackChromeProps) -> Html {
         <>
             <header class="app-header">
                 <HeaderMenu trigger={html! { "\u{2630}" }}>
-                    <Link<Route> to={Route::Workspace} classes="app-menu__item">{ "Workspace" }</Link<Route>>
+                    <Link<Route> to={Route::Workspace} classes="app-menu__item">{ "Open a vault" }</Link<Route>>
                     <Link<Route> to={Route::Settings} classes="app-menu__item">{ "Settings" }</Link<Route>>
                     <a href="/auth/logout" class="app-menu__item">{ "Sign out" }</a>
                 </HeaderMenu>

@@ -37,7 +37,7 @@ pub fn switch(route: Route, me: &Me) -> Html {
         // The vault workspace is pack's editor-layout: its own fixed
         // header + tree + document chrome, no AppShell sidebar.
         Route::Vault { id } => html! {
-            <pages::vault::VaultTree vault_id={id} />
+            <pages::vault::VaultTree vault_id={id} user_id={me.user_id.clone()} />
         },
         Route::Settings => html! {
             <PackChrome crumb="settings">

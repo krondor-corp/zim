@@ -1423,3 +1423,13 @@ a.app-header__crumb:hover {
   background: hsl(var(--primary) / 0.12);
   border-color: hsl(var(--primary));
 }
+
+/* State-driven menus (SPA can't rely on <details>): open-state hover +
+ * button-reset for text triggers like the vault switcher. */
+.app-menu--open .app-menu__trigger {
+  color: hsl(var(--foreground));
+  background: hsl(var(--muted));
+}
+.app-menu__trigger { background: none; border: none; font: inherit; }
+.vault-switch__trigger { width: auto; height: auto; padding: 0.15rem 0.25rem; cursor: pointer; }
+.app-menu .app-menu__list { z-index: 60; }

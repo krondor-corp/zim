@@ -19,6 +19,7 @@ use zim_wasm::WasmFs;
 use crate::api::{fetch_devices, fetch_me, fetch_vaults, Device, FsEntry, VaultItem};
 use crate::pages::vault_editor::{EditorPane, OpenFile};
 use crate::pages::vault_tree::{build_rows, CtxMenu, CtxTarget, TreeNode, TreePane};
+use crate::layouts::HeaderMenu;
 use crate::routes::Route;
 use crate::util::{jserr, origin};
 
@@ -668,22 +669,19 @@ pub fn vault_tree(props: &Props) -> Html {
     let crumbs = {
         let mut items: Vec<Html> = Vec::new();
         items.push(html! {
-            <details class="app-menu vault-switch">
-                <summary class="app-header__crumb app-header__crumb--current">
-                    { vault_title.clone() }{ " \u{25BE}" }
-                </summary>
-                <nav class="app-menu__list">
-                    { for vaults.iter().map(|v| {
-                        let name = if v.name.is_empty() { short_id(&v.vault_id) } else { v.name.clone() };
-                        html! {
-                            <Link<Route> to={Route::Vault { id: v.vault_id.clone() }} classes="app-menu__item">
-                                { name }
-                            </Link<Route>>
-                        }
-                    }) }
-                    <Link<Route> to={Route::Workspace} classes="app-menu__item">{ "all vaults \u{2192}" }</Link<Route>>
-                </nav>
-            </details>
+            <HeaderMenu class={classes!("vault-switch")}
+                trigger_class={classes!("app-header__crumb", "app-header__crumb--current", "vault-switch__trigger")}
+                trigger={html! { <>{ vault_title.clone() }{ " \u{25BE}" }</> }}>
+                { for vaults.iter().map(|v| {
+                    let name = if v.name.is_empty() { short_id(&v.vault_id) } else { v.name.clone() };
+                    html! {
+                        <Link<Route> to={Route::Vault { id: v.vault_id.clone() }} classes="app-menu__item">
+                            { name }
+                        </Link<Route>>
+                    }
+                }) }
+                <Link<Route> to={Route::Workspace} classes="app-menu__item">{ "all vaults \u{2192}" }</Link<Route>>
+            </HeaderMenu>
         });
         if let Some(f) = &*open_file {
             for seg in f.path.trim_start_matches('/').split('/') {
@@ -702,14 +700,11 @@ pub fn vault_tree(props: &Props) -> Html {
     html! {
         <>
             <header class="app-header">
-                <details class="app-menu" id="app-menu">
-                    <summary class="app-menu__trigger" aria-label="Menu">{ "\u{2630}" }</summary>
-                    <nav class="app-menu__list">
-                        <Link<Route> to={Route::Workspace} classes="app-menu__item">{ "Workspace" }</Link<Route>>
-                        <Link<Route> to={Route::Settings} classes="app-menu__item">{ "Settings" }</Link<Route>>
-                        <a href="/auth/logout" class="app-menu__item">{ "Sign out" }</a>
-                    </nav>
-                </details>
+                <HeaderMenu trigger={html! { "\u{2630}" }}>
+                    <Link<Route> to={Route::Workspace} classes="app-menu__item">{ "Workspace" }</Link<Route>>
+                    <Link<Route> to={Route::Settings} classes="app-menu__item">{ "Settings" }</Link<Route>>
+                    <a href="/auth/logout" class="app-menu__item">{ "Sign out" }</a>
+                </HeaderMenu>
                 <div class="app-header__slot app-header__slot--left">{ crumbs }</div>
                 <div class="app-header__slot app-header__slot--right">
                     <span id="save-status" class="app-header__status">{ (*status).clone() }</span>

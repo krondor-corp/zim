@@ -20,5 +20,12 @@ live in Linear.
 | [Trusted-contact sharing](trusted-contact-auto-share.md) | Planned | Medium | Explicit consent design |
 | [Versioned-entrypoint share minting](share-minting-versioned-entrypoints.md) | Design | Low | Revocation and serving design |
 
+## Data Model And Privacy
+
+| Direction | Stage | Priority | Dependency |
+|---|---|---|---|
+| [Per-node identity and ratchets](per-node-identity-and-ratchets.md) | Design | Medium | None |
+| [Metadata privacy and the untrusted-mirror model](metadata-privacy.md) | Design | Medium | Per-node identity and ratchets |
+
 When roadmap work becomes actionable, create or update the corresponding
 Linear issue and link back to the roadmap page for product context.

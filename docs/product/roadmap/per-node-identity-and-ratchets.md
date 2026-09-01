@@ -82,13 +82,16 @@ Mental model: **entry id** = the noun · **`previous`-chain** = its
 history · **ratchet** = its key over time · the Cryptree tree-wrapping =
 the orthogonal access axis.
 
-## Read/write share split (falls out for free)
+## Read/write share split (optional, unrelated to this)
 
-Introducing a per-vault **write key** (see
-[metadata-privacy.md](metadata-privacy.md)) lets a share seal two
-capabilities instead of one: the read secret **always**, the write key
-**only for writers**. That gives a genuine **read-only vs read-write**
-share distinction the current all-or-nothing model can't express.
+A read-only vs read-write share distinction (the current model is
+all-or-nothing — any shareholder can advance the head) is *possible* but
+does **not** belong to this work. Write authorization is already handled
+by `author ∈ previous.shares` (see
+[metadata-privacy.md](metadata-privacy.md)); a read/write split would be
+a per-share capability flag on that check, not a new key. Noted here only
+to close the loop — an earlier draft tied it to a "vault write key" idea
+that was dropped.
 
 ## What this unblocks
 

@@ -68,90 +68,55 @@ The one metadata lever that survives is **cross-vault unlinkability** —
 see below — which does not hide membership *within* a vault, only stops a
 listener correlating the *same device across* vaults.
 
-## Per-vault write key — optional, and NOT a privacy device
+## Write authorization — already handled
 
-Worth being clear, because an earlier draft over-sold this: a per-vault
-**write keypair** (manifests signed by it; verifiers check the vault's
-write *public* key) does **not** buy privacy. Membership is already
-public via the published routing (above), so hiding it from *write-auth*
-changes nothing an observer can't already see.
+No new key is needed. `Manifest::verify_author` already gates writes:
+the manifest must be **signed by its author** *and* the author must be a
+**shareholder on the previous manifest** (`author ∈ previous.shares`).
+`write_head` runs this on every advance. Because shares are published,
+**any relay reads `previous.shares` and runs the same check** — so
+forgery/spam rejection of unauthorized head-advances already exists and
+already works for an open, content-blind mirror. A per-vault write key
+was considered and **dropped**: since shares are public, it verifies
+nothing the existing author-in-shares check can't, so it buys nothing.
 
-What a write key *does* buy, and the only reasons to consider it:
+(If a read-only vs read-write distinction is ever wanted, it's a
+per-share capability flag on the existing model — not a separate key,
+and not a privacy feature.)
 
-- **Forgery/spam protection for open mirrors.** An open untrusted mirror
-  accepting "vault X advanced to Y" from anyone is a spam magnet. A
-  published write *pubkey* lets a content-blind mirror reject
-  unauthorized head-advances by verifying the signature — no share, no
-  decryption. (Today's model already gets this via author-signature +
-  author-in-shares; a single write key is a mild simplification —
-  verify one pubkey instead of walking the shareholder set.)
-- **Read-only vs read-write shares.** Sealing the write key only to
-  writers gives a capability split the current all-or-nothing share
-  can't express.
+## Metadata privacy is off the table — by design
 
-If adopted, two sub-decisions hold: **the vault id stays `blake3(genesis)`
-— do not make it the write pubkey** (the write key rotates on
-revocation; the id must not), and rotation is a **delegation chain**
-signed forward from a genesis-embedded initial write key, so a verifier
-needs no per-vault state beyond the genesis the id already commits to.
+This is the blunt consequence of the product decision, stated plainly so
+the doc stops implying otherwise. Open, untrusted, high-availability
+mirroring requires that any listener see enough to deliver — so:
 
-There is **no cleartext-auth-stub / encrypted-manifest** step — that
-belonged to the encrypt-everything direction the product decision ruled
-out. The manifest stays relay-readable.
+- **Exposed to any listener (accepted):** vault existence, shareholder
+  **membership and routing** (the published shares' `identity`/`via`),
+  tree **structure** and blob **count/sizes**, update **cadence**.
+- **Protected:** **content only** — Cryptree + per-entry ratchets. That
+  is the whole privacy story.
 
-## Unlinkability via key derivation (application layer only)
+**Cross-vault unlinkability via per-vault derived keys does not survive**
+as a real lever, and an earlier draft wrongly listed it as one:
 
-A device that reuses one stable pubkey as its share identity across
-vaults A, B, C lets any observer correlate those vaults to one identity.
-Fix at the application layer with **per-vault derived keys**:
-`pk_vault_i = KDF(device_master, vault_id_i)`. Manifests and mirror
-subscriptions then show *unrelated* pubkeys across your vaults.
+- A daemon's share identity *is* its iroh NodeId (the dial address), one
+  per device across all its vaults — already correlated. Deriving
+  per-vault identities would mean multi-homing N node identities, and
+  they re-correlate at the transport layer (shared relay/IP) that the
+  invited untrusted mirrors observe anyway.
+- The browser's identity is the account web-key, and a `did:web` account
+  is a *stable, advertised* roster by design — per-vault derived keys
+  fight the point of it.
 
-Two boundaries, stated honestly:
+So derived keys would only foil an adversary who reads published
+manifests but never observes the transport — which is not the adversary
+this system has, since it invites untrusted peers onto the transport.
+Not worth pursuing for privacy.
 
-- **Transport layer is not covered.** iroh addresses by NodeId
-  (= pubkey), so being reachable as `pk_vault_i` means advertising
-  multiple identities — but if they resolve to the same relay/IP, an
-  observer (or the relay operator) re-correlates at the network layer.
-  True transport unlinkability is the Tor/mix-network problem; "advertise
-  multiple pubkeys" is necessary but not sufficient. Scope the win as
-  **unlinkable membership, not unlinkable network presence**. It matters
-  most on the *mirror* path (blind untrusted infra); on *direct dials*
-  between existing collaborators, correlation is far less sensitive.
-- **Collides with the did:web account model.** An account is a stable,
-  discoverable `did:web` with a device roster — that stability is how
-  people share *to you*. Per-vault derived keys want the opposite. Key
-  derivation is clean for **daemon peers**; for the **account/browser**
-  side it forces a product call: stable public identity (shareable-to but
-  linkable) vs unlinkable per-vault keys (private but harder to share to).
+## If you want metadata privacy later
 
-## Layered end-state
-
-Given the product decision, the coherent target:
-
-- **Leaked (accepted):** vault existence, blob count/sizes, update
-  cadence, AND **shareholder membership + routing** — all the price of
-  open untrusted availability. Shares are published; the manifest stays
-  relay-readable.
-- **Protected:** **content only** (Cryptree + per-entry ratchets), plus
-  **cross-vault unlinkability** via per-vault derived key identities (a
-  listener can't tell the same device is in multiple vaults — but sees
-  each vault's membership).
-- **Optional hardening:** a per-vault write key (forgery/spam rejection
-  for open mirrors + read/write share split), id stays genesis-hash,
-  rotation via genesis-rooted delegation. Not a privacy feature.
-
-## Open questions
-
-- **Cross-vault unlinkability vs the did:web account model** — per-vault
-  derived keys want unlinkable identities; a `did:web` account wants a
-  stable, discoverable roster (that's how people share *to* you). The
-  account side may have to pick one. Clean for daemon peers.
-- **Transport-layer correlation** — even with derived per-vault keys, a
-  device reachable at multiple identities that resolve to the same
-  relay/IP is re-correlated at the network layer. True transport
-  unlinkability is the Tor/mix problem; out of scope for now.
-- **If a write key is adopted:** delegation-chain format and rotation UX
-  (revoke a device → rotate the write key → extend the chain), and
-  anti-spam for open mirrors beyond signature-verification (storage
-  exhaustion from authenticated-but-garbage heads).
+It is not free and not compatible with the current product decision. It
+would require *either* giving up open untrusted mirroring (mirror needs a
+capability → privileged relays), *or* a genuinely different transport
+(mix-net-style) so presence doesn't correlate. Both are large and
+out of scope; noted only so the boundary is explicit.

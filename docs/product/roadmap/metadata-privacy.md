@@ -43,63 +43,61 @@ if it sees enough to do the job. This means the "encrypt everything /
 make the hub dumb for privacy" direction is **off the table** — it fights
 the product goal. Do not pursue it.
 
-## What still survives: routing ≠ membership
+## Shares are published — that is the delivery mechanism
 
-The `Share` bundles three jobs, all keyed on cleartext DIDs:
-`secret_share` (read-key distribution), `identity` (write-auth
-membership), and `identity + via` (the **sync routing table**). The
-product needs **routing**; it does **not** need cleartext **membership**.
-They separate cleanly:
+The `Share` carries three things, all in the clear:
+`secret_share` (the read secret wrapped to a recipient), `identity` (the
+recipient DID), and `via` (the host it is reached through). All three are
+**published in the manifest and must stay that way**, because that is how
+delivery works:
 
-- **Push-by-DID (today):** the manifest is a cleartext address book — a
-  mirror reads the shareholder roster + `via` to fan out. Leaks
-  membership *permanently*, in every manifest.
-- **Subscribe-by-vault-id (direction):** a mirror holds vault X's
-  ciphertext and relays "X advanced to Y" to whoever is *currently
-  subscribed to X*. It routes by **vault-id**, not identity. Membership
-  stays encrypted; shareholders read it only to route *direct*
-  daemon-to-daemon dials among themselves.
+- The hub fans out a browser-authored head to daemon shareholders along
+  each share's `identity`/`via` — the browser has no P2P transport, so
+  the hub is structurally its router.
+- Untrusted mirrors relay updates using the same routing.
 
-Subscribe-by-vault-id delivers the product feature while the mirror
-learns only "someone cares about X," not *who your shareholders are*. It
-also **improves the browser path**: a browser (no P2P transport, so the
-hub is structurally its router) writes → mirror stores → subscribed
-daemons pull. The mirror fans out to *subscribers*, so it no longer needs
-the daemon DID routing table it uses today; `via`/`identity` can move
-inside encryption, used only for direct dials.
+So under the product decision, **shareholder membership is visible** (the
+recipient identities are right there in the routing), and the read
+secrets are wrapped-but-indexed by recipient. Trying to hide the shares
+(encrypt them, de-index them for trial decryption) is incoherent here —
+it would break the exact delivery path the product depends on. We
+**explored and rejected** it. The leak of *who shares a vault* is
+accepted, same as blob count/sizes.
 
-## Write-auth without cleartext shares: write key + auth stub
+The one metadata lever that survives is **cross-vault unlinkability** —
+see below — which does not hide membership *within* a vault, only stops a
+listener correlating the *same device across* vaults.
 
-Replace "author ∈ {cleartext pubkey list}" with a **per-vault write
-keypair**. Shareholders (writers) hold the private half; every manifest
-is signed by it; a verifier checks against the vault's write *public*
-key. This gatekeeps writes while learning nothing about who or how many
-shareholders exist. It matches current semantics (every shareholder can
-write) and enables the read-only vs read-write share split.
+## Per-vault write key — optional, and NOT a privacy device
 
-**Do not make the vault id the write pubkey.** The id must be stable; the
-write key *wants to rotate* (revocation mints a fresh one), so id =
-write-pubkey would rename the vault on every revocation. `VaultId =
-blake3(genesis)` is already stable and self-certifying — keep it.
-Instead: **genesis embeds the initial write key; rotation is a delegation
-chain** signed forward from it. A verifier checks "signed by a write key
-reachable from the vault's genesis key," needing no per-vault state
-beyond the genesis the id already commits to.
+Worth being clear, because an earlier draft over-sold this: a per-vault
+**write keypair** (manifests signed by it; verifiers check the vault's
+write *public* key) does **not** buy privacy. Membership is already
+public via the published routing (above), so hiding it from *write-auth*
+changes nothing an observer can't already see.
 
-This lets a verifier stay useful without a cleartext manifest, via a
-tiny **cleartext auth stub** per manifest —
-`{ write-pubkey/delegation-ptr, previous, height, signature }` — with
-everything else (root-secret pointer, shares, structure) encrypted. The
-stub is what makes **open untrusted mirrors safe**: an open mirror
-accepting "vault X advanced to Y" from anyone is a spam/forgery magnet;
-the stub lets a content-blind mirror **reject unauthorized head
-advances** by verifying the signature, without reading a byte. The
-product requirement (untrusted mirrors) is what motivates the stub, and
-the stub is what makes untrusted mirrors safe.
+What a write key *does* buy, and the only reasons to consider it:
 
-Read membership can also be de-indexed: store the wrapped secrets
-**unindexed** (trial decryption) so a listener sees N opaque blobs, not
-whose.
+- **Forgery/spam protection for open mirrors.** An open untrusted mirror
+  accepting "vault X advanced to Y" from anyone is a spam magnet. A
+  published write *pubkey* lets a content-blind mirror reject
+  unauthorized head-advances by verifying the signature — no share, no
+  decryption. (Today's model already gets this via author-signature +
+  author-in-shares; a single write key is a mild simplification —
+  verify one pubkey instead of walking the shareholder set.)
+- **Read-only vs read-write shares.** Sealing the write key only to
+  writers gives a capability split the current all-or-nothing share
+  can't express.
+
+If adopted, two sub-decisions hold: **the vault id stays `blake3(genesis)`
+— do not make it the write pubkey** (the write key rotates on
+revocation; the id must not), and rotation is a **delegation chain**
+signed forward from a genesis-embedded initial write key, so a verifier
+needs no per-vault state beyond the genesis the id already commits to.
+
+There is **no cleartext-auth-stub / encrypted-manifest** step — that
+belonged to the encrypt-everything direction the product decision ruled
+out. The manifest stays relay-readable.
 
 ## Unlinkability via key derivation (application layer only)
 
@@ -132,24 +130,28 @@ Two boundaries, stated honestly:
 Given the product decision, the coherent target:
 
 - **Leaked (accepted):** vault existence, blob count/sizes, update
-  cadence — the price of open untrusted availability.
-- **Protected:** content, shareholder membership (encrypted +
-  subscribe-by-vault-id delivery), tree structure, history.
-- **Mechanism:** genesis-hash id → genesis-embedded write key +
-  delegation chain → cleartext auth stub the mirror verifies → encrypted
-  body (read secret, split read/write shares, routing-for-direct-dial) →
-  mirrors relay by vault-id to subscribers → per-vault derived keys blind
-  the mirror path.
+  cadence, AND **shareholder membership + routing** — all the price of
+  open untrusted availability. Shares are published; the manifest stays
+  relay-readable.
+- **Protected:** **content only** (Cryptree + per-entry ratchets), plus
+  **cross-vault unlinkability** via per-vault derived key identities (a
+  listener can't tell the same device is in multiple vaults — but sees
+  each vault's membership).
+- **Optional hardening:** a per-vault write key (forgery/spam rejection
+  for open mirrors + read/write share split), id stays genesis-hash,
+  rotation via genesis-rooted delegation. Not a privacy feature.
 
 ## Open questions
 
-- Subscribe-by-vault-id trades a permanent roster leak for
-  traffic-analysis leakage (which connections care about which vault-ids,
-  and update timing). Better for most threat models, but not nothing.
-- Subscription auth: open ("anyone may watch X's ciphertext stream") vs
-  proof-of-share. Open avoids identity leak but exposes update cadence to
-  anyone.
-- Delegation-chain format and rotation UX (revoke a device → rotate write
-  key → extend the chain).
-- Anti-spam for open mirrors beyond the auth stub (storage exhaustion
-  from authenticated-but-garbage heads).
+- **Cross-vault unlinkability vs the did:web account model** — per-vault
+  derived keys want unlinkable identities; a `did:web` account wants a
+  stable, discoverable roster (that's how people share *to* you). The
+  account side may have to pick one. Clean for daemon peers.
+- **Transport-layer correlation** — even with derived per-vault keys, a
+  device reachable at multiple identities that resolve to the same
+  relay/IP is re-correlated at the network layer. True transport
+  unlinkability is the Tor/mix problem; out of scope for now.
+- **If a write key is adopted:** delegation-chain format and rotation UX
+  (revoke a device → rotate the write key → extend the chain), and
+  anti-spam for open mirrors beyond signature-verification (storage
+  exhaustion from authenticated-but-garbage heads).

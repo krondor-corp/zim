@@ -7,7 +7,7 @@ use futures::lock::Mutex;
 
 use crate::blobs::{BlobError, BlobStore};
 use crate::linked_data::{BlockEncoded, CodecError, Link};
-use zim_crypto::{EntryId, EntryRatchet, PublicKey, Secret, SecretError};
+use zim_crypto::{EntryRatchet, PublicKey, Secret, SecretError};
 
 use super::abs_path::AbsPath;
 use super::content_store::{ContentError, Metadata};
@@ -358,9 +358,7 @@ impl<B: BlobStore> Fs<B> {
         // - dest is a directory: refuse — open() can't write a directory.
         let prior = match self.get_entry_at_path(path).await? {
             None => None,
-            Some(Entry::File {
-                link, id, ratchet, ..
-            }) => Some((link, id, ratchet)),
+            Some(Entry::File { link, ratchet, .. }) => Some((link, ratchet)),
             Some(Entry::Dir { .. }) => {
                 return Err(FsError::CannotMutate(
                     path.clone(),
@@ -369,21 +367,17 @@ impl<B: BlobStore> Fs<B> {
             }
         };
 
-        // Identity + key schedule. A rewrite is the SAME entity at its
-        // next revision: keep its id, advance its ratchet, chain the
-        // prior link. A create seeds a fresh entity. (A prior entry
-        // without a ratchet can only be the un-ratcheted root, which
-        // can't be a file — so the fallback below is defensive only.)
-        let (id, ratchet, previous) = match &prior {
-            Some((old_link, Some(id), Some(r))) => (*id, r.advanced(), Some(old_link.clone())),
-            Some((old_link, _, _)) => (
-                EntryId::generate(),
-                EntryRatchet::seed(),
-                Some(old_link.clone()),
-            ),
-            None => (EntryId::generate(), EntryRatchet::seed(), None),
+        // Key schedule (identity rides inside it). A rewrite is the SAME
+        // entity at its next revision: advance its ratchet, chain the
+        // prior link. A create seeds a fresh entity. (A prior file
+        // without a ratchet can't occur — only the root is un-ratcheted
+        // — so that arm is defensive only.)
+        let (ratchet, previous) = match &prior {
+            Some((old_link, Some(r))) => (r.advanced(), Some(old_link.clone())),
+            Some((old_link, None)) => (EntryRatchet::seed(), Some(old_link.clone())),
+            None => (EntryRatchet::seed(), None),
         };
-        let prior_file_hash = prior.as_ref().map(|(l, _, _)| l.hash());
+        let prior_file_hash = prior.as_ref().map(|(l, _)| l.hash());
         let secret = ratchet.key();
 
         // Stream encryption + storage. `put_file` tees the plaintext
@@ -395,7 +389,6 @@ impl<B: BlobStore> Fs<B> {
         self.add_tree(
             path,
             link.clone(),
-            id,
             ratchet.clone(),
             previous.clone(),
             Some(plaintext_hash),
@@ -419,9 +412,7 @@ impl<B: BlobStore> Fs<B> {
                 OpKind::AddFile {
                     path: path.clone(),
                     content: link,
-                    secret,
                     plaintext_hash: Some(plaintext_hash),
-                    id: Some(id),
                     ratchet: Some(ratchet),
                     previous: previous.map(Box::new),
                 },
@@ -440,12 +431,11 @@ impl<B: BlobStore> Fs<B> {
         &self,
         path: &AbsPath,
         link: Link,
-        id: EntryId,
         ratchet: EntryRatchet,
         previous: Option<Link>,
         plaintext_hash: Option<crate::linked_data::Hash>,
     ) -> Result<(), FsError> {
-        let entry = Entry::file_at_path(link.clone(), id, ratchet, previous, path, plaintext_hash);
+        let entry = Entry::file_at_path(link.clone(), ratchet, previous, path, plaintext_hash);
         let new_root = self.set_entry_at_path(entry, path).await?;
         let mut inner = self.0.lock().await;
         inner.pins.insert(link.hash());
@@ -523,9 +513,9 @@ impl<B: BlobStore> Fs<B> {
         // Mint the new directory's identity + key schedule up front so
         // the op ships them and every replaying peer builds the same
         // entity. Discarded if the dir already existed.
-        let identity = (EntryId::generate(), EntryRatchet::seed());
+        let ratchet = EntryRatchet::seed();
         if self
-            .mkdir_tree(path, parents, Some(identity.clone()))
+            .mkdir_tree(path, parents, Some(ratchet.clone()))
             .await?
         {
             let mut inner = self.0.lock().await;
@@ -534,8 +524,7 @@ impl<B: BlobStore> Fs<B> {
                 peer_id,
                 OpKind::Mkdir {
                     path: path.clone(),
-                    id: Some(identity.0),
-                    ratchet: Some(identity.1),
+                    ratchet: Some(ratchet),
                 },
             );
         }
@@ -549,7 +538,7 @@ impl<B: BlobStore> Fs<B> {
         &self,
         path: &AbsPath,
         parents: bool,
-        identity: Option<(EntryId, EntryRatchet)>,
+        ratchet: Option<EntryRatchet>,
     ) -> Result<bool, FsError> {
         let (abs_parent, dir_name) = path.split().ok_or(FsError::CannotMutate(
             AbsPath::root(),
@@ -577,7 +566,7 @@ impl<B: BlobStore> Fs<B> {
             None => {}
         }
 
-        self.set_dir_at_path(path, Dir::default(), identity).await?;
+        self.set_dir_at_path(path, Dir::default(), ratchet).await?;
         Ok(true)
     }
 
@@ -837,7 +826,7 @@ impl<B: BlobStore> Fs<B> {
         &self,
         path: &AbsPath,
         dir: Dir,
-        identity: Option<(EntryId, EntryRatchet)>,
+        ratchet: Option<EntryRatchet>,
     ) -> Result<(), FsError> {
         if path.as_ref() == Path::new("/") {
             let mut inner = self.0.lock().await;
@@ -847,20 +836,19 @@ impl<B: BlobStore> Fs<B> {
             // replayed — the op carries it). None means we're rewriting
             // an existing dir: keep its id, advance its ratchet, chain
             // the prior link. Seed only if nothing is there.
-            let (id, ratchet, previous) = match identity {
-                Some((id, r)) => (id, r, None),
+            let (ratchet, previous) = match ratchet {
+                Some(r) => (r, None),
                 None => match self.get_entry_at_path(path).await? {
                     Some(Entry::Dir {
                         link,
-                        id: Some(id),
                         ratchet: Some(r),
                         ..
-                    }) => (id, r.advanced(), Some(link)),
-                    _ => (EntryId::generate(), EntryRatchet::seed(), None),
+                    }) => (r.advanced(), Some(link)),
+                    _ => (EntryRatchet::seed(), None),
                 },
             };
             let link = self.1.put_metadata(&ratchet.key(), &dir)?;
-            let entry = Entry::dir_versioned(link, id, ratchet, previous);
+            let entry = Entry::dir_versioned(link, ratchet, previous);
             let new_root = self.set_entry_at_path(entry, path).await?;
             let mut inner = self.0.lock().await;
             inner.root = new_root;
@@ -978,17 +966,16 @@ impl<B: BlobStore> Fs<B> {
             if current_path != Path::new("/") {
                 // Same entity, next revision: advance the old dir's
                 // ratchet and chain its link. Synthetic ancestors seed.
-                let (id, ratchet, previous) = match &old_entry {
+                let (ratchet, previous) = match &old_entry {
                     Some(Entry::Dir {
                         link,
-                        id: Some(id),
                         ratchet: Some(r),
                         ..
-                    }) => (*id, r.advanced(), Some(link.clone())),
-                    _ => (EntryId::generate(), EntryRatchet::seed(), None),
+                    }) => (r.advanced(), Some(link.clone())),
+                    _ => (EntryRatchet::seed(), None),
                 };
                 let link = blobs.put_metadata(&ratchet.key(), &dir)?;
-                entry = Entry::dir_versioned(link, id, ratchet, previous);
+                entry = Entry::dir_versioned(link, ratchet, previous);
                 name = current_path
                     .file_name()
                     .unwrap_or_default()
@@ -1033,12 +1020,9 @@ impl<B: BlobStore> Fs<B> {
     pub async fn apply_ops(&self, ops: &OpsLog) -> Result<(), FsError> {
         for (path, op) in ops.resolve_all() {
             match &op.kind {
-                OpKind::Mkdir { id, ratchet, .. } => {
-                    let identity = match (id, ratchet) {
-                        (Some(i), Some(r)) => Some((*i, r.clone())),
-                        _ => None, // legacy op: this peer seeds its own
-                    };
-                    match self.mkdir_tree(&path, true, identity).await {
+                OpKind::Mkdir { ratchet, .. } => {
+                    // Legacy op (no ratchet): this peer seeds its own.
+                    match self.mkdir_tree(&path, true, ratchet.clone()).await {
                         Ok(_) | Err(FsError::CannotMutate(_, _)) => {}
                         Err(e) => return Err(e),
                     }
@@ -1054,7 +1038,7 @@ impl<B: BlobStore> Fs<B> {
                 OpKind::AddFile {
                     content,
                     plaintext_hash,
-                    id,
+
                     ratchet,
                     previous,
                     ..
@@ -1064,7 +1048,7 @@ impl<B: BlobStore> Fs<B> {
                     // fresh ratchet here would derive a key that does NOT
                     // decrypt `content` — so refuse rather than build an
                     // unreadable entry.
-                    let (Some(id), Some(ratchet)) = (id, ratchet) else {
+                    let Some(ratchet) = ratchet else {
                         return Err(FsError::CannotMutate(
                             path.clone(),
                             "op predates per-entry ratchets; cannot replay".into(),
@@ -1073,7 +1057,6 @@ impl<B: BlobStore> Fs<B> {
                     self.add_tree(
                         &path,
                         content.clone(),
-                        *id,
                         ratchet.clone(),
                         previous.as_deref().cloned(),
                         *plaintext_hash,

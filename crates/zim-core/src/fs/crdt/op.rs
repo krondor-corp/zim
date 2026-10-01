@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::fs::AbsPath;
 use crate::linked_data::Link;
-use zim_crypto::{EntryId, EntryRatchet, PublicKey, Secret};
+use zim_crypto::{EntryRatchet, PublicKey};
 
 /// A causal-order identifier. Total order across all peers: Lamport
 /// `timestamp` primary, `peer_id` lexicographic secondary. Two `OpId`s
@@ -61,21 +61,20 @@ pub struct Op {
 pub enum OpKind {
     /// Add a file at `path`. The op is self-contained — `content`
     /// addresses the encrypted blob in the shared inner store and
-    /// `secret` is the per-file key that decrypts it. Together they
-    /// reconstruct the [`Entry::File`](crate::fs::Entry::File) that
-    /// goes in the parent directory.
+    /// `ratchet` is the writer's key schedule for this revision: it
+    /// derives the content key AND carries the entity's identity.
+    /// Together they reconstruct the exact
+    /// [`Entry::File`](crate::fs::Entry::File) the writer built.
     ///
-    /// `secret` rides inside the op log, which is itself encrypted at
-    /// rest with the vault secret — so anyone who can read the op log
-    /// can already read every file in the vault. Embedding `secret`
-    /// here doesn't broaden access; it makes replay self-sufficient.
+    /// Key material rides inside the op log, which is itself encrypted
+    /// at rest with the vault secret — so anyone who can read the op log
+    /// can already read every file in the vault. Embedding it here
+    /// doesn't broaden access; it makes replay self-sufficient.
     AddFile {
         /// Destination path in the tree.
         path: AbsPath,
         /// Link to the encrypted file content in the inner blob store.
         content: Link,
-        /// Per-file decryption key.
-        secret: Secret,
         /// `blake3(plaintext)` of the body — carried through the log so
         /// replays on remote peers reconstruct
         /// [`Entry::File`](crate::fs::Entry::File) with the same hash
@@ -83,13 +82,9 @@ pub enum OpKind {
         /// field existed.
         #[serde(default)]
         plaintext_hash: Option<Hash>,
-        /// Stable entity identity, minted by the writer at creation and
-        /// carried through rewrites/renames. Ships so every peer
-        /// reconstructs the same entity. `None` on legacy ops.
-        #[serde(default)]
-        id: Option<EntryId>,
-        /// The writer's ratchet state for this revision; `secret` is
-        /// derived from it. Ships so peers never advance independently.
+        /// The writer's ratchet state for this revision — derives the
+        /// content key and the entity id. Ships so peers never advance
+        /// independently. `None` only on pre-ratchet ops (unreplayable).
         #[serde(default)]
         ratchet: Option<EntryRatchet>,
         /// Prior version of this entity (`Some(old link)` on a rewrite).
@@ -102,11 +97,9 @@ pub enum OpKind {
     Mkdir {
         /// Path to create.
         path: AbsPath,
-        /// Entity identity + ratchet for the new directory — shipped so
-        /// a replaying peer builds the same dir entity. `None` on legacy
-        /// ops (the peer seeds its own).
-        #[serde(default)]
-        id: Option<EntryId>,
+        /// The new directory's ratchet (identity + key schedule) — shipped
+        /// so a replaying peer builds the same dir entity. `None` on
+        /// legacy ops (the peer seeds its own).
         #[serde(default)]
         ratchet: Option<EntryRatchet>,
     },

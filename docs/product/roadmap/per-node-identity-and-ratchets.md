@@ -159,26 +159,42 @@ design above:
   `key()` (blake3 derive-key, domain `zim/entry-content/v1`). Boxed
   internally (~135 bytes of state → 8 bytes wherever it rides). Exact-
   pinned; fork tracked as KRO-224.
-- **Identity is stored explicitly:** `zim_crypto::EntryId`, 32 random
-  bytes minted at creation and carried through every rewrite and rename.
-  *Not* the creation `OpId` — that would require pre-minting the id
-  before the fs mutation that records the op. Provenance (who/when) is
-  still recoverable from the creating op in the log.
-- **`Entry` gains `id`, `ratchet`, `previous`;** `secret` is kept as the
-  *cached* derived key with the invariant `secret == ratchet.key()`,
+- **Identity is intrinsic to the ratchet, not a separate field.** The
+  skip ratchet's salt is `H(seed)` and `inc()` never changes it, so
+  `EntryRatchet` holds its seed and `id()` *derives* `EntryId` from it
+  (blake3 derive-key, domain `zim/entry-id/v1`). Identity and key
+  schedule cannot disagree, and nothing extra ships. Upstream keeps the
+  salt `pub(crate)`; the fork (KRO-224) can expose it and retire the
+  stored seed. *Not* the creation `OpId` — that would need pre-minting
+  before the mutation that records the op; provenance stays recoverable
+  from the log.
+- **`Entry` gains `ratchet` and `previous`** (`id()` derives from the
+  ratchet; the root has neither and its identity is the vault id).
+  `secret` is kept as the *cached* derived key with the invariant `secret == ratchet.key()`,
   enforced by the constructors (`file_at_path`, `dir_versioned`). This
   left the ~74 read sites that take `&Secret` untouched.
-- **The writer ships the ratchet.** `AddFile` and `Mkdir` ops carry
-  `id` + `ratchet` (+ `previous` for files), so a replaying peer rebuilds
+- **The writer ships the ratchet — and only the ratchet.** `AddFile`
+  carries `ratchet` + `previous`, `Mkdir` carries `ratchet`; the op's
+  old `secret` field is gone (derivable) and there is no `id` field
+  (derivable). A replaying peer rebuilds
   the writer's *exact* entity and key — peers never advance
   independently (tested: `replaying_ops_rebuilds_the_writers_exact_entities`).
   An `AddFile` without a ratchet (pre-ratchet op) **errors on replay**
   rather than seeding a fresh ratchet, which would derive a key that
   does not decrypt the content.
 - **Rewrite = same entity, next revision:** `add` over an existing file
-  keeps its `id`, advances its ratchet, chains `previous = old link`.
+  advances its ratchet (identity unchanged by construction), chains
+  `previous = old link`.
   Dir bodies rewritten on the root→leaf path do the same. `mv` moves the
   entry intact (same id/ratchet/link). Synthetic `-p` ancestors seed.
+- **A conflict sidecar is a fork of the same entity.** The resolver's
+  sidecar must carry the loser's ratchet (the blob is encrypted under
+  that key and there is no plaintext to re-key), and identity derives
+  from the ratchet — so the sidecar shares the entity id with the file
+  it forked from: one lineage, two heads, until a human resolves it.
+  Any id-keyed lookup must therefore expect multiple heads after a
+  conflict. (Key reuse across the fork is safe: every encryption draws a
+  fresh random nonce.)
 - **The root is NOT ratcheted in v1.** Its key stays the share-governed
   vault secret, minted fresh per save and sealed to shareholders; its
   identity is the vault id (`Entry::root_dir`). Ratcheting it means

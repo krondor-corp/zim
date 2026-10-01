@@ -42,7 +42,7 @@ Each vault POSIX subcommand should match the UX of the real command it mirrors:
 - `cat`, `head` — raw content to stdout, nothing else.
 - No leaking of internals (`height`, manifest hash, inode numbers) in the
   human-facing path. Machine output belongs on the HTTP API, not a `--json` flag
-  (per CLAUDE.md "Do Not").
+  (per AGENTS.md "Do Not").
 
 Keep the Op pattern: Ops still return typed data (`RmOutput { path, height }`);
 only the `Display` impls change. Internal fields can stay on the struct for the

@@ -17,7 +17,7 @@ Review the current branch's changes against Zim conventions before merge.
 ### 1. Gather Context
 
 Read project conventions:
-- `CLAUDE.md` — project guide and constraints
+- `AGENTS.md` — project guide and constraints
 - `docs/patterns/conventions.md` — error handling, module organization, and naming
 - `docs/patterns/cli.md` — Op pattern and formatting boundary
 - `docs/dx/contributing.md` — test readability, commit conventions, review checklist
@@ -64,7 +64,7 @@ Review the diff for:
 - `docs/dx/` — did commands or the local workflow change?
 - `docs/devops/` — did release or operational behavior change?
 - `web/` — did an end-user workflow change?
-- `CLAUDE.md` — project structure or constraints changed?
+- `AGENTS.md` — project structure or constraints changed?
 - Related Linear issues — status or scope updates needed?
 - `docs/product/roadmap/` — did product direction or deferred constraints change?
 

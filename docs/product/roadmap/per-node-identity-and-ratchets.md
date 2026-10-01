@@ -195,11 +195,30 @@ design above:
   Any id-keyed lookup must therefore expect multiple heads after a
   conflict. (Key reuse across the fork is safe: every encryption draws a
   fresh random nonce.)
-- **The root is NOT ratcheted in v1.** Its key stays the share-governed
-  vault secret, minted fresh per save and sealed to shareholders; its
-  identity is the vault id (`Entry::root_dir`). Ratcheting it means
-  sealing ratchet *state* into shares — a share-format change that
-  belongs with grant-from-a-point, not here.
+- **The root is ratcheted too — and that changed the share model.**
+  Shares seal the root ratchet **state** (`zim_crypto::RatchetShare`:
+  ephemeral X25519 → AES-KW-with-padding over the bincode'd state, plus
+  `sealed_at`, the height it derives). A holder brings it forward with
+  `inc_by(height − sealed_at)` and derives any later root key itself.
+  Consequences, all intentional:
+  - `save()` just advances the root ratchet. It **no longer re-mints
+    every share** on every save (previously O(shareholders) ECDH per
+    save). Shares change only on membership changes.
+  - `add_share` creates a *pending* share (`None`); the next `save`
+    seals the live state at that height — the newcomer reads from that
+    version onward and nothing before. Grant-from-a-point, by
+    construction.
+  - `remove_share` / `remove_relay` **re-seed the root lineage** and mark
+    every remaining share pending, so the next save encrypts under the
+    new lineage and re-seals it to everyone still present. Required: a
+    revoked holder could otherwise derive every later key. Versions
+    before the revocation stay readable through their own manifests'
+    shares.
+  - All four root-key recoveries (vault open/reload, peer chain walk)
+    go through one helper, `Manifest::root_ratchet_for` /
+    `root_secret_for`. The ops-log key is the root key.
+  - `SecretShare` (32-byte key sealing) is untouched; the hub and the
+    browser envelope still use it for non-root purposes.
 - **Not in v1:** rename-aware merge. The CRDT conflict check is still
   path-keyed; making it `id`-aware is the follow-up this identity
   substrate enables, and it needs its own fork-loop validation.

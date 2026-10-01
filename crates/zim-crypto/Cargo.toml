@@ -36,6 +36,7 @@ x25519-dalek = { version = "2.0", features = ["static_secrets"] }
 # per-entry key schedule, stale upstream (last push 2024-02), and we
 # intend to fork it — see the fork todo. Bump only deliberately.
 skip_ratchet = { version = "=0.3.0", features = ["serde"] }
+rand_core = { version = "0.6", features = ["getrandom"] }  # OsRng for Ratchet::from_rng; already in-tree
 curve25519-dalek = "4.0"
 ed25519-dalek = { version = "2.2.0", features = ["serde"] }
 blake3 = "1.5"

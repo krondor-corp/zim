@@ -160,15 +160,12 @@ impl<B: BlobStore> ContentStore<B> {
 
     /// Encode + encrypt `dir`, stage the ciphertext in the metadata pack,
     /// and return the [`Entry`] a parent would store in its children map.
-    pub fn put_metadata(&self, secret: &Secret, dir: &Dir) -> Result<Entry, ContentError> {
+    pub fn put_metadata(&self, secret: &Secret, dir: &Dir) -> Result<Link, ContentError> {
         let plaintext = dir.encode()?;
         let encrypted = secret.encrypt(&plaintext)?;
         let hash = Hash::new(&encrypted);
         self.metadata.lock().unwrap().insert(hash, encrypted);
-        Ok(Entry::Dir {
-            link: Link::new(LD_RAW_CODEC, hash),
-            secret: secret.clone(),
-        })
+        Ok(Link::new(LD_RAW_CODEC, hash))
     }
 
     /// Fetch + decrypt + decode the dir body referenced by `entry`.
@@ -179,7 +176,7 @@ impl<B: BlobStore> ContentStore<B> {
     /// [`Entry::File`].
     pub async fn get_metadata(&self, entry: &Entry) -> Result<Dir, ContentError> {
         let (link, secret) = match entry {
-            Entry::Dir { link, secret } => (link, secret),
+            Entry::Dir { link, secret, .. } => (link, secret),
             Entry::File { .. } => {
                 return Err(ContentError::WrongVariant {
                     expected: "Entry::Dir",
@@ -280,6 +277,7 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use std::io::Cursor;
+    use zim_crypto::EntryRatchet;
 
     #[derive(Clone, Default)]
     struct MemBlobs(Arc<Mutex<BTreeMap<Hash, Vec<u8>>>>);
@@ -319,16 +317,17 @@ mod tests {
 
     #[tokio::test]
     async fn put_then_get_metadata_round_trip() {
-        let secret = Secret::generate();
+        let ratchet = EntryRatchet::seed();
+        let secret = ratchet.key();
         let mut dir = Dir::new();
         dir.insert(
             "child".to_string(),
-            Entry::file(Link::default(), Secret::default()),
+            Entry::file(Link::default(), EntryRatchet::seed()),
         );
 
         let store = ContentStore::new(MemBlobs::default(), Metadata::new());
-        let entry = store.put_metadata(&secret, &dir).unwrap();
-        assert!(matches!(entry, Entry::Dir { .. }));
+        let link = store.put_metadata(&secret, &dir).unwrap();
+        let entry = Entry::dir(link, ratchet);
 
         let round_tripped = store.get_metadata(&entry).await.unwrap();
         assert_eq!(round_tripped, dir);
@@ -336,11 +335,12 @@ mod tests {
 
     #[tokio::test]
     async fn get_metadata_falls_through_to_inner_on_pack_miss() {
-        let secret = Secret::generate();
+        let ratchet = EntryRatchet::seed();
+        let secret = ratchet.key();
         let mut dir = Dir::new();
         dir.insert(
             "x".to_string(),
-            Entry::file(Link::default(), Secret::default()),
+            Entry::file(Link::default(), EntryRatchet::seed()),
         );
         let plaintext = dir.encode().unwrap();
         let ciphertext = secret.encrypt(&plaintext).unwrap();
@@ -350,7 +350,7 @@ mod tests {
         inner.put(ciphertext).await.unwrap();
         let store = ContentStore::new(inner, Metadata::new());
 
-        let entry = Entry::dir(Link::new(LD_RAW_CODEC, hash), secret);
+        let entry = Entry::dir(Link::new(LD_RAW_CODEC, hash), ratchet);
         let round_tripped = store.get_metadata(&entry).await.unwrap();
         assert_eq!(round_tripped, dir);
     }
@@ -358,14 +358,15 @@ mod tests {
     #[tokio::test]
     async fn get_metadata_rejects_file_entry() {
         let store = ContentStore::new(MemBlobs::default(), Metadata::new());
-        let file_entry = Entry::file(Link::default(), Secret::generate());
+        let file_entry = Entry::file(Link::default(), EntryRatchet::seed());
         let err = store.get_metadata(&file_entry).await.unwrap_err();
         assert!(matches!(err, ContentError::WrongVariant { .. }));
     }
 
     #[tokio::test]
     async fn put_then_get_file_round_trip() {
-        let secret = Secret::generate();
+        let ratchet = EntryRatchet::seed();
+        let secret = ratchet.key();
         let store = ContentStore::new(MemBlobs::default(), Metadata::new());
 
         let plaintext = b"hello, encrypted world";
@@ -378,7 +379,7 @@ mod tests {
         // link — sanity-check it before exercising the round trip.
         assert_eq!(pt_hash.as_bytes(), blake3::hash(plaintext).as_bytes());
 
-        let entry = Entry::file(link, secret);
+        let entry = Entry::file(link, ratchet);
         let mut reader = store.get_file(&entry).await.unwrap();
         let mut got = Vec::new();
         reader.read_to_end(&mut got).unwrap();
@@ -403,7 +404,7 @@ mod tests {
     #[tokio::test]
     async fn get_file_rejects_dir_entry() {
         let store = ContentStore::new(MemBlobs::default(), Metadata::new());
-        let dir_entry = Entry::dir(Link::default(), Secret::generate());
+        let dir_entry = Entry::dir(Link::default(), EntryRatchet::seed());
         let result = store.get_file(&dir_entry).await;
         match result {
             Err(ContentError::WrongVariant { .. }) => {}
@@ -417,10 +418,10 @@ mod tests {
         let secret = Secret::generate();
         let dir = Dir::new();
         let store = ContentStore::new(MemBlobs::default(), Metadata::new());
-        let entry = store.put_metadata(&secret, &dir).unwrap();
+        let link = store.put_metadata(&secret, &dir).unwrap();
 
-        store.evict(&entry.link().hash());
-        assert!(!store.snapshot_metadata().contains(&entry.link().hash()));
+        store.evict(&link.hash());
+        assert!(!store.snapshot_metadata().contains(&link.hash()));
     }
 
     #[tokio::test]

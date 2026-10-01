@@ -175,3 +175,109 @@ async fn mv_moves_a_file_to_a_new_path() {
     assert!(moved.is_file());
     assert_eq!(fs.cat(&dst).await.unwrap(), b"contents");
 }
+
+// ── Per-entry identity + ratchets ───────────────────────────────────────
+
+#[tokio::test]
+async fn rewriting_a_file_keeps_its_identity_and_advances_its_key() {
+    // Alice writes a note, then saves a second draft over it.
+    let (fs, _) = setup().await;
+    let path = AbsPath::new("/note.md").unwrap();
+    fs.add(&path, Cursor::new(b"first draft")).await.unwrap();
+    let v1 = fs.get_entry_at_path(&path).await.unwrap().unwrap();
+
+    fs.add(&path, Cursor::new(b"second draft, longer"))
+        .await
+        .unwrap();
+    let v2 = fs.get_entry_at_path(&path).await.unwrap().unwrap();
+
+    // Same entity…
+    assert!(v1.id().is_some(), "a file entry carries an identity");
+    assert_eq!(v1.id(), v2.id(), "a rewrite keeps the entity id");
+    // …next revision: the ratchet advanced, so the key and link moved on…
+    assert_ne!(v1.secret(), v2.secret(), "the content key ratchets forward");
+    assert_ne!(v1.link(), v2.link());
+    assert_eq!(
+        v1.ratchet().unwrap().advanced(),
+        *v2.ratchet().unwrap(),
+        "v2's ratchet is exactly v1's advanced once"
+    );
+    // …and history chains: v2 points back at v1.
+    assert_eq!(v1.previous(), None, "the first version has no predecessor");
+    assert_eq!(v2.previous(), Some(v1.link()));
+}
+
+#[tokio::test]
+async fn renaming_a_file_moves_the_same_entity_unchanged() {
+    // Alice renames a note; nothing about its content or key changes.
+    let (fs, _) = setup().await;
+    let from = AbsPath::new("/draft.md").unwrap();
+    let to = AbsPath::new("/final.md").unwrap();
+    fs.add(&from, Cursor::new(b"same bytes")).await.unwrap();
+    let before = fs.get_entry_at_path(&from).await.unwrap().unwrap();
+
+    fs.mv(&from, &to).await.unwrap();
+
+    assert!(fs.get_entry_at_path(&from).await.unwrap().is_none());
+    let after = fs.get_entry_at_path(&to).await.unwrap().unwrap();
+    assert_eq!(before.id(), after.id(), "a rename is the SAME entity");
+    assert_eq!(before.ratchet(), after.ratchet(), "no revision happened");
+    assert_eq!(before.secret(), after.secret());
+    assert_eq!(before.link(), after.link());
+}
+
+#[tokio::test]
+async fn a_directory_has_an_identity_and_advances_when_its_contents_change() {
+    // Alice makes a folder, then adds a file inside it — which rewrites
+    // the folder's body.
+    let (fs, _) = setup().await;
+    let docs = AbsPath::new("/docs").unwrap();
+    fs.mkdir(&docs, false).await.unwrap();
+    let d1 = fs.get_entry_at_path(&docs).await.unwrap().unwrap();
+    assert!(d1.is_dir());
+    assert!(d1.id().is_some(), "a directory entry carries an identity");
+
+    fs.add(&AbsPath::new("/docs/a.md").unwrap(), Cursor::new(b"inside"))
+        .await
+        .unwrap();
+    let d2 = fs.get_entry_at_path(&docs).await.unwrap().unwrap();
+
+    assert_eq!(d1.id(), d2.id(), "the folder is the same entity");
+    assert_ne!(d1.secret(), d2.secret(), "its key ratcheted on rewrite");
+    assert_eq!(d1.ratchet().unwrap().advanced(), *d2.ratchet().unwrap());
+    assert_eq!(d2.previous(), Some(d1.link()));
+}
+
+#[tokio::test]
+async fn replaying_ops_rebuilds_the_writers_exact_entities() {
+    // Alice writes a note and a folder. Bob — a different peer with his
+    // own key and store — replays her ops. Because the writer ships the
+    // ratchet state in the op, Bob must end up with the SAME entity ids
+    // and the SAME content keys; peers never advance independently.
+    let (alice, _) = setup().await;
+    let (bob, _) = setup().await;
+    let note = AbsPath::new("/note.md").unwrap();
+    let docs = AbsPath::new("/docs").unwrap();
+
+    alice.add(&note, Cursor::new(b"hello bob")).await.unwrap();
+    alice.mkdir(&docs, false).await.unwrap();
+    // A second revision, so the replayed ratchet is an ADVANCED one.
+    alice.add(&note, Cursor::new(b"hello again")).await.unwrap();
+
+    let ops = alice.inner().await.ops_log.clone();
+    bob.apply_ops(&ops).await.unwrap();
+
+    let a_note = alice.get_entry_at_path(&note).await.unwrap().unwrap();
+    let b_note = bob.get_entry_at_path(&note).await.unwrap().unwrap();
+    assert_eq!(a_note.id(), b_note.id(), "Bob holds Alice's entity id");
+    assert_eq!(
+        a_note.secret(),
+        b_note.secret(),
+        "…and derives her exact key"
+    );
+    assert_eq!(a_note.link(), b_note.link());
+
+    let a_docs = alice.get_entry_at_path(&docs).await.unwrap().unwrap();
+    let b_docs = bob.get_entry_at_path(&docs).await.unwrap().unwrap();
+    assert_eq!(a_docs.id(), b_docs.id(), "directory identity ships too");
+}

@@ -28,7 +28,7 @@ pub use history::HistoryEntry;
 pub use id::VaultId;
 pub use log::{Head, VaultLog, VaultLogError};
 
-use zim_crypto::{PrivateKey, PublicKey, Secret, SecretShare};
+use zim_crypto::{EntryRatchet, PrivateKey, PublicKey, RatchetShare};
 use zim_did::Did;
 
 use crate::blobs::BlobStore;
@@ -51,6 +51,10 @@ pub struct Vault<B: BlobStore, L: VaultLog> {
     /// every successful [`Self::save`].
     manifest_link: Link,
     private_key: PrivateKey,
+    /// The root's key schedule at the current head. Advanced once per
+    /// `save`; `root_ratchet.key()` is the root dir + ops-log key. Seeded
+    /// at init, recovered from our share at open, re-seeded on revocation.
+    root_ratchet: EntryRatchet,
     fs: Fs<B>,
     log: L,
 }
@@ -96,31 +100,35 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
         blobs: B,
         log: L,
     ) -> Result<Self, VaultError<L::Error>> {
-        let secret = Secret::generate();
+        let root_ratchet = EntryRatchet::seed();
+        let secret = root_ratchet.key();
         let owner_pubkey = owner.public();
 
         let (fs, root_link) = Fs::init_tree(owner_pubkey, &secret, blobs).await?;
 
         // Owner share + genesis manifest, then seal the same secret to
         // each additional device so they're shareholders from genesis.
-        let owner_share = SecretShare::new(&secret, &owner_pubkey).map_err(FsError::from)?;
+        let owner_share = RatchetShare::new(&root_ratchet, &owner_pubkey, 0)
+            .map_err(|e| FsError::Backing(e.into()))?;
         let mut manifest = Manifest::new(name.clone(), owner, owner_share, root_link.clone(), 0)?;
         // Re-stamp the owner share's `via` when the owner is a hosted
         // (browser) key. `Manifest::new` seals it with `via = None`
         // (direct dial); a browser owner must carry `via = Some(hub)`.
         if owner_via.is_some() {
-            let owner_share = SecretShare::new(&secret, &owner_pubkey).map_err(FsError::from)?;
+            let owner_share = RatchetShare::new(&root_ratchet, &owner_pubkey, 0)
+                .map_err(|e| FsError::Backing(e.into()))?;
             manifest.add_share(
                 owner_pubkey,
-                Share::new(owner_share, Did::from_key(&owner_pubkey), owner_via),
+                Share::new(Some(owner_share), Did::from_key(&owner_pubkey), owner_via),
             );
         }
         for pk in shares {
             if *pk == owner_pubkey {
                 continue;
             }
-            let secret_share = SecretShare::new(&secret, pk).map_err(FsError::from)?;
-            manifest.add_share(*pk, Share::new(secret_share, Did::from_key(pk), None));
+            let secret_share =
+                RatchetShare::new(&root_ratchet, pk, 0).map_err(|e| FsError::Backing(e.into()))?;
+            manifest.add_share(*pk, Share::new(Some(secret_share), Did::from_key(pk), None));
         }
 
         // Snapshot the metadata pack so the genesis manifest is
@@ -148,6 +156,7 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
             manifest_link,
             private_key: owner.clone(),
             fs,
+            root_ratchet,
             log,
         })
     }
@@ -190,13 +199,8 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
         let manifest: Manifest = blobs.get_cbor(&head_link).await?;
 
         let owner_pubkey = secret_key.public();
-        let share = manifest
-            .get_share(&owner_pubkey)
-            .ok_or(crate::fs::FsError::ShareNotFound)?;
-        let secret = share
-            .secret_share()
-            .recover(secret_key)
-            .map_err(FsError::from)?;
+        let root_ratchet = manifest.root_ratchet_for(secret_key)?;
+        let secret = root_ratchet.key();
 
         let fs = Fs::load_tree(
             manifest.root(),
@@ -215,6 +219,7 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
             manifest_link: head_link,
             private_key: secret_key.clone(),
             fs,
+            root_ratchet,
             log,
         })
     }
@@ -286,7 +291,8 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
     /// writes the manifest blob, and appends the new entry to the
     /// log.
     pub async fn save(&mut self) -> Result<Link, VaultError<L::Error>> {
-        let new_secret = Secret::generate();
+        self.root_ratchet = self.root_ratchet.advanced();
+        let new_secret = self.root_ratchet.key();
         let previous_link = self.manifest_link.clone();
         let new_height = self.manifest.height() + 1;
         let prior_root_hash = self.manifest.root().hash();
@@ -296,11 +302,17 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
             .save_tree(prior_root_hash, new_secret.clone())
             .await?;
 
-        // Re-mint each share's encrypted secret against the new vault
-        // secret. The pubkey is the BTreeMap key.
+        // Shares hold the root ratchet STATE and derive each new key
+        // themselves, so a save does not re-mint them. Only shares that
+        // are pending — granted since the last save, or everyone after a
+        // revocation re-seeded the lineage — get sealed, with the state
+        // that encrypts THIS version.
         for (pubkey, share) in self.manifest.shares_mut().iter_mut() {
-            let secret_share = SecretShare::new(&new_secret, pubkey).map_err(FsError::from)?;
-            share.set_secret_share(secret_share);
+            if share.is_pending() {
+                let sealed = RatchetShare::new(&self.root_ratchet, pubkey, new_height)
+                    .map_err(|e| FsError::Backing(e.into()))?;
+                share.set_ratchet_share(sealed);
+            }
         }
 
         self.manifest.set_previous(previous_link.clone());
@@ -353,13 +365,9 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
         let manifest: Manifest = blobs.get_cbor(&head.link).await?;
 
         let owner_pubkey = self.private_key.public();
-        let share = manifest
-            .get_share(&owner_pubkey)
-            .ok_or(crate::fs::FsError::ShareNotFound)?;
-        let secret = share
-            .secret_share()
-            .recover(&self.private_key)
-            .map_err(FsError::from)?;
+        let root_ratchet = manifest.root_ratchet_for(&self.private_key)?;
+        self.root_ratchet = root_ratchet.clone();
+        let secret = root_ratchet.key();
 
         self.fs = Fs::load_tree(
             manifest.root(),
@@ -389,19 +397,28 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
     /// for a hosted client such as a browser) or directly when `via` is
     /// `None`. The secret is sealed to `client`; the host never holds it.
     /// Persisted on the next [`Self::save`].
+    /// A revoked holder has the root ratchet state and could derive every
+    /// later key, so revocation re-seeds the root lineage and marks every
+    /// remaining share pending: the next `save` encrypts under the new
+    /// lineage and re-seals it to everyone still here. Versions before the
+    /// revocation stay readable through their own manifests' shares.
+    fn reseed_root_lineage(&mut self) {
+        self.root_ratchet = EntryRatchet::seed();
+        for (_, share) in self.manifest.shares_mut().iter_mut() {
+            share.clear_ratchet_share();
+        }
+    }
+
     #[allow(clippy::result_large_err)]
     pub fn add_share_via(
         &mut self,
         client: PublicKey,
         via: Option<Did>,
     ) -> Result<(), VaultError<L::Error>> {
-        // Placeholder secret share — re-minted against the live vault
-        // secret on the next `save`.
-        let secret_share = SecretShare::new(&Secret::default(), &client).map_err(FsError::from)?;
-        self.manifest.add_share(
-            client,
-            Share::new(secret_share, Did::from_key(&client), via),
-        );
+        // Pending: sealed with the live root state on the next `save`, so
+        // the newcomer reads from that version onward and nothing before.
+        self.manifest
+            .add_share(client, Share::new(None, Did::from_key(&client), via));
         Ok(())
     }
 
@@ -426,6 +443,7 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
         if self.manifest.shares_mut().remove(&pubkey).is_none() {
             return Err(crate::fs::FsError::ShareNotFound.into());
         }
+        self.reseed_root_lineage();
         Ok(())
     }
 
@@ -437,7 +455,11 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
         if self.manifest.get_share(&our_key).is_none() {
             return Err(crate::fs::FsError::ShareNotFound.into());
         }
-        Ok(self.manifest.shares_mut().remove(&recipient).is_some())
+        let removed = self.manifest.shares_mut().remove(&recipient).is_some();
+        if removed {
+            self.reseed_root_lineage();
+        }
+        Ok(removed)
     }
 
     // -- History --

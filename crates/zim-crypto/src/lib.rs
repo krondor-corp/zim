@@ -7,6 +7,7 @@
 mod jwt;
 mod keys;
 mod ratchet;
+mod ratchet_share;
 mod secret;
 mod secret_share;
 
@@ -14,5 +15,6 @@ pub use ed25519_dalek::Signature;
 pub use jwt::{JwtClaims, JwtError};
 pub use keys::{PrivateKey, PublicKey, SharingPrivateKey, SharingPublicKey};
 pub use ratchet::{EntryId, EntryRatchet};
+pub use ratchet_share::{RatchetShare, RatchetShareError};
 pub use secret::{Secret, SecretError, BLAKE3_HASH_SIZE};
 pub use secret_share::{SecretShare, SecretShareError};

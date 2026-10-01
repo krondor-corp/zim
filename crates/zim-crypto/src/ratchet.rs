@@ -108,6 +108,18 @@ impl EntryRatchet {
         }
     }
 
+    /// The ratchet `n` revisions ahead. Used by a shareholder to bring a
+    /// sealed root state forward to the current height. Identity is
+    /// unchanged.
+    pub fn advanced_by(&self, n: u64) -> Self {
+        let mut next = (*self.inner).clone();
+        next.inc_by(n as usize);
+        Self {
+            seed: self.seed,
+            inner: Box::new(next),
+        }
+    }
+
     /// The content [`Secret`] for THIS revision. Deterministic — the
     /// same ratchet state always yields the same key, which is what lets
     /// a replaying peer rebuild the writer's exact entry.
@@ -141,8 +153,11 @@ mod tests {
         assert_ne!(r1.key(), r2.key());
         assert_ne!(r0.key(), r2.key());
 
-        // Advancing is pure — re-deriving from r0 lands on the same r1.
+        // Advancing is pure — re-deriving from r0 lands on the same r1,
+        // and skipping ahead agrees with stepping.
         assert_eq!(r0.advanced(), r1);
+        assert_eq!(r0.advanced_by(2), r2);
+        assert_eq!(r0.advanced_by(0), r0);
         // …and never changes WHICH entity this is.
         assert_eq!(r0.id(), r1.id());
         assert_eq!(r1.id(), r2.id());

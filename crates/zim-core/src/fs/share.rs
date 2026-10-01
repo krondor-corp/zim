@@ -23,12 +23,12 @@
 
 use serde::{Deserialize, Serialize};
 
-use zim_crypto::{PublicKey, SecretShare};
+use zim_crypto::{PublicKey, RatchetShare};
 use zim_did::Did;
 
 /// A peer's share of vault access.
 ///
-/// Pairs a [`Did`] (the seal target) with a [`SecretShare`] (the
+/// Pairs a [`Did`] (the seal target) with a [`RatchetShare`] (the
 /// vault secret encrypted to that identity's pubkey) and an optional
 /// `via` host the client is reached through.
 ///
@@ -38,11 +38,15 @@ use zim_did::Did;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Share {
     identity: Did,
-    secret_share: SecretShare,
+    /// The root ratchet state sealed to `identity`, with the height it
+    /// derives. `None` = pending: granted but not yet sealed — the next
+    /// `save` seals the live state, so the holder reads from that
+    /// version onward. Never `None` on a persisted manifest.
+    ratchet_share: Option<RatchetShare>,
     /// The always-on host this client is reached through. `None` for a
     /// directly-dialable peer; `Some(did:key of host)` for a hosted
     /// client (e.g. a browser reached via the hub). The host never holds
-    /// the vault secret — `secret_share` is sealed to the client.
+    /// the vault secret — `ratchet_share` is sealed to the client.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     via: Option<Did>,
 }
@@ -50,15 +54,15 @@ pub struct Share {
 impl Share {
     /// Construct a share.
     ///
-    /// - `secret_share` — the vault secret encrypted to `identity`'s
+    /// - `ratchet_share` — the vault secret encrypted to `identity`'s
     ///   underlying pubkey.
     /// - `identity` — the peer's DID-shaped identity (the seal target).
     /// - `via` — the host the client is reached through, or `None` for a
     ///   directly-dialable peer.
-    pub fn new(secret_share: SecretShare, identity: Did, via: Option<Did>) -> Self {
+    pub fn new(ratchet_share: Option<RatchetShare>, identity: Did, via: Option<Did>) -> Self {
         Self {
             identity,
-            secret_share,
+            ratchet_share,
             via,
         }
     }
@@ -83,8 +87,13 @@ impl Share {
     }
 
     /// The vault secret encrypted to [`Self::identity`].
-    pub fn secret_share(&self) -> &SecretShare {
-        &self.secret_share
+    pub fn ratchet_share(&self) -> Option<&RatchetShare> {
+        self.ratchet_share.as_ref()
+    }
+
+    /// Granted but not yet sealed by a `save`.
+    pub fn is_pending(&self) -> bool {
+        self.ratchet_share.is_none()
     }
 
     /// The always-on host this client is reached through, if any. `None`
@@ -113,7 +122,13 @@ impl Share {
 
     /// Replace the encrypted secret share (called at save time when the
     /// vault secret rotates and shares are re-minted).
-    pub fn set_secret_share(&mut self, secret_share: SecretShare) {
-        self.secret_share = secret_share;
+    pub fn set_ratchet_share(&mut self, ratchet_share: RatchetShare) {
+        self.ratchet_share = Some(ratchet_share);
+    }
+
+    /// Mark pending again — used when the root lineage is re-seeded on
+    /// revocation, so the next `save` re-seals the new state.
+    pub fn clear_ratchet_share(&mut self) {
+        self.ratchet_share = None;
     }
 }

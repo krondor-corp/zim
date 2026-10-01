@@ -27,5 +27,11 @@ live in Linear.
 | [Per-node identity and ratchets](per-node-identity-and-ratchets.md) | Design | Medium | None |
 | [Metadata privacy and the untrusted-mirror model](metadata-privacy.md) | Design | Medium | Per-node identity and ratchets |
 
+## Repository And Release
+
+| Direction | Stage | Priority | Dependency |
+|---|---|---|---|
+| [Splitting zim from zim-hub](hub-cli-split.md) | Design | Medium | zim-api contract stability |
+
 When roadmap work becomes actionable, create or update the corresponding
 Linear issue and link back to the roadmap page for product context.

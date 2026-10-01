@@ -230,9 +230,15 @@ impl OpsLog {
                             content,
                             secret,
                             plaintext_hash,
+                            id,
+                            ratchet,
+                            previous,
                             ..
                         } = &loser.kind
                         {
+                            // The sidecar IS the loser's version, preserved
+                            // under a conflict name — same content, same
+                            // key, same lineage.
                             let conflict_op = Op {
                                 id: loser.id.clone(),
                                 kind: OpKind::AddFile {
@@ -240,6 +246,9 @@ impl OpsLog {
                                     content: content.clone(),
                                     secret: secret.clone(),
                                     plaintext_hash: *plaintext_hash,
+                                    id: *id,
+                                    ratchet: ratchet.clone(),
+                                    previous: previous.clone(),
                                 },
                             };
                             self.operations.insert(conflict_op.id.clone(), conflict_op);

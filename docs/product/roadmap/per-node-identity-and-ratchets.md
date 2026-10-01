@@ -146,5 +146,47 @@ refactor.
 - Ops-log key derivation once entries ratchet (today it rides the root
   secret).
 - Skip-level parameters (branching, how far ahead readers commonly jump).
-- Whether the entry `id` is stored explicitly or the creation-OpId is
-  recoverable without storing it redundantly.
+- ~~Whether the entry `id` is stored explicitly or the creation-OpId is
+  recoverable~~ — resolved in v1: stored explicitly (see below).
+
+## v1 implementation record (2026-10, `alex/ratchet-experiment`)
+
+What actually shipped, and where it deliberately stops short of the
+design above:
+
+- **Ratchet library:** `skip_ratchet =0.3.0` (WNFS reference impl),
+  wrapped as `zim_crypto::EntryRatchet` — `seed()`, `advanced()`,
+  `key()` (blake3 derive-key, domain `zim/entry-content/v1`). Boxed
+  internally (~135 bytes of state → 8 bytes wherever it rides). Exact-
+  pinned; fork tracked as KRO-224.
+- **Identity is stored explicitly:** `zim_crypto::EntryId`, 32 random
+  bytes minted at creation and carried through every rewrite and rename.
+  *Not* the creation `OpId` — that would require pre-minting the id
+  before the fs mutation that records the op. Provenance (who/when) is
+  still recoverable from the creating op in the log.
+- **`Entry` gains `id`, `ratchet`, `previous`;** `secret` is kept as the
+  *cached* derived key with the invariant `secret == ratchet.key()`,
+  enforced by the constructors (`file_at_path`, `dir_versioned`). This
+  left the ~74 read sites that take `&Secret` untouched.
+- **The writer ships the ratchet.** `AddFile` and `Mkdir` ops carry
+  `id` + `ratchet` (+ `previous` for files), so a replaying peer rebuilds
+  the writer's *exact* entity and key — peers never advance
+  independently (tested: `replaying_ops_rebuilds_the_writers_exact_entities`).
+  An `AddFile` without a ratchet (pre-ratchet op) **errors on replay**
+  rather than seeding a fresh ratchet, which would derive a key that
+  does not decrypt the content.
+- **Rewrite = same entity, next revision:** `add` over an existing file
+  keeps its `id`, advances its ratchet, chains `previous = old link`.
+  Dir bodies rewritten on the root→leaf path do the same. `mv` moves the
+  entry intact (same id/ratchet/link). Synthetic `-p` ancestors seed.
+- **The root is NOT ratcheted in v1.** Its key stays the share-governed
+  vault secret, minted fresh per save and sealed to shareholders; its
+  identity is the vault id (`Entry::root_dir`). Ratcheting it means
+  sealing ratchet *state* into shares — a share-format change that
+  belongs with grant-from-a-point, not here.
+- **Not in v1:** rename-aware merge. The CRDT conflict check is still
+  path-keyed; making it `id`-aware is the follow-up this identity
+  substrate enables, and it needs its own fork-loop validation.
+- **Verified:** `make check` green in both CI variants (fuse / no-fuse,
+  rustc 1.99); `make e2e` PASS end-to-end — convergence, isolation,
+  concurrent forks, FUSE across nodes, restart durability.

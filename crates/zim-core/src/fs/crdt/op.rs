@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::fs::AbsPath;
 use crate::linked_data::Link;
-use zim_crypto::{PublicKey, Secret};
+use zim_crypto::{EntryId, EntryRatchet, PublicKey, Secret};
 
 /// A causal-order identifier. Total order across all peers: Lamport
 /// `timestamp` primary, `peer_id` lexicographic secondary. Two `OpId`s
@@ -83,11 +83,32 @@ pub enum OpKind {
         /// field existed.
         #[serde(default)]
         plaintext_hash: Option<Hash>,
+        /// Stable entity identity, minted by the writer at creation and
+        /// carried through rewrites/renames. Ships so every peer
+        /// reconstructs the same entity. `None` on legacy ops.
+        #[serde(default)]
+        id: Option<EntryId>,
+        /// The writer's ratchet state for this revision; `secret` is
+        /// derived from it. Ships so peers never advance independently.
+        #[serde(default)]
+        ratchet: Option<EntryRatchet>,
+        /// Prior version of this entity (`Some(old link)` on a rewrite).
+        /// Boxed to keep this variant within clippy's size budget
+        /// relative to `Mkdir`/`Remove`/`Mv`; `Link` is ~96 bytes.
+        #[serde(default)]
+        previous: Option<Box<Link>>,
     },
     /// Create a directory at `path` (idempotent at apply time).
     Mkdir {
         /// Path to create.
         path: AbsPath,
+        /// Entity identity + ratchet for the new directory — shipped so
+        /// a replaying peer builds the same dir entity. `None` on legacy
+        /// ops (the peer seeds its own).
+        #[serde(default)]
+        id: Option<EntryId>,
+        #[serde(default)]
+        ratchet: Option<EntryRatchet>,
     },
     /// Remove a path. `is_dir` distinguishes file vs directory removal
     /// at replay time without re-reading the tree.
@@ -113,7 +134,7 @@ impl OpKind {
     pub fn path(&self) -> &AbsPath {
         match self {
             OpKind::AddFile { path, .. } => path,
-            OpKind::Mkdir { path } => path,
+            OpKind::Mkdir { path, .. } => path,
             OpKind::Remove { path, .. } => path,
             OpKind::Mv { to, .. } => to,
         }

@@ -63,8 +63,13 @@ pub enum VaultLogError<T> {
 
     /// The append's `previous` link does not match any entry at
     /// `height - 1`, so the chain is broken.
+    ///
+    /// The two `Link`s are boxed: inline they put this variant (and so
+    /// every `Result<_, VaultLogError>`) over clippy's `result_large_err`
+    /// threshold. `Box<Link>` is `Display`, so the format string is
+    /// unchanged.
     #[error("invalid append: current={0}, previous={1}, height={2}")]
-    InvalidAppend(Link, Link, u64),
+    InvalidAppend(Box<Link>, Box<Link>, u64),
 }
 
 /// Append-only version log for a single vault.

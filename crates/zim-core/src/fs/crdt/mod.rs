@@ -228,25 +228,25 @@ impl OpsLog {
                         };
                         if let OpKind::AddFile {
                             content,
-                            secret,
                             plaintext_hash,
-                            id,
                             ratchet,
                             previous,
                             ..
                         } = &loser.kind
                         {
                             // The sidecar IS the loser's version, preserved
-                            // under a conflict name — same content, same
-                            // key, same lineage.
+                            // under a conflict name. It must carry the
+                            // loser's ratchet — the blob is encrypted under
+                            // that key and we hold no plaintext to re-key.
+                            // Identity derives from the ratchet, so the
+                            // sidecar is a FORK of the same entity: one
+                            // lineage, two heads, until a human resolves it.
                             let conflict_op = Op {
                                 id: loser.id.clone(),
                                 kind: OpKind::AddFile {
                                     path: loser_path.clone(),
                                     content: content.clone(),
-                                    secret: secret.clone(),
                                     plaintext_hash: *plaintext_hash,
-                                    id: *id,
                                     ratchet: ratchet.clone(),
                                     previous: previous.clone(),
                                 },

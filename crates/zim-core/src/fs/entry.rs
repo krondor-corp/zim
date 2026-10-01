@@ -61,10 +61,6 @@ pub enum Entry {
         /// (tests, defaults).
         #[serde(default)]
         plaintext_hash: Option<Hash>,
-        /// Stable identity across rewrites and renames. `None` only for
-        /// the root (whose identity is the vault id).
-        #[serde(default)]
-        id: Option<EntryId>,
         /// This revision's key schedule; `secret` is derived from it
         /// (`secret == ratchet.key()`). `None` only for the share-
         /// governed root.
@@ -82,9 +78,6 @@ pub enum Entry {
         link: Link,
         /// Per-dir encryption secret (rotated when the dir is rewritten).
         secret: Secret,
-        /// See [`Entry::File::id`]. `None` only for the root.
-        #[serde(default)]
-        id: Option<EntryId>,
         /// See [`Entry::File::ratchet`]. `None` only for the root.
         #[serde(default)]
         ratchet: Option<EntryRatchet>,
@@ -100,24 +93,16 @@ impl Entry {
     /// default to `None`. Tests and synthetic fixtures; production uses
     /// [`Self::file_at_path`].
     pub fn file(link: Link, ratchet: EntryRatchet) -> Self {
-        Self::file_at_path(
-            link,
-            EntryId::generate(),
-            ratchet,
-            None,
-            Path::new(""),
-            None,
-        )
+        Self::file_at_path(link, ratchet, None, Path::new(""), None)
     }
 
     /// Production file constructor. `secret` is derived from `ratchet`
     /// so the two can never disagree; `mime` is inferred from `path`.
-    /// On a rewrite the caller passes the entity's existing `id`, its
-    /// *advanced* ratchet, and `previous = Some(old link)`; on creation
-    /// a fresh id, a seeded ratchet, and `None`.
+    /// On a rewrite the caller passes the entity's *advanced* ratchet
+    /// (identity rides inside it) and `previous = Some(old link)`; on
+    /// creation a seeded ratchet and `None`.
     pub fn file_at_path(
         link: Link,
-        id: EntryId,
         ratchet: EntryRatchet,
         previous: Option<Link>,
         path: &Path,
@@ -129,7 +114,6 @@ impl Entry {
             mime: MaybeMime::from_path(path),
             metadata: None,
             plaintext_hash,
-            id: Some(id),
             ratchet: Some(ratchet),
             previous,
         }
@@ -138,20 +122,14 @@ impl Entry {
     /// A directory entry at revision 0 of a fresh entity. See
     /// [`Self::dir_versioned`] for rewrites.
     pub fn dir(link: Link, ratchet: EntryRatchet) -> Self {
-        Self::dir_versioned(link, EntryId::generate(), ratchet, None)
+        Self::dir_versioned(link, ratchet, None)
     }
 
     /// Production directory constructor; `secret` derived from `ratchet`.
-    pub fn dir_versioned(
-        link: Link,
-        id: EntryId,
-        ratchet: EntryRatchet,
-        previous: Option<Link>,
-    ) -> Self {
+    pub fn dir_versioned(link: Link, ratchet: EntryRatchet, previous: Option<Link>) -> Self {
         Entry::Dir {
             link,
             secret: ratchet.key(),
-            id: Some(id),
             ratchet: Some(ratchet),
             previous,
         }
@@ -166,7 +144,6 @@ impl Entry {
         Entry::Dir {
             link,
             secret,
-            id: None,
             ratchet: None,
             previous: None,
         }
@@ -190,9 +167,7 @@ impl Entry {
 
     /// Stable entity identity; `None` only for the root.
     pub fn id(&self) -> Option<EntryId> {
-        match self {
-            Entry::File { id, .. } | Entry::Dir { id, .. } => *id,
-        }
+        self.ratchet().map(EntryRatchet::id)
     }
 
     /// This revision's key schedule; `None` only for the root.
@@ -331,7 +306,6 @@ mod test {
 
         let entry = Entry::file_at_path(
             link.clone(),
-            EntryId::generate(),
             EntryRatchet::seed(),
             None,
             &PathBuf::from("/test/file.json"),

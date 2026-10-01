@@ -18,7 +18,6 @@
 //! ships the ratchet *state* in the op, so every replaying peer
 //! reconstructs the identical entry; peers never advance independently.
 
-use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 
 use crate::Secret;
@@ -27,20 +26,23 @@ use crate::Secret;
 /// Changing this string changes every derived key — it is part of the
 /// on-disk format.
 const CONTENT_KEY_DOMAIN: &str = "zim/entry-content/v1";
+/// Domain separation for the identity derived from a ratchet seed.
+const ENTRY_ID_DOMAIN: &str = "zim/entry-id/v1";
 
-/// Stable identity of a tree entity, minted once at creation and
-/// carried through every rewrite and rename. Random — provenance (who
-/// created it, when) is recoverable from the creating op in the ops
-/// log rather than encoded here. Not key material.
+/// Stable identity of a tree entity — **derived from its ratchet's
+/// seed**, never minted separately, so identity and key schedule can't
+/// disagree. The skip ratchet's salt is `H(seed)` and `inc()` never
+/// changes it; this is that intrinsic identity, surfaced (the salt is
+/// `pub(crate)` upstream — the fork, KRO-224, can expose it directly and
+/// retire the stored seed). Survives every rewrite and rename. Two
+/// entries sharing a ratchet — e.g. a conflict sidecar and the file it
+/// forked from — are the *same* entity with two heads. Not key material.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EntryId([u8; 32]);
 
 impl EntryId {
-    /// Mint a fresh identity.
-    pub fn generate() -> Self {
-        let mut b = [0u8; 32];
-        getrandom::getrandom(&mut b).expect("failed to generate random bytes");
-        Self(b)
+    fn from_seed(seed: &[u8; 32]) -> Self {
+        Self(blake3::derive_key(ENTRY_ID_DOMAIN, seed))
     }
 
     pub fn as_bytes(&self) -> &[u8; 32] {
@@ -68,28 +70,49 @@ impl std::fmt::Debug for EntryId {
 /// as a pointer it is 8 bytes everywhere, uniformly. Serde is
 /// unaffected — a newtype over `Box<T>` serializes as `T`.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EntryRatchet(Box<skip_ratchet::Ratchet>);
+pub struct EntryRatchet {
+    /// The seed the ratchet was constructed from. Fixed for the entity's
+    /// life (advancing never changes it); the identity derives from it.
+    seed: [u8; 32],
+    inner: Box<skip_ratchet::Ratchet>,
+}
 
 impl EntryRatchet {
     /// A fresh ratchet for a brand-new entity (revision 0).
     pub fn seed() -> Self {
-        Self(Box::new(skip_ratchet::Ratchet::from_rng(&mut OsRng)))
+        let mut seed = [0u8; 32];
+        let mut incs = [0u8; 2];
+        getrandom::getrandom(&mut seed).expect("failed to generate random bytes");
+        getrandom::getrandom(&mut incs).expect("failed to generate random bytes");
+        let inner = skip_ratchet::Ratchet::from_seed(&seed, incs[0], incs[1]);
+        Self {
+            seed,
+            inner: Box::new(inner),
+        }
+    }
+
+    /// The entity this ratchet belongs to. Same across every revision.
+    pub fn id(&self) -> EntryId {
+        EntryId::from_seed(&self.seed)
     }
 
     /// The ratchet for the next revision. Pure and one-way: the result
     /// can derive every later key, but nothing can recover `self` from
-    /// it.
+    /// it. Identity is unchanged.
     pub fn advanced(&self) -> Self {
-        let mut next = (*self.0).clone();
+        let mut next = (*self.inner).clone();
         next.inc();
-        Self(Box::new(next))
+        Self {
+            seed: self.seed,
+            inner: Box::new(next),
+        }
     }
 
     /// The content [`Secret`] for THIS revision. Deterministic — the
     /// same ratchet state always yields the same key, which is what lets
     /// a replaying peer rebuild the writer's exact entry.
     pub fn key(&self) -> Secret {
-        let hash = self.0.derive_key(CONTENT_KEY_DOMAIN).finalize();
+        let hash = self.inner.derive_key(CONTENT_KEY_DOMAIN).finalize();
         Secret::from_slice(hash.as_bytes()).expect("blake3 output is exactly SECRET_SIZE bytes")
     }
 }
@@ -120,6 +143,9 @@ mod tests {
 
         // Advancing is pure — re-deriving from r0 lands on the same r1.
         assert_eq!(r0.advanced(), r1);
+        // …and never changes WHICH entity this is.
+        assert_eq!(r0.id(), r1.id());
+        assert_eq!(r1.id(), r2.id());
     }
 
     #[test]
@@ -142,6 +168,6 @@ mod tests {
         let b = EntryRatchet::seed();
         assert_ne!(a, b);
         assert_ne!(a.key(), b.key());
-        assert_ne!(EntryId::generate(), EntryId::generate());
+        assert_ne!(a.id(), b.id(), "distinct seeds are distinct entities");
     }
 }

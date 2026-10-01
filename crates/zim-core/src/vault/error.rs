@@ -14,10 +14,20 @@ use super::log::VaultLogError;
 pub enum VaultError<L: Display + Debug> {
     #[error("fs: {0}")]
     Fs(#[from] FsError),
+    /// Boxed: `VaultLogError<L>` is the fat variant (≥200 bytes with a
+    /// typical `L`) and would otherwise push every `Result<_, VaultError>`
+    /// over clippy's `result_large_err` threshold. `From` is implemented
+    /// by hand below so `?` on a `VaultLogError` still works unchanged.
     #[error("log: {0}")]
-    Log(#[from] VaultLogError<L>),
+    Log(Box<VaultLogError<L>>),
     #[error("blob: {0}")]
     Blob(#[from] BlobError),
     #[error("manifest: {0}")]
     Manifest(#[from] ManifestError),
+}
+
+impl<L: Display + Debug> From<VaultLogError<L>> for VaultError<L> {
+    fn from(e: VaultLogError<L>) -> Self {
+        Self::Log(Box::new(e))
+    }
 }

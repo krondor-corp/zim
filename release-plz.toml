@@ -19,6 +19,21 @@ dependencies_update = false
 [[package]]
 name = "zim-cli"
 git_tag_name = "zim-v{{ version }}"
+# Binary crate — nothing depends on its library API, so semver checks
+# are meaningless here. They also build rustdoc in a lockfile-free temp
+# workspace, which trips on iroh's pre-release ed25519-dalek (see the
+# 2026-10 Release PR failure). Off.
+semver_check = false
+
+# zim-peer pulls iroh 0.93, which pins the PRE-RELEASE ed25519-dalek
+# 3.0.0-pre.1 → pkcs8 0.11. Our Cargo.lock holds a compatible pkcs8 rc,
+# but cargo-semver-checks builds rustdoc in a lockfile-free temp
+# workspace, fresh-resolves pkcs8 0.11.0 final, and fails to COMPILE
+# ed25519-dalek — a build failure, not an API finding. Off until the
+# iroh 1.x migration (which moves to released dalek 3.0.0) lands.
+[[package]]
+name = "zim-peer"
+semver_check = false
 
 # Deployed continuously via GHCR — never versioned/released here.
 [[package]]

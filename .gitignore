@@ -5,3 +5,6 @@ jig.local.toml
 .env
 !.env.example
 .coord/
+
+# jig (worktree/agent tool) per-repo config — local dev tooling, not source
+jig.toml

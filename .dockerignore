@@ -1,5 +1,5 @@
-# Keep the hub image build context lean — Kamal ships this whole repo
-# as context (zim-iac builds with context ../zim).
+# Keep the hub image build context lean — CI (images.yml) builds with
+# context . and -f docker/Dockerfile.hub; zim-iac deploys the GHCR image.
 target/
 crates/zim-hub/web/target/
 crates/zim-hub/web/dist/

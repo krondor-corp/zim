@@ -1,4 +1,4 @@
-# Build + publish the hub image (Dockerfile.hub — hub server with
+# Build + publish the hub image (docker/Dockerfile.hub — hub server with
 # embedded SPA) to ghcr.io/krondor-corp/zim-hub.
 #
 # Tags: `latest` on main, the version on `zim-v*` release tags, and the
@@ -28,7 +28,7 @@ jobs:
       matrix:
         include:
           - name: zim-hub
-            dockerfile: Dockerfile.hub
+            dockerfile: docker/Dockerfile.hub
             context: .
     steps:
       - uses: actions/checkout@v4

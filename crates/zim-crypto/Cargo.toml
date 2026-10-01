@@ -32,6 +32,10 @@ aes-gcm = "0.10"
 chacha20poly1305 = { version = "0.10", features = ["stream"] }
 chacha20 = "0.9"
 x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+# Skip ratchet (WNFS reference impl, wnfs-wg). PINNED EXACT: it's the
+# per-entry key schedule, stale upstream (last push 2024-02), and we
+# intend to fork it — see the fork todo. Bump only deliberately.
+skip_ratchet = { version = "=0.3.0", features = ["serde"] }
 curve25519-dalek = "4.0"
 ed25519-dalek = { version = "2.2.0", features = ["serde"] }
 blake3 = "1.5"

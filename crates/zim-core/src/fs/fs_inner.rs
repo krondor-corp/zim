@@ -413,7 +413,7 @@ impl<B: BlobStore> Fs<B> {
                     path: path.clone(),
                     content: link,
                     plaintext_hash: Some(plaintext_hash),
-                    ratchet: Some(ratchet),
+                    ratchet,
                     previous: previous.map(Box::new),
                 },
             );
@@ -455,6 +455,13 @@ impl<B: BlobStore> Fs<B> {
     /// unaffected by `rm`; only the tree pointer disappears.
     /// Records an [`OpKind::Remove`] in the ops log.
     pub async fn rm(&self, path: &AbsPath) -> Result<(), FsError> {
+        // Capture the entity before it's gone so replay can follow a
+        // concurrent rename to it.
+        let id = self
+            .get_entry_at_path(path)
+            .await?
+            .and_then(|e| e.id())
+            .ok_or_else(|| FsError::PathNotFound(path.clone()))?;
         let is_dir = self.rm_tree(path).await?;
         let mut inner = self.0.lock().await;
         let peer_id = inner.public_key;
@@ -463,6 +470,7 @@ impl<B: BlobStore> Fs<B> {
             OpKind::Remove {
                 path: path.clone(),
                 is_dir,
+                id,
             },
         );
         Ok(())
@@ -524,7 +532,7 @@ impl<B: BlobStore> Fs<B> {
                 peer_id,
                 OpKind::Mkdir {
                     path: path.clone(),
-                    ratchet: Some(ratchet),
+                    ratchet,
                 },
             );
         }
@@ -592,6 +600,15 @@ impl<B: BlobStore> Fs<B> {
     /// Records an [`OpKind::Mv`] in the ops log.
     pub async fn mv(&self, from: &AbsPath, to: &AbsPath) -> Result<(), FsError> {
         self.mv_tree(from, to).await?;
+        // The entity now at `to` is the one we moved; ship its id so
+        // replaying peers can redirect concurrent edits to follow it.
+        let id = self
+            .get_entry_at_path(to)
+            .await?
+            .and_then(|e| e.id())
+            .ok_or_else(|| {
+                FsError::CannotMutate(to.clone(), "moved entity has no identity".into())
+            })?;
         let mut inner = self.0.lock().await;
         let peer_id = inner.public_key;
         inner.ops_log.record(
@@ -599,6 +616,7 @@ impl<B: BlobStore> Fs<B> {
             OpKind::Mv {
                 from: from.clone(),
                 to: to.clone(),
+                id,
             },
         );
         Ok(())
@@ -1017,51 +1035,69 @@ impl<B: BlobStore> Fs<B> {
     ///
     /// After replay, `ops` is merged into the pending [`OpsLog`] so the
     /// next [`Self::save`] persists them on the new version.
+    /// `ops` must be the FULL merge window — the local side's ops as well
+    /// as the incoming side's, as `chain::merge` always supplies — because
+    /// rename-following is tracked across the ops replayed here: a local
+    /// `Mv` absent from `ops` would be invisible to the redirect.
     pub async fn apply_ops(&self, ops: &OpsLog) -> Result<(), FsError> {
-        for (path, op) in ops.resolve_all() {
+        // Replay in causal (OpId) order — NOT latest-op-per-path. Ops
+        // name entities, and an entity's path can change mid-window via
+        // `Mv`. `at` tracks where each entity currently lives according
+        // to the ops replayed so far, so an `AddFile` recorded against a
+        // path a concurrent rename vacated is redirected to the entity's
+        // current path: the edit follows the rename. Per-path collapsing
+        // made the outcome depend on filename sort order.
+        let mut at: std::collections::HashMap<zim_crypto::EntryId, AbsPath> =
+            std::collections::HashMap::new();
+        for op in ops.operations().values() {
+            let path = op.path().clone();
             match &op.kind {
                 OpKind::Mkdir { ratchet, .. } => {
-                    // Legacy op (no ratchet): this peer seeds its own.
-                    match self.mkdir_tree(&path, true, ratchet.clone()).await {
+                    match self.mkdir_tree(&path, true, Some(ratchet.clone())).await {
                         Ok(_) | Err(FsError::CannotMutate(_, _)) => {}
                         Err(e) => return Err(e),
                     }
+                    at.insert(ratchet.id(), path);
                 }
-                OpKind::Remove { .. } => match self.rm_tree(&path).await {
-                    Ok(_) | Err(FsError::PathNotFound(_)) => {}
-                    Err(e) => return Err(e),
-                },
-                OpKind::Mv { from, to } => match self.mv_tree(from, to).await {
-                    Ok(()) | Err(FsError::PathNotFound(_)) => {}
-                    Err(e) => return Err(e),
-                },
+                OpKind::Remove { id, .. } => {
+                    let target = at.get(id).cloned().unwrap_or(path);
+                    match self.rm_tree(&target).await {
+                        Ok(_) | Err(FsError::PathNotFound(_)) => {}
+                        Err(e) => return Err(e),
+                    }
+                    at.remove(id);
+                }
+                OpKind::Mv { from, to, id } => {
+                    // If an earlier op in this window already moved the
+                    // entity, move it from where it is now.
+                    let src = at.get(id).cloned().unwrap_or(from.clone());
+                    match self.mv_tree(&src, to).await {
+                        Ok(()) | Err(FsError::PathNotFound(_)) => {}
+                        Err(e) => return Err(e),
+                    }
+                    at.insert(*id, to.clone());
+                }
                 OpKind::AddFile {
                     content,
                     plaintext_hash,
-
                     ratchet,
                     previous,
                     ..
                 } => {
-                    // The writer's ratchet derives the content key. An op
-                    // without one predates per-entry ratchets; seeding a
-                    // fresh ratchet here would derive a key that does NOT
-                    // decrypt `content` — so refuse rather than build an
-                    // unreadable entry.
-                    let Some(ratchet) = ratchet else {
-                        return Err(FsError::CannotMutate(
-                            path.clone(),
-                            "op predates per-entry ratchets; cannot replay".into(),
-                        ));
-                    };
+                    // The edit targets an ENTITY. If a rename in this
+                    // window already moved it, apply the edit where the
+                    // entity is now, not where the writer last saw it.
+                    let id = ratchet.id();
+                    let target = at.get(&id).cloned().unwrap_or(path);
                     self.add_tree(
-                        &path,
+                        &target,
                         content.clone(),
                         ratchet.clone(),
                         previous.as_deref().cloned(),
                         *plaintext_hash,
                     )
                     .await?;
+                    at.insert(id, target);
                 }
             }
         }

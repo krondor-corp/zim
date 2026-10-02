@@ -7,7 +7,7 @@ use futures::lock::Mutex;
 
 use crate::blobs::{BlobError, BlobStore};
 use crate::linked_data::{BlockEncoded, CodecError, Link};
-use zim_crypto::{EntryRatchet, PublicKey, Secret, SecretError};
+use zim_crypto::{EntryRatchet, PublicKey, SecretError};
 
 use super::abs_path::AbsPath;
 use super::content_store::{ContentError, Metadata};
@@ -215,7 +215,7 @@ impl<B: BlobStore> Fs<B> {
     pub async fn save_tree(
         &self,
         prior_root_hash: crate::linked_data::Hash,
-        new_secret: Secret,
+        root_ratchet: &EntryRatchet,
     ) -> Result<TreeSaveOutput, FsError> {
         let blobs = &self.1;
         let (root_dir, mut pins, ops_log) = {
@@ -230,7 +230,7 @@ impl<B: BlobStore> Fs<B> {
         // Put the root with the new secret. Evict the prior root's
         // dir body so the metadata snapshot below contains only the
         // live set.
-        let root_link = blobs.put_metadata(&new_secret, &root_dir)?;
+        let root_link = blobs.put_metadata(&root_ratchet.key(), &root_dir)?;
         if root_link.hash() != prior_root_hash {
             blobs.evict(&prior_root_hash);
         }
@@ -238,7 +238,7 @@ impl<B: BlobStore> Fs<B> {
         let ops_log_link = if !ops_log.is_empty() {
             // Ops-log ciphertext isn't fs-shaped — reach past the
             // content store directly to the underlying blob store.
-            let encrypted = new_secret.encrypt(&ops_log.encode()?)?;
+            let encrypted = root_ratchet.key().encrypt(&ops_log.encode()?)?;
             let link = blobs.inner().put_raw(encrypted).await?;
             pins.insert(link.hash());
             link
@@ -281,12 +281,12 @@ impl<B: BlobStore> Fs<B> {
     /// handles all of that.
     pub async fn init_tree(
         owner_pubkey: PublicKey,
-        secret: &Secret,
+        root_ratchet: &EntryRatchet,
         blobs: B,
     ) -> Result<(Self, Link), FsError> {
         let blobs = ContentStore::new(blobs, Metadata::new());
         let root = Dir::default();
-        let root_link = blobs.put_metadata(secret, &root)?;
+        let root_link = blobs.put_metadata(&root_ratchet.key(), &root)?;
         let fs = Fs(
             Arc::new(Mutex::new(FsInner {
                 root,
@@ -312,7 +312,7 @@ impl<B: BlobStore> Fs<B> {
     /// manifest) and you get back the in-memory tree.
     pub async fn load_tree(
         root_link: &Link,
-        secret: Secret,
+        root_ratchet: EntryRatchet,
         metadata: Metadata,
         pins: Pins,
         ops_clock: u64,
@@ -320,7 +320,9 @@ impl<B: BlobStore> Fs<B> {
         blobs: B,
     ) -> Result<Self, FsError> {
         let blobs = ContentStore::new(blobs, metadata);
-        let root_entry = Entry::root_dir(root_link.clone(), secret);
+        // The root is a directory entity like any other; its history is the
+        // manifest chain, so `previous` is not tracked on the entry.
+        let root_entry = Entry::dir_versioned(root_link.clone(), root_ratchet, None);
         let root = blobs.get_metadata(&root_entry).await?;
         let ops_log = OpsLog::with_clock(ops_clock);
         Ok(Fs(
@@ -369,12 +371,9 @@ impl<B: BlobStore> Fs<B> {
 
         // Key schedule (identity rides inside it). A rewrite is the SAME
         // entity at its next revision: advance its ratchet, chain the
-        // prior link. A create seeds a fresh entity. (A prior file
-        // without a ratchet can't occur — only the root is un-ratcheted
-        // — so that arm is defensive only.)
+        // prior link. A create seeds a fresh entity.
         let (ratchet, previous) = match &prior {
-            Some((old_link, Some(r))) => (r.advanced(), Some(old_link.clone())),
-            Some((old_link, None)) => (EntryRatchet::seed(), Some(old_link.clone())),
+            Some((old_link, r)) => (r.advanced(), Some(old_link.clone())),
             None => (EntryRatchet::seed(), None),
         };
         let prior_file_hash = prior.as_ref().map(|(l, _)| l.hash());
@@ -391,7 +390,7 @@ impl<B: BlobStore> Fs<B> {
             link.clone(),
             ratchet.clone(),
             previous.clone(),
-            Some(plaintext_hash),
+            plaintext_hash,
         )
         .await?;
 
@@ -412,7 +411,7 @@ impl<B: BlobStore> Fs<B> {
                 OpKind::AddFile {
                     path: path.clone(),
                     content: link,
-                    plaintext_hash: Some(plaintext_hash),
+                    plaintext_hash,
                     ratchet,
                     previous: previous.map(Box::new),
                 },
@@ -433,7 +432,7 @@ impl<B: BlobStore> Fs<B> {
         link: Link,
         ratchet: EntryRatchet,
         previous: Option<Link>,
-        plaintext_hash: Option<crate::linked_data::Hash>,
+        plaintext_hash: crate::linked_data::Hash,
     ) -> Result<(), FsError> {
         let entry = Entry::file_at_path(link.clone(), ratchet, previous, path, plaintext_hash);
         let new_root = self.set_entry_at_path(entry, path).await?;
@@ -460,7 +459,7 @@ impl<B: BlobStore> Fs<B> {
         let id = self
             .get_entry_at_path(path)
             .await?
-            .and_then(|e| e.id())
+            .map(|e| e.id())
             .ok_or_else(|| FsError::PathNotFound(path.clone()))?;
         let is_dir = self.rm_tree(path).await?;
         let mut inner = self.0.lock().await;
@@ -605,7 +604,7 @@ impl<B: BlobStore> Fs<B> {
         let id = self
             .get_entry_at_path(to)
             .await?
-            .and_then(|e| e.id())
+            .map(|e| e.id())
             .ok_or_else(|| {
                 FsError::CannotMutate(to.clone(), "moved entity has no identity".into())
             })?;
@@ -858,9 +857,7 @@ impl<B: BlobStore> Fs<B> {
                 Some(r) => (r, None),
                 None => match self.get_entry_at_path(path).await? {
                     Some(Entry::Dir {
-                        link,
-                        ratchet: Some(r),
-                        ..
+                        link, ratchet: r, ..
                     }) => (r.advanced(), Some(link)),
                     _ => (EntryRatchet::seed(), None),
                 },
@@ -986,9 +983,7 @@ impl<B: BlobStore> Fs<B> {
                 // ratchet and chain its link. Synthetic ancestors seed.
                 let (ratchet, previous) = match &old_entry {
                     Some(Entry::Dir {
-                        link,
-                        ratchet: Some(r),
-                        ..
+                        link, ratchet: r, ..
                     }) => (r.advanced(), Some(link.clone())),
                     _ => (EntryRatchet::seed(), None),
                 };

@@ -45,8 +45,6 @@ pub enum Entry {
     File {
         /// Content-addressed pointer to the encrypted file bytes.
         link: Link,
-        /// Per-file encryption secret.
-        secret: Secret,
         /// Optional MIME type, typically inferred from a filename via
         /// [`Entry::file_from_path`].
         mime: MaybeMime,
@@ -56,19 +54,13 @@ pub enum Entry {
         /// vault key can recompute this off any candidate plaintext
         /// to decide "did this file change?" without fetching or
         /// decrypting the ciphertext blob — the load-bearing
-        /// optimisation for sync diffing. `None` on entries written
-        /// before this field existed, or on synthetic constructions
-        /// (tests, defaults).
-        #[serde(default)]
-        plaintext_hash: Option<Hash>,
-        /// This revision's key schedule; `secret` is derived from it
-        /// (`secret == ratchet.key()`). `None` only for the share-
-        /// governed root.
-        #[serde(default)]
-        ratchet: Option<EntryRatchet>,
+        /// optimisation for sync diffing.
+        plaintext_hash: Hash,
+        /// This revision's key schedule. The content key is derived from
+        /// it (`ratchet.key()`); so is the entity's identity.
+        ratchet: EntryRatchet,
         /// Prior version of THIS entity (its previous `link`), so one
-        /// file's history is an O(1) walk. `None` at creation.
-        #[serde(default)]
+        /// file's history is an O(1) walk. `None` means revision 0.
         previous: Option<Link>,
     },
     /// A subdirectory entry. The link points at an encrypted [`Dir`] body
@@ -76,13 +68,10 @@ pub enum Entry {
     Dir {
         /// Content-addressed pointer to the encrypted [`Dir`] body.
         link: Link,
-        /// Per-dir encryption secret (rotated when the dir is rewritten).
-        secret: Secret,
-        /// See [`Entry::File::ratchet`]. `None` only for the root.
-        #[serde(default)]
-        ratchet: Option<EntryRatchet>,
+        /// See [`Entry::File::ratchet`]. The root carries the vault's root
+        /// ratchet like any other directory.
+        ratchet: EntryRatchet,
         /// See [`Entry::File::previous`].
-        #[serde(default)]
         previous: Option<Link>,
     },
 }
@@ -93,7 +82,7 @@ impl Entry {
     /// default to `None`. Tests and synthetic fixtures; production uses
     /// [`Self::file_at_path`].
     pub fn file(link: Link, ratchet: EntryRatchet) -> Self {
-        Self::file_at_path(link, ratchet, None, Path::new(""), None)
+        Self::file_at_path(link, ratchet, None, Path::new(""), Hash::new(b""))
     }
 
     /// Production file constructor. `secret` is derived from `ratchet`
@@ -106,15 +95,14 @@ impl Entry {
         ratchet: EntryRatchet,
         previous: Option<Link>,
         path: &Path,
-        plaintext_hash: Option<Hash>,
+        plaintext_hash: Hash,
     ) -> Self {
         Entry::File {
             link,
-            secret: ratchet.key(),
             mime: MaybeMime::from_path(path),
             metadata: None,
             plaintext_hash,
-            ratchet: Some(ratchet),
+            ratchet,
             previous,
         }
     }
@@ -129,23 +117,8 @@ impl Entry {
     pub fn dir_versioned(link: Link, ratchet: EntryRatchet, previous: Option<Link>) -> Self {
         Entry::Dir {
             link,
-            secret: ratchet.key(),
-            ratchet: Some(ratchet),
+            ratchet,
             previous,
-        }
-    }
-
-    /// The ROOT directory entry. The root is not ratcheted in this
-    /// version: its key is the share-governed vault secret, minted fresh
-    /// per save and sealed to shareholders, and its identity is the
-    /// vault id. So `id`/`ratchet`/`previous` are `None` here, and only
-    /// here.
-    pub fn root_dir(link: Link, secret: Secret) -> Self {
-        Entry::Dir {
-            link,
-            secret,
-            ratchet: None,
-            previous: None,
         }
     }
 
@@ -157,23 +130,20 @@ impl Entry {
         }
     }
 
-    /// The per-entry secret used to encrypt the addressed bytes.
-    pub fn secret(&self) -> &Secret {
-        match self {
-            Entry::File { secret, .. } => secret,
-            Entry::Dir { secret, .. } => secret,
-        }
+    /// The content key for this revision, derived from the ratchet.
+    pub fn secret(&self) -> Secret {
+        self.ratchet().key()
     }
 
     /// Stable entity identity; `None` only for the root.
-    pub fn id(&self) -> Option<EntryId> {
-        self.ratchet().map(EntryRatchet::id)
+    pub fn id(&self) -> EntryId {
+        self.ratchet().id()
     }
 
-    /// This revision's key schedule; `None` only for the root.
-    pub fn ratchet(&self) -> Option<&EntryRatchet> {
+    /// This revision's key schedule.
+    pub fn ratchet(&self) -> &EntryRatchet {
         match self {
-            Entry::File { ratchet, .. } | Entry::Dir { ratchet, .. } => ratchet.as_ref(),
+            Entry::File { ratchet, .. } | Entry::Dir { ratchet, .. } => ratchet,
         }
     }
 
@@ -203,11 +173,10 @@ impl Entry {
     }
 
     /// `blake3(plaintext)` of this file's body, when known. `None` for
-    /// directories and for legacy file entries written before the
-    /// field existed.
+    /// directories.
     pub fn plaintext_hash(&self) -> Option<Hash> {
         match self {
-            Entry::File { plaintext_hash, .. } => *plaintext_hash,
+            Entry::File { plaintext_hash, .. } => Some(*plaintext_hash),
             Entry::Dir { .. } => None,
         }
     }
@@ -309,7 +278,7 @@ mod test {
             EntryRatchet::seed(),
             None,
             &PathBuf::from("/test/file.json"),
-            None,
+            Hash::new(b""),
         );
         assert_eq!(entry.mime().map(|m| m.as_ref()), Some("application/json"));
         assert!(entry.is_file());

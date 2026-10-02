@@ -23,7 +23,7 @@ use bytes::Bytes;
 
 use crate::blobs::{BlobError, BlobStore};
 use crate::linked_data::Hash;
-use zim_crypto::{PrivateKey, Secret};
+use zim_crypto::{EntryRatchet, PrivateKey};
 
 use super::abs_path::AbsPath;
 use super::fs_inner::Fs;
@@ -67,8 +67,8 @@ impl BlobStore for MemBlobs {
 async fn setup() -> (Fs<MemBlobs>, PrivateKey) {
     let blobs = MemBlobs::default();
     let owner = PrivateKey::generate();
-    let secret = Secret::generate();
-    let (fs, _root_link) = Fs::init_tree(owner.public(), &secret, blobs)
+    let root = EntryRatchet::seed();
+    let (fs, _root_link) = Fs::init_tree(owner.public(), &root, blobs)
         .await
         .expect("init_tree");
     (fs, owner)
@@ -192,14 +192,13 @@ async fn rewriting_a_file_keeps_its_identity_and_advances_its_key() {
     let v2 = fs.get_entry_at_path(&path).await.unwrap().unwrap();
 
     // Same entity…
-    assert!(v1.id().is_some(), "a file entry carries an identity");
     assert_eq!(v1.id(), v2.id(), "a rewrite keeps the entity id");
     // …next revision: the ratchet advanced, so the key and link moved on…
     assert_ne!(v1.secret(), v2.secret(), "the content key ratchets forward");
     assert_ne!(v1.link(), v2.link());
     assert_eq!(
-        v1.ratchet().unwrap().advanced(),
-        *v2.ratchet().unwrap(),
+        v1.ratchet().advanced(),
+        *v2.ratchet(),
         "v2's ratchet is exactly v1's advanced once"
     );
     // …and history chains: v2 points back at v1.
@@ -235,7 +234,6 @@ async fn a_directory_has_an_identity_and_advances_when_its_contents_change() {
     fs.mkdir(&docs, false).await.unwrap();
     let d1 = fs.get_entry_at_path(&docs).await.unwrap().unwrap();
     assert!(d1.is_dir());
-    assert!(d1.id().is_some(), "a directory entry carries an identity");
 
     fs.add(&AbsPath::new("/docs/a.md").unwrap(), Cursor::new(b"inside"))
         .await
@@ -244,7 +242,7 @@ async fn a_directory_has_an_identity_and_advances_when_its_contents_change() {
 
     assert_eq!(d1.id(), d2.id(), "the folder is the same entity");
     assert_ne!(d1.secret(), d2.secret(), "its key ratcheted on rewrite");
-    assert_eq!(d1.ratchet().unwrap().advanced(), *d2.ratchet().unwrap());
+    assert_eq!(d1.ratchet().advanced(), *d2.ratchet());
     assert_eq!(d2.previous(), Some(d1.link()));
 }
 
@@ -296,9 +294,13 @@ async fn replaying_ops_rebuilds_the_writers_exact_entities() {
 /// stand-in for the fs-level test (only entries are being exercised).
 async fn peer_sharing_blobs_of(alice: &Fs<MemBlobs>) -> Fs<MemBlobs> {
     let blobs = alice.blobs().inner().clone();
-    let (fs, _) = Fs::init_tree(PrivateKey::generate().public(), &Secret::generate(), blobs)
-        .await
-        .unwrap();
+    let (fs, _) = Fs::init_tree(
+        PrivateKey::generate().public(),
+        &EntryRatchet::seed(),
+        blobs,
+    )
+    .await
+    .unwrap();
     fs
 }
 
@@ -309,13 +311,7 @@ async fn shared_file(alice: &Fs<MemBlobs>, bob: &Fs<MemBlobs>) -> zim_crypto::En
     alice.add(&a, Cursor::new(b"v1")).await.unwrap();
     let ops = alice.inner().await.ops_log.clone();
     bob.apply_ops(&ops).await.unwrap();
-    alice
-        .get_entry_at_path(&a)
-        .await
-        .unwrap()
-        .unwrap()
-        .id()
-        .unwrap()
+    alice.get_entry_at_path(&a).await.unwrap().unwrap().id()
 }
 
 /// Exchange full logs the way `chain::merge` does: each side replays
@@ -348,7 +344,7 @@ async fn assert_edit_followed_rename(
         .await
         .unwrap()
         .expect("renamed file present");
-    assert_eq!(e.id(), Some(id), "{who}: same entity at the new path");
+    assert_eq!(e.id(), id, "{who}: same entity at the new path");
     assert_eq!(
         fs.cat(&new).await.unwrap(),
         b"v2 edited",

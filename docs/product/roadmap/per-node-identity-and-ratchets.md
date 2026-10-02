@@ -168,11 +168,14 @@ design above:
   stored seed. *Not* the creation `OpId` — that would need pre-minting
   before the mutation that records the op; provenance stays recoverable
   from the log.
-- **`Entry` gains `ratchet` and `previous`** (`id()` derives from the
-  ratchet; the root has neither and its identity is the vault id).
-  `secret` is kept as the *cached* derived key with the invariant `secret == ratchet.key()`,
-  enforced by the constructors (`file_at_path`, `dir_versioned`). This
-  left the ~74 read sites that take `&Secret` untouched.
+- **`Entry` is `{ link, ratchet, previous, … }` — no stored key, nothing
+  optional for identity or keys.** `secret()` *derives* the content key
+  from the ratchet by value; `id()` derives identity. `ratchet` is
+  required on every entry, the root included (it carries the vault's
+  root ratchet — `Entry::root_dir` is gone); `plaintext_hash` is
+  required too. `previous: Option<Link>` remains optional for a
+  *semantic* reason: revision 0 has no predecessor. No `#[serde(default)]`
+  hedges for data that no longer exists.
 - **The writer ships the ratchet — and only the ratchet.** `AddFile`
   carries `ratchet` + `previous`, `Mkdir` carries `ratchet`; the op's
   old `secret` field is gone (derivable) and there is no `id` field

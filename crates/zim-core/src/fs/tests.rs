@@ -281,3 +281,135 @@ async fn replaying_ops_rebuilds_the_writers_exact_entities() {
     let b_docs = bob.get_entry_at_path(&docs).await.unwrap().unwrap();
     assert_eq!(a_docs.id(), b_docs.id(), "directory identity ships too");
 }
+
+// ── Rename-aware merge: an edit follows a concurrent rename ──────────────
+//
+// Alice edits /a.md while Bob renames it. Ops name ENTITIES, so on
+// merge Alice's edit must land on the entity's new path — never
+// resurrect the old name. The Lamport tie-break between the two
+// concurrent ops is decided by peer key, so each test forces one
+// ordering by advancing one side's clock first; together they cover
+// both replay paths (redirect-then-apply, and apply-then-move-along).
+
+/// A second peer sharing `alice`'s blob store — content-addressed
+/// blobs sync between real peers, so a shared store is the faithful
+/// stand-in for the fs-level test (only entries are being exercised).
+async fn peer_sharing_blobs_of(alice: &Fs<MemBlobs>) -> Fs<MemBlobs> {
+    let blobs = alice.blobs().inner().clone();
+    let (fs, _) = Fs::init_tree(PrivateKey::generate().public(), &Secret::generate(), blobs)
+        .await
+        .unwrap();
+    fs
+}
+
+/// Both sides start from the same tree: Alice creates /a.md, Bob
+/// replays it. Returns the entity id.
+async fn shared_file(alice: &Fs<MemBlobs>, bob: &Fs<MemBlobs>) -> zim_crypto::EntryId {
+    let a = AbsPath::new("/a.md").unwrap();
+    alice.add(&a, Cursor::new(b"v1")).await.unwrap();
+    let ops = alice.inner().await.ops_log.clone();
+    bob.apply_ops(&ops).await.unwrap();
+    alice
+        .get_entry_at_path(&a)
+        .await
+        .unwrap()
+        .unwrap()
+        .id()
+        .unwrap()
+}
+
+/// Exchange full logs the way `chain::merge` does: each side replays
+/// the merged window (its own ops ∪ the other's).
+async fn exchange(alice: &Fs<MemBlobs>, bob: &Fs<MemBlobs>) {
+    let a_log = alice.inner().await.ops_log.clone();
+    let b_log = bob.inner().await.ops_log.clone();
+    let mut for_bob = b_log.clone();
+    for_bob.merge(&a_log);
+    let mut for_alice = a_log;
+    for_alice.merge(&b_log);
+    bob.apply_ops(&for_bob).await.unwrap();
+    alice.apply_ops(&for_alice).await.unwrap();
+}
+
+async fn assert_edit_followed_rename(
+    fs: &Fs<MemBlobs>,
+    who: &str,
+    to: &str,
+    id: zim_crypto::EntryId,
+) {
+    let old = AbsPath::new("/a.md").unwrap();
+    let new = AbsPath::new(to).unwrap();
+    assert!(
+        fs.get_entry_at_path(&old).await.unwrap().is_none(),
+        "{who}: the old name must not be resurrected"
+    );
+    let e = fs
+        .get_entry_at_path(&new)
+        .await
+        .unwrap()
+        .expect("renamed file present");
+    assert_eq!(e.id(), Some(id), "{who}: same entity at the new path");
+    assert_eq!(
+        fs.cat(&new).await.unwrap(),
+        b"v2 edited",
+        "{who}: carries the edit"
+    );
+}
+
+#[tokio::test]
+async fn an_edit_follows_a_concurrent_rename_when_the_rename_replays_first() {
+    let (alice, _) = setup().await;
+    let bob = peer_sharing_blobs_of(&alice).await;
+    let id = shared_file(&alice, &bob).await;
+
+    // Bob renames to a name that sorts BEFORE /a.md — the ordering that
+    // broke under per-path replay. Alice bumps her clock first so her
+    // edit carries the later OpId: the rename replays first, and the
+    // edit must be redirected onto /0.md.
+    alice
+        .mkdir(&AbsPath::new("/scratch").unwrap(), false)
+        .await
+        .unwrap();
+    alice
+        .add(&AbsPath::new("/a.md").unwrap(), Cursor::new(b"v2 edited"))
+        .await
+        .unwrap();
+    bob.mv(
+        &AbsPath::new("/a.md").unwrap(),
+        &AbsPath::new("/0.md").unwrap(),
+    )
+    .await
+    .unwrap();
+
+    exchange(&alice, &bob).await;
+    assert_edit_followed_rename(&alice, "alice", "/0.md", id).await;
+    assert_edit_followed_rename(&bob, "bob", "/0.md", id).await;
+}
+
+#[tokio::test]
+async fn an_edit_follows_a_concurrent_rename_when_the_edit_replays_first() {
+    let (alice, _) = setup().await;
+    let bob = peer_sharing_blobs_of(&alice).await;
+    let id = shared_file(&alice, &bob).await;
+
+    // Bob bumps his clock first so the RENAME carries the later OpId:
+    // the edit replays first (at /a.md), then the rename must carry the
+    // edited content along to /0.md.
+    bob.mkdir(&AbsPath::new("/scratch").unwrap(), false)
+        .await
+        .unwrap();
+    bob.mv(
+        &AbsPath::new("/a.md").unwrap(),
+        &AbsPath::new("/0.md").unwrap(),
+    )
+    .await
+    .unwrap();
+    alice
+        .add(&AbsPath::new("/a.md").unwrap(), Cursor::new(b"v2 edited"))
+        .await
+        .unwrap();
+
+    exchange(&alice, &bob).await;
+    assert_edit_followed_rename(&alice, "alice", "/0.md", id).await;
+    assert_edit_followed_rename(&bob, "bob", "/0.md", id).await;
+}

@@ -219,9 +219,24 @@ design above:
     `root_secret_for`. The ops-log key is the root key.
   - `SecretShare` (32-byte key sealing) is untouched; the hub and the
     browser envelope still use it for non-root purposes.
-- **Not in v1:** rename-aware merge. The CRDT conflict check is still
-  path-keyed; making it `id`-aware is the follow-up this identity
-  substrate enables, and it needs its own fork-loop validation.
+- **Rename-aware merge is in.** `Mv` and `Remove` ops carry the moved /
+  removed entity's `EntryId` (required — every mv/rm target has one; the
+  root refuses both). `Fs::apply_ops` replays the merge window in
+  **causal (OpId) order** with an entity → current-path tracker, instead
+  of latest-op-per-path iterated in filename sort order. So an `AddFile`
+  recorded against a path a concurrent rename vacated is redirected to
+  the entity's current path: **an edit follows a rename** rather than
+  resurrecting the old name. (Previously the outcome depended on
+  whether the new name sorted before or after the old one — silent.)
+  Precondition, as `chain::merge` already guarantees: `apply_ops` gets
+  the full window, local ops included, since the redirect tracks moves
+  across the ops it replays. Tested for both tie-break orderings.
+  Known conservative corner: the resolver's conflict check is still
+  path-keyed, so two *different* entities colliding on a path after a
+  rename can still produce a sidecar — never data loss.
+- **Ops carry no `Option`s for identity or key material.** `AddFile` /
+  `Mkdir` require the ratchet, `Mv` / `Remove` require the id. "Legacy
+  ops" don't exist; the model doesn't pretend they might.
 - **Verified:** `make check` green in both CI variants (fuse / no-fuse,
   rustc 1.99); `make e2e` PASS end-to-end — convergence, isolation,
   concurrent forks, FUSE across nodes, restart durability.

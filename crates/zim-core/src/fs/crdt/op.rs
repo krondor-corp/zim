@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::fs::AbsPath;
 use crate::linked_data::Link;
-use zim_crypto::{EntryRatchet, PublicKey};
+use zim_crypto::{EntryId, EntryRatchet, PublicKey};
 
 /// A causal-order identifier. Total order across all peers: Lamport
 /// `timestamp` primary, `peer_id` lexicographic secondary. Two `OpId`s
@@ -84,9 +84,8 @@ pub enum OpKind {
         plaintext_hash: Option<Hash>,
         /// The writer's ratchet state for this revision — derives the
         /// content key and the entity id. Ships so peers never advance
-        /// independently. `None` only on pre-ratchet ops (unreplayable).
-        #[serde(default)]
-        ratchet: Option<EntryRatchet>,
+        /// independently.
+        ratchet: EntryRatchet,
         /// Prior version of this entity (`Some(old link)` on a rewrite).
         /// Boxed to keep this variant within clippy's size budget
         /// relative to `Mkdir`/`Remove`/`Mv`; `Link` is ~96 bytes.
@@ -98,10 +97,8 @@ pub enum OpKind {
         /// Path to create.
         path: AbsPath,
         /// The new directory's ratchet (identity + key schedule) — shipped
-        /// so a replaying peer builds the same dir entity. `None` on
-        /// legacy ops (the peer seeds its own).
-        #[serde(default)]
-        ratchet: Option<EntryRatchet>,
+        /// so a replaying peer builds the same dir entity.
+        ratchet: EntryRatchet,
     },
     /// Remove a path. `is_dir` distinguishes file vs directory removal
     /// at replay time without re-reading the tree.
@@ -110,6 +107,9 @@ pub enum OpKind {
         path: AbsPath,
         /// `true` when the removed entry was a directory.
         is_dir: bool,
+        /// The removed entity, so replay can find it if a concurrent
+        /// rename moved it.
+        id: EntryId,
     },
     /// Move/rename a path. `from` disappears; `to` comes into existence.
     Mv {
@@ -117,6 +117,12 @@ pub enum OpKind {
         from: AbsPath,
         /// Destination path.
         to: AbsPath,
+        /// The moved entity. Replay tracks where each entity currently
+        /// is, so an `AddFile` written against the OLD path by a peer
+        /// that hadn't seen this move lands on the entity's new path —
+        /// an edit follows a concurrent rename instead of resurrecting
+        /// the old name.
+        id: EntryId,
     },
 }
 

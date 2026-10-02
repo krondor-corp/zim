@@ -335,7 +335,7 @@ mod fork_tests {
                 path: AbsPath::new(path).unwrap(),
                 content: Link::new(LD_RAW_CODEC, Hash::new(body)),
                 plaintext_hash: None,
-                ratchet: Some(ratchet),
+                ratchet,
                 previous: None,
             },
         }
@@ -362,10 +362,7 @@ mod fork_tests {
         let winner = log
             .resolve_path(&AbsPath::new("/notes.md").unwrap())
             .expect("winner at the original path");
-        let OpKind::AddFile {
-            ratchet: Some(wr), ..
-        } = &winner.kind
-        else {
+        let OpKind::AddFile { ratchet: wr, .. } = &winner.kind else {
             panic!("winner is an AddFile");
         };
         assert_eq!(wr.id(), bob_r.id(), "Bob's entity owns the path");
@@ -379,10 +376,7 @@ mod fork_tests {
                 p.to_string_lossy().starts_with("/notes.md@")
             })
             .expect("sidecar op");
-        let OpKind::AddFile {
-            ratchet: Some(sr), ..
-        } = &sidecar.kind
-        else {
+        let OpKind::AddFile { ratchet: sr, .. } = &sidecar.kind else {
             panic!("sidecar is an AddFile");
         };
         assert_eq!(

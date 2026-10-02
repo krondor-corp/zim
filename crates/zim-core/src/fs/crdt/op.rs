@@ -78,10 +78,8 @@ pub enum OpKind {
         /// `blake3(plaintext)` of the body — carried through the log so
         /// replays on remote peers reconstruct
         /// [`Entry::File`](crate::fs::Entry::File) with the same hash
-        /// the writer computed. `None` on ops written before this
-        /// field existed.
-        #[serde(default)]
-        plaintext_hash: Option<Hash>,
+        /// the writer computed.
+        plaintext_hash: Hash,
         /// The writer's ratchet state for this revision — derives the
         /// content key and the entity id. Ships so peers never advance
         /// independently.

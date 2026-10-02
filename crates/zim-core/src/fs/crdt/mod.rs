@@ -334,7 +334,7 @@ mod fork_tests {
             kind: OpKind::AddFile {
                 path: AbsPath::new(path).unwrap(),
                 content: Link::new(LD_RAW_CODEC, Hash::new(body)),
-                plaintext_hash: None,
+                plaintext_hash: Hash::new(body),
                 ratchet,
                 previous: None,
             },

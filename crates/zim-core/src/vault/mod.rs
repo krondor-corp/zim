@@ -101,10 +101,9 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
         log: L,
     ) -> Result<Self, VaultError<L::Error>> {
         let root_ratchet = EntryRatchet::seed();
-        let secret = root_ratchet.key();
         let owner_pubkey = owner.public();
 
-        let (fs, root_link) = Fs::init_tree(owner_pubkey, &secret, blobs).await?;
+        let (fs, root_link) = Fs::init_tree(owner_pubkey, &root_ratchet, blobs).await?;
 
         // Owner share + genesis manifest, then seal the same secret to
         // each additional device so they're shareholders from genesis.
@@ -200,11 +199,10 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
 
         let owner_pubkey = secret_key.public();
         let root_ratchet = manifest.root_ratchet_for(secret_key)?;
-        let secret = root_ratchet.key();
 
         let fs = Fs::load_tree(
             manifest.root(),
-            secret,
+            root_ratchet.clone(),
             manifest.metadata().clone(),
             manifest.pins().clone(),
             manifest.ops_clock(),
@@ -292,14 +290,13 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
     /// log.
     pub async fn save(&mut self) -> Result<Link, VaultError<L::Error>> {
         self.root_ratchet = self.root_ratchet.advanced();
-        let new_secret = self.root_ratchet.key();
         let previous_link = self.manifest_link.clone();
         let new_height = self.manifest.height() + 1;
         let prior_root_hash = self.manifest.root().hash();
 
         let tree = self
             .fs
-            .save_tree(prior_root_hash, new_secret.clone())
+            .save_tree(prior_root_hash, &self.root_ratchet)
             .await?;
 
         // Shares hold the root ratchet STATE and derive each new key
@@ -367,11 +364,10 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
         let owner_pubkey = self.private_key.public();
         let root_ratchet = manifest.root_ratchet_for(&self.private_key)?;
         self.root_ratchet = root_ratchet.clone();
-        let secret = root_ratchet.key();
 
         self.fs = Fs::load_tree(
             manifest.root(),
-            secret,
+            root_ratchet.clone(),
             manifest.metadata().clone(),
             manifest.pins().clone(),
             manifest.ops_clock(),

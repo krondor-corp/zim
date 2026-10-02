@@ -176,7 +176,7 @@ impl<B: BlobStore> ContentStore<B> {
     /// [`Entry::File`].
     pub async fn get_metadata(&self, entry: &Entry) -> Result<Dir, ContentError> {
         let (link, secret) = match entry {
-            Entry::Dir { link, secret, .. } => (link, secret),
+            Entry::Dir { link, ratchet, .. } => (link, ratchet.key()),
             Entry::File { .. } => {
                 return Err(ContentError::WrongVariant {
                     expected: "Entry::Dir",
@@ -247,7 +247,7 @@ impl<B: BlobStore> ContentStore<B> {
     /// streaming `get`); decryption is genuinely streaming on top.
     pub async fn get_file(&self, entry: &Entry) -> Result<Box<dyn Read + Send>, ContentError> {
         let (link, secret) = match entry {
-            Entry::File { link, secret, .. } => (link, secret),
+            Entry::File { link, ratchet, .. } => (link, ratchet.key()),
             Entry::Dir { .. } => {
                 return Err(ContentError::WrongVariant {
                     expected: "Entry::File",

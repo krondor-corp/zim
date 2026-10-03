@@ -58,6 +58,11 @@ pub struct Op {
 /// needs — no optional fields, no ambiguous `path` that means different
 /// things per variant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// `AddFile` legitimately carries two content links (the blob and the
+// entity's previous revision) plus a ratchet — ~290 bytes against ~80
+// for the other variants. That is the data, not a smell; ops live in
+// small merge windows, so the per-op size difference is noise.
+#[allow(clippy::large_enum_variant)]
 pub enum OpKind {
     /// Add a file at `path`. The op is self-contained — `content`
     /// addresses the encrypted blob in the shared inner store and
@@ -86,10 +91,8 @@ pub enum OpKind {
         ratchet: EntryRatchet,
         /// Prior version of this entity on a rewrite; `Link::default()`
         /// at creation — the same null-link sentinel `Entry::previous`
-        /// and `Manifest::previous` use. Boxed only so this variant (two
-        /// `Link`s) stays within clippy's enum-size budget — a pointer,
-        /// not a semantic difference.
-        previous: Box<Link>,
+        /// and `Manifest::previous` use.
+        previous: Link,
     },
     /// Create a directory at `path` (idempotent at apply time).
     Mkdir {

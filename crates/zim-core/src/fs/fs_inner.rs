@@ -413,7 +413,7 @@ impl<B: BlobStore> Fs<B> {
                     content: link,
                     plaintext_hash,
                     ratchet,
-                    previous: previous.map(Box::new),
+                    previous: Box::new(previous.unwrap_or_default()),
                 },
             );
         }
@@ -1088,7 +1088,7 @@ impl<B: BlobStore> Fs<B> {
                         &target,
                         content.clone(),
                         ratchet.clone(),
-                        previous.as_deref().cloned(),
+                        (**previous != Link::default()).then(|| (**previous).clone()),
                         *plaintext_hash,
                     )
                     .await?;

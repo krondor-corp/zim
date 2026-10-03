@@ -336,7 +336,7 @@ mod fork_tests {
                 content: Link::new(LD_RAW_CODEC, Hash::new(body)),
                 plaintext_hash: Hash::new(body),
                 ratchet,
-                previous: None,
+                previous: Box::new(Link::default()),
             },
         }
     }

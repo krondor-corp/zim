@@ -84,11 +84,12 @@ pub enum OpKind {
         /// content key and the entity id. Ships so peers never advance
         /// independently.
         ratchet: EntryRatchet,
-        /// Prior version of this entity (`Some(old link)` on a rewrite).
-        /// Boxed to keep this variant within clippy's size budget
-        /// relative to `Mkdir`/`Remove`/`Mv`; `Link` is ~96 bytes.
-        #[serde(default)]
-        previous: Option<Box<Link>>,
+        /// Prior version of this entity on a rewrite; `Link::default()`
+        /// at creation — the same null-link sentinel `Entry::previous`
+        /// and `Manifest::previous` use. Boxed only so this variant (two
+        /// `Link`s) stays within clippy's enum-size budget — a pointer,
+        /// not a semantic difference.
+        previous: Box<Link>,
     },
     /// Create a directory at `path` (idempotent at apply time).
     Mkdir {

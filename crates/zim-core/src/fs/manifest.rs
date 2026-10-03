@@ -30,7 +30,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::linked_data::{BlockEncoded, CodecError, Link};
-use zim_crypto::{PrivateKey, PublicKey, SecretShare, Signature};
+use zim_crypto::{EntryRatchet, PrivateKey, PublicKey, RatchetShare, Secret, Signature};
 use zim_did::Did;
 
 use super::content_store::Metadata;
@@ -166,7 +166,7 @@ impl Manifest {
     pub fn new(
         name: String,
         secret_key: &PrivateKey,
-        share: SecretShare,
+        share: RatchetShare,
         root: Link,
         height: u64,
     ) -> Result<Self, ManifestError> {
@@ -178,7 +178,7 @@ impl Manifest {
             name,
             shares: {
                 let mut s = Shares::new();
-                s.insert(owner, Share::new(share, Did::from_key(&owner), None));
+                s.insert(owner, Share::new(Some(share), Did::from_key(&owner), None));
                 s
             },
             root,
@@ -250,6 +250,32 @@ impl Manifest {
         &mut self.shares
     }
 
+    /// The root ratchet state as of THIS manifest's height, for `key`'s
+    /// shareholder: recover the sealed state and bring it forward by
+    /// `height - sealed_at`. `ShareNotFound` if `key` has no share, or its
+    /// share is still pending (granted but not yet sealed by a save).
+    pub fn root_ratchet_for(&self, key: &PrivateKey) -> Result<EntryRatchet, crate::fs::FsError> {
+        use crate::fs::FsError;
+
+        let share = self
+            .get_share(&key.public())
+            .ok_or(FsError::ShareNotFound)?;
+
+        let sealed = share.ratchet_share().ok_or(FsError::ShareNotFound)?;
+
+        let state = sealed
+            .recover(key)
+            .map_err(|e| FsError::Backing(e.into()))?;
+
+        Ok(state.advanced_by(self.height().saturating_sub(sealed.sealed_at())))
+    }
+
+    /// The root content key (root dir body + ops log) at this height for
+    /// `key`'s shareholder.
+    pub fn root_secret_for(&self, key: &PrivateKey) -> Result<Secret, crate::fs::FsError> {
+        Ok(self.root_ratchet_for(key)?.key())
+    }
+
     pub fn get_share(&self, public_key: &PublicKey) -> Option<&Share> {
         self.shares.get(public_key)
     }
@@ -296,7 +322,7 @@ impl Manifest {
 
     /// Insert a share keyed by `pubkey`. The caller resolves the
     /// share recipient's identity to a concrete pubkey (the share's
-    /// SecretShare is encrypted to it); we don't reach back into
+    /// RatchetShare is sealed to it); we don't reach back into
     /// `share.identity()` for that — `did:web` shares wouldn't
     /// carry one and this method has no business doing DID
     /// resolution.
@@ -373,7 +399,7 @@ mod tests {
         Manifest::new(
             "test-vault".to_string(),
             secret_key,
-            SecretShare::default(),
+            RatchetShare::new(&EntryRatchet::seed(), &secret_key.public(), 0).unwrap(),
             Link::default(),
             0,
         )
@@ -386,7 +412,7 @@ mod tests {
         use serde_ipld_dagcbor::codec::DagCborCodec;
 
         let public_key = zim_crypto::PrivateKey::generate().public();
-        let share = Share::new(SecretShare::default(), Did::from_key(&public_key), None);
+        let share = Share::new(None, Did::from_key(&public_key), None);
 
         let encoded = DagCborCodec::encode_to_vec(&share).unwrap();
         let decoded: Share = DagCborCodec::decode_from_slice(&encoded).unwrap();

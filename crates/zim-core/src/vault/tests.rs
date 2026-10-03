@@ -331,3 +331,179 @@ async fn refresh_fast_forwards_a_stale_handle() {
     browser.save().await.expect("browser save after refresh");
     assert_eq!(browser.height(), 2);
 }
+
+// ── Root ratchet + share lifecycle ───────────────────────────────────────
+
+#[tokio::test]
+async fn saves_advance_the_root_without_reminting_shares() {
+    // Alice saves twice. The root key moves each time, but her share —
+    // the sealed ratchet STATE — is untouched: she derives the new keys.
+    let blobs = MemBlobs::default();
+    let log = MemLog::default();
+    let alice = PrivateKey::generate();
+    let mut vault = Vault::init("r".to_string(), &alice, blobs.clone(), log.clone())
+        .await
+        .expect("init");
+    let id = vault.id();
+    let share_at_genesis = vault
+        .manifest()
+        .get_share(&alice.public())
+        .unwrap()
+        .ratchet_share()
+        .cloned()
+        .expect("owner share sealed at genesis");
+    assert_eq!(share_at_genesis.sealed_at(), 0);
+
+    for (i, body) in [&b"one"[..], &b"two"[..]].iter().enumerate() {
+        vault
+            .fs()
+            .add(&AbsPath::new("/n.md").unwrap(), Cursor::new(*body))
+            .await
+            .unwrap();
+        vault.save().await.expect("save");
+        assert_eq!(vault.height(), i as u64 + 1);
+        let share_now = vault
+            .manifest()
+            .get_share(&alice.public())
+            .unwrap()
+            .ratchet_share()
+            .cloned()
+            .unwrap();
+        assert_eq!(
+            share_now,
+            share_at_genesis,
+            "save {} did not re-mint",
+            i + 1
+        );
+    }
+
+    // Reopening derives the current root key from the genesis-sealed state.
+    let reopened = Vault::open(id, blobs, log, &alice).await.expect("open");
+    assert_eq!(reopened.height(), 2);
+    assert_eq!(
+        reopened
+            .fs()
+            .cat(&AbsPath::new("/n.md").unwrap())
+            .await
+            .unwrap(),
+        b"two"
+    );
+}
+
+#[tokio::test]
+async fn a_newcomer_is_sealed_at_their_grant_and_reads_from_there() {
+    // Alice writes, saves, then grants Bob. Bob's share is sealed at the
+    // height of the save that granted him, and he reads that version.
+    let blobs = MemBlobs::default();
+    let log = MemLog::default();
+    let alice = PrivateKey::generate();
+    let bob = PrivateKey::generate();
+    let mut vault = Vault::init("g".to_string(), &alice, blobs.clone(), log.clone())
+        .await
+        .expect("init");
+    let id = vault.id();
+    let path = AbsPath::new("/a.md").unwrap();
+    vault
+        .fs()
+        .add(&path, Cursor::new(b"for bob"))
+        .await
+        .unwrap();
+    vault.save().await.expect("save 1");
+
+    vault.add_share(bob.public()).expect("grant");
+    assert!(
+        vault
+            .manifest()
+            .get_share(&bob.public())
+            .unwrap()
+            .is_pending(),
+        "granted but not yet sealed"
+    );
+    vault.save().await.expect("save 2 seals bob");
+    let bob_share = vault
+        .manifest()
+        .get_share(&bob.public())
+        .unwrap()
+        .ratchet_share()
+        .expect("sealed by the save");
+    assert_eq!(bob_share.sealed_at(), 2);
+
+    let bobs = Vault::open(id, blobs, log, &bob).await.expect("bob opens");
+    assert_eq!(bobs.height(), 2);
+    assert_eq!(bobs.fs().cat(&path).await.unwrap(), b"for bob");
+}
+
+#[tokio::test]
+async fn revoking_bob_reseeds_the_root_lineage() {
+    // Bob could derive every later key from his sealed state, so revoking
+    // him re-seeds the root and re-seals the new lineage to Alice.
+    let blobs = MemBlobs::default();
+    let log = MemLog::default();
+    let alice = PrivateKey::generate();
+    let bob = PrivateKey::generate();
+    let mut vault = Vault::init("rv".to_string(), &alice, blobs.clone(), log.clone())
+        .await
+        .expect("init");
+    let id = vault.id();
+    vault.add_share(bob.public()).expect("grant");
+    vault.save().await.expect("save 1");
+    Vault::open(id, blobs.clone(), log.clone(), &bob)
+        .await
+        .expect("bob can open while granted");
+    let alice_share_before = vault
+        .manifest()
+        .get_share(&alice.public())
+        .unwrap()
+        .ratchet_share()
+        .cloned()
+        .unwrap();
+
+    vault.remove_share(bob.public()).expect("revoke");
+    assert!(
+        vault
+            .manifest()
+            .get_share(&alice.public())
+            .unwrap()
+            .is_pending(),
+        "revocation marks the remaining shares for re-sealing"
+    );
+    vault
+        .fs()
+        .add(
+            &AbsPath::new("/secret.md").unwrap(),
+            Cursor::new(b"not for bob"),
+        )
+        .await
+        .unwrap();
+    vault.save().await.expect("save 2 on the new lineage");
+
+    // Bob is gone…
+    let result: Result<Vault<MemBlobs, MemLog>, _> =
+        Vault::open(id, blobs.clone(), log.clone(), &bob).await;
+    assert!(matches!(
+        result,
+        Err(VaultError::Fs(FsError::ShareNotFound))
+    ));
+
+    // …Alice was re-sealed on the NEW lineage and reads the new version.
+    let alice_share_after = vault
+        .manifest()
+        .get_share(&alice.public())
+        .unwrap()
+        .ratchet_share()
+        .cloned()
+        .unwrap();
+    assert_ne!(alice_share_after, alice_share_before);
+    assert_eq!(alice_share_after.sealed_at(), 2);
+    let reopened = Vault::open(id, blobs, log, &alice)
+        .await
+        .expect("alice opens");
+    assert_eq!(
+        reopened
+            .fs()
+            .cat(&AbsPath::new("/secret.md").unwrap())
+            .await
+            .unwrap(),
+        b"not for bob"
+    );
+}

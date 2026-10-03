@@ -228,18 +228,27 @@ impl OpsLog {
                         };
                         if let OpKind::AddFile {
                             content,
-                            secret,
                             plaintext_hash,
+                            ratchet,
+                            previous,
                             ..
                         } = &loser.kind
                         {
+                            // The sidecar IS the loser's version, preserved
+                            // under a conflict name. It must carry the
+                            // loser's ratchet — the blob is encrypted under
+                            // that key and we hold no plaintext to re-key.
+                            // Identity derives from the ratchet, so the
+                            // sidecar is a FORK of the same entity: one
+                            // lineage, two heads, until a human resolves it.
                             let conflict_op = Op {
                                 id: loser.id.clone(),
                                 kind: OpKind::AddFile {
                                     path: loser_path.clone(),
                                     content: content.clone(),
-                                    secret: secret.clone(),
                                     plaintext_hash: *plaintext_hash,
+                                    ratchet: ratchet.clone(),
+                                    previous: previous.clone(),
                                 },
                             };
                             self.operations.insert(conflict_op.id.clone(), conflict_op);
@@ -305,5 +314,80 @@ impl OpsLog {
 impl Default for OpsLog {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod fork_tests {
+    //! A conflict sidecar is a FORK of the losing entity — same ratchet
+    //! (it must decrypt the loser's blob), therefore same identity.
+    use super::*;
+    use crate::linked_data::{Hash, Link, LD_RAW_CODEC};
+    use zim_crypto::{EntryRatchet, PrivateKey};
+
+    fn add_op(peer: &PublicKey, ts: u64, path: &str, body: &[u8], ratchet: EntryRatchet) -> Op {
+        Op {
+            id: OpId {
+                timestamp: ts,
+                peer_id: *peer,
+            },
+            kind: OpKind::AddFile {
+                path: AbsPath::new(path).unwrap(),
+                content: Link::new(LD_RAW_CODEC, Hash::new(body)),
+                plaintext_hash: Hash::new(body),
+                ratchet,
+                previous: Link::default(),
+            },
+        }
+    }
+
+    #[test]
+    fn a_conflict_sidecar_is_a_fork_of_the_losing_entity() {
+        // Alice and Bob both create /notes.md concurrently. Bob's op has
+        // the later id, so Bob wins the path and Alice's draft is kept as
+        // a sidecar.
+        let alice = PrivateKey::generate().public();
+        let bob = PrivateKey::generate().public();
+        let alice_r = EntryRatchet::seed();
+        let bob_r = EntryRatchet::seed();
+        let alice_op = add_op(&alice, 1, "/notes.md", b"alice's draft", alice_r.clone());
+        let bob_op = add_op(&bob, 2, "/notes.md", b"bob's draft", bob_r.clone());
+
+        // Alice's side is the base; Bob's op arrives.
+        let mut log = OpsLog::from_op(&alice_op);
+        let result = log.merge_with_resolver(&OpsLog::from_op(&bob_op), &ConflictFile, &alice);
+        assert_eq!(result.conflicts_resolved.len(), 1, "one conflict, resolved");
+
+        // Bob holds /notes.md…
+        let winner = log
+            .resolve_path(&AbsPath::new("/notes.md").unwrap())
+            .expect("winner at the original path");
+        let OpKind::AddFile { ratchet: wr, .. } = &winner.kind else {
+            panic!("winner is an AddFile");
+        };
+        assert_eq!(wr.id(), bob_r.id(), "Bob's entity owns the path");
+
+        // …and Alice's draft lives at the sidecar path, carrying HER ratchet.
+        let sidecar = log
+            .operations()
+            .values()
+            .find(|op| {
+                let p: &std::path::Path = op.path().as_ref();
+                p.to_string_lossy().starts_with("/notes.md@")
+            })
+            .expect("sidecar op");
+        let OpKind::AddFile { ratchet: sr, .. } = &sidecar.kind else {
+            panic!("sidecar is an AddFile");
+        };
+        assert_eq!(
+            sr, &alice_r,
+            "the sidecar carries the loser's ratchet — it must decrypt her blob"
+        );
+        assert_eq!(
+            sr.id(),
+            alice_r.id(),
+            "…so it is a FORK of Alice's entity, not a new one"
+        );
+        assert_ne!(sr.id(), bob_r.id());
     }
 }

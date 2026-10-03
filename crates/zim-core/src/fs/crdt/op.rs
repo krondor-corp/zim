@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::fs::AbsPath;
 use crate::linked_data::Link;
-use zim_crypto::{PublicKey, Secret};
+use zim_crypto::{EntryId, EntryRatchet, PublicKey};
 
 /// A causal-order identifier. Total order across all peers: Lamport
 /// `timestamp` primary, `peer_id` lexicographic secondary. Two `OpId`s
@@ -58,36 +58,49 @@ pub struct Op {
 /// needs — no optional fields, no ambiguous `path` that means different
 /// things per variant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// `AddFile` legitimately carries two content links (the blob and the
+// entity's previous revision) plus a ratchet — ~290 bytes against ~80
+// for the other variants. That is the data, not a smell; ops live in
+// small merge windows, so the per-op size difference is noise.
+#[allow(clippy::large_enum_variant)]
 pub enum OpKind {
     /// Add a file at `path`. The op is self-contained — `content`
     /// addresses the encrypted blob in the shared inner store and
-    /// `secret` is the per-file key that decrypts it. Together they
-    /// reconstruct the [`Entry::File`](crate::fs::Entry::File) that
-    /// goes in the parent directory.
+    /// `ratchet` is the writer's key schedule for this revision: it
+    /// derives the content key AND carries the entity's identity.
+    /// Together they reconstruct the exact
+    /// [`Entry::File`](crate::fs::Entry::File) the writer built.
     ///
-    /// `secret` rides inside the op log, which is itself encrypted at
-    /// rest with the vault secret — so anyone who can read the op log
-    /// can already read every file in the vault. Embedding `secret`
-    /// here doesn't broaden access; it makes replay self-sufficient.
+    /// Key material rides inside the op log, which is itself encrypted
+    /// at rest with the vault secret — so anyone who can read the op log
+    /// can already read every file in the vault. Embedding it here
+    /// doesn't broaden access; it makes replay self-sufficient.
     AddFile {
         /// Destination path in the tree.
         path: AbsPath,
         /// Link to the encrypted file content in the inner blob store.
         content: Link,
-        /// Per-file decryption key.
-        secret: Secret,
         /// `blake3(plaintext)` of the body — carried through the log so
         /// replays on remote peers reconstruct
         /// [`Entry::File`](crate::fs::Entry::File) with the same hash
-        /// the writer computed. `None` on ops written before this
-        /// field existed.
-        #[serde(default)]
-        plaintext_hash: Option<Hash>,
+        /// the writer computed.
+        plaintext_hash: Hash,
+        /// The writer's ratchet state for this revision — derives the
+        /// content key and the entity id. Ships so peers never advance
+        /// independently.
+        ratchet: EntryRatchet,
+        /// Prior version of this entity on a rewrite; `Link::default()`
+        /// at creation — the same null-link sentinel `Entry::previous`
+        /// and `Manifest::previous` use.
+        previous: Link,
     },
     /// Create a directory at `path` (idempotent at apply time).
     Mkdir {
         /// Path to create.
         path: AbsPath,
+        /// The new directory's ratchet (identity + key schedule) — shipped
+        /// so a replaying peer builds the same dir entity.
+        ratchet: EntryRatchet,
     },
     /// Remove a path. `is_dir` distinguishes file vs directory removal
     /// at replay time without re-reading the tree.
@@ -96,6 +109,9 @@ pub enum OpKind {
         path: AbsPath,
         /// `true` when the removed entry was a directory.
         is_dir: bool,
+        /// The removed entity, so replay can find it if a concurrent
+        /// rename moved it.
+        id: EntryId,
     },
     /// Move/rename a path. `from` disappears; `to` comes into existence.
     Mv {
@@ -103,6 +119,12 @@ pub enum OpKind {
         from: AbsPath,
         /// Destination path.
         to: AbsPath,
+        /// The moved entity. Replay tracks where each entity currently
+        /// is, so an `AddFile` written against the OLD path by a peer
+        /// that hadn't seen this move lands on the entity's new path —
+        /// an edit follows a concurrent rename instead of resurrecting
+        /// the old name.
+        id: EntryId,
     },
 }
 
@@ -113,7 +135,7 @@ impl OpKind {
     pub fn path(&self) -> &AbsPath {
         match self {
             OpKind::AddFile { path, .. } => path,
-            OpKind::Mkdir { path } => path,
+            OpKind::Mkdir { path, .. } => path,
             OpKind::Remove { path, .. } => path,
             OpKind::Mv { to, .. } => to,
         }

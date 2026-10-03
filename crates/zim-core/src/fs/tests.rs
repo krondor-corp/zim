@@ -23,7 +23,7 @@ use bytes::Bytes;
 
 use crate::blobs::{BlobError, BlobStore};
 use crate::linked_data::Hash;
-use zim_crypto::{PrivateKey, Secret};
+use zim_crypto::{EntryRatchet, PrivateKey};
 
 use super::abs_path::AbsPath;
 use super::fs_inner::Fs;
@@ -67,8 +67,8 @@ impl BlobStore for MemBlobs {
 async fn setup() -> (Fs<MemBlobs>, PrivateKey) {
     let blobs = MemBlobs::default();
     let owner = PrivateKey::generate();
-    let secret = Secret::generate();
-    let (fs, _root_link) = Fs::init_tree(owner.public(), &secret, blobs)
+    let root = EntryRatchet::seed();
+    let (fs, _root_link) = Fs::init_tree(owner.public(), &root, blobs)
         .await
         .expect("init_tree");
     (fs, owner)
@@ -174,4 +174,238 @@ async fn mv_moves_a_file_to_a_new_path() {
     let moved = fs.get_entry_at_path(&dst).await.unwrap().unwrap();
     assert!(moved.is_file());
     assert_eq!(fs.cat(&dst).await.unwrap(), b"contents");
+}
+
+// ── Per-entry identity + ratchets ───────────────────────────────────────
+
+#[tokio::test]
+async fn rewriting_a_file_keeps_its_identity_and_advances_its_key() {
+    // Alice writes a note, then saves a second draft over it.
+    let (fs, _) = setup().await;
+    let path = AbsPath::new("/note.md").unwrap();
+    fs.add(&path, Cursor::new(b"first draft")).await.unwrap();
+    let v1 = fs.get_entry_at_path(&path).await.unwrap().unwrap();
+
+    fs.add(&path, Cursor::new(b"second draft, longer"))
+        .await
+        .unwrap();
+    let v2 = fs.get_entry_at_path(&path).await.unwrap().unwrap();
+
+    // Same entity…
+    assert_eq!(v1.id(), v2.id(), "a rewrite keeps the entity id");
+    // …next revision: the ratchet advanced, so the key and link moved on…
+    assert_ne!(v1.secret(), v2.secret(), "the content key ratchets forward");
+    assert_ne!(v1.link(), v2.link());
+    assert_eq!(
+        v1.ratchet().advanced(),
+        *v2.ratchet(),
+        "v2's ratchet is exactly v1's advanced once"
+    );
+    // …and history chains: v2 points back at v1.
+    assert_eq!(v1.previous(), None, "the first version has no predecessor");
+    assert_eq!(v2.previous(), Some(v1.link()));
+}
+
+#[tokio::test]
+async fn renaming_a_file_moves_the_same_entity_unchanged() {
+    // Alice renames a note; nothing about its content or key changes.
+    let (fs, _) = setup().await;
+    let from = AbsPath::new("/draft.md").unwrap();
+    let to = AbsPath::new("/final.md").unwrap();
+    fs.add(&from, Cursor::new(b"same bytes")).await.unwrap();
+    let before = fs.get_entry_at_path(&from).await.unwrap().unwrap();
+
+    fs.mv(&from, &to).await.unwrap();
+
+    assert!(fs.get_entry_at_path(&from).await.unwrap().is_none());
+    let after = fs.get_entry_at_path(&to).await.unwrap().unwrap();
+    assert_eq!(before.id(), after.id(), "a rename is the SAME entity");
+    assert_eq!(before.ratchet(), after.ratchet(), "no revision happened");
+    assert_eq!(before.secret(), after.secret());
+    assert_eq!(before.link(), after.link());
+}
+
+#[tokio::test]
+async fn a_directory_has_an_identity_and_advances_when_its_contents_change() {
+    // Alice makes a folder, then adds a file inside it — which rewrites
+    // the folder's body.
+    let (fs, _) = setup().await;
+    let docs = AbsPath::new("/docs").unwrap();
+    fs.mkdir(&docs, false).await.unwrap();
+    let d1 = fs.get_entry_at_path(&docs).await.unwrap().unwrap();
+    assert!(d1.is_dir());
+
+    fs.add(&AbsPath::new("/docs/a.md").unwrap(), Cursor::new(b"inside"))
+        .await
+        .unwrap();
+    let d2 = fs.get_entry_at_path(&docs).await.unwrap().unwrap();
+
+    assert_eq!(d1.id(), d2.id(), "the folder is the same entity");
+    assert_ne!(d1.secret(), d2.secret(), "its key ratcheted on rewrite");
+    assert_eq!(d1.ratchet().advanced(), *d2.ratchet());
+    assert_eq!(d2.previous(), Some(d1.link()));
+}
+
+#[tokio::test]
+async fn replaying_ops_rebuilds_the_writers_exact_entities() {
+    // Alice writes a note and a folder. Bob — a different peer with his
+    // own key and store — replays her ops. Because the writer ships the
+    // ratchet state in the op, Bob must end up with the SAME entity ids
+    // and the SAME content keys; peers never advance independently.
+    let (alice, _) = setup().await;
+    let (bob, _) = setup().await;
+    let note = AbsPath::new("/note.md").unwrap();
+    let docs = AbsPath::new("/docs").unwrap();
+
+    alice.add(&note, Cursor::new(b"hello bob")).await.unwrap();
+    alice.mkdir(&docs, false).await.unwrap();
+    // A second revision, so the replayed ratchet is an ADVANCED one.
+    alice.add(&note, Cursor::new(b"hello again")).await.unwrap();
+
+    let ops = alice.inner().await.ops_log.clone();
+    bob.apply_ops(&ops).await.unwrap();
+
+    let a_note = alice.get_entry_at_path(&note).await.unwrap().unwrap();
+    let b_note = bob.get_entry_at_path(&note).await.unwrap().unwrap();
+    assert_eq!(a_note.id(), b_note.id(), "Bob holds Alice's entity id");
+    assert_eq!(
+        a_note.secret(),
+        b_note.secret(),
+        "…and derives her exact key"
+    );
+    assert_eq!(a_note.link(), b_note.link());
+
+    let a_docs = alice.get_entry_at_path(&docs).await.unwrap().unwrap();
+    let b_docs = bob.get_entry_at_path(&docs).await.unwrap().unwrap();
+    assert_eq!(a_docs.id(), b_docs.id(), "directory identity ships too");
+}
+
+// ── Rename-aware merge: an edit follows a concurrent rename ──────────────
+//
+// Alice edits /a.md while Bob renames it. Ops name ENTITIES, so on
+// merge Alice's edit must land on the entity's new path — never
+// resurrect the old name. The Lamport tie-break between the two
+// concurrent ops is decided by peer key, so each test forces one
+// ordering by advancing one side's clock first; together they cover
+// both replay paths (redirect-then-apply, and apply-then-move-along).
+
+/// A second peer sharing `alice`'s blob store — content-addressed
+/// blobs sync between real peers, so a shared store is the faithful
+/// stand-in for the fs-level test (only entries are being exercised).
+async fn peer_sharing_blobs_of(alice: &Fs<MemBlobs>) -> Fs<MemBlobs> {
+    let blobs = alice.blobs().inner().clone();
+    let (fs, _) = Fs::init_tree(
+        PrivateKey::generate().public(),
+        &EntryRatchet::seed(),
+        blobs,
+    )
+    .await
+    .unwrap();
+    fs
+}
+
+/// Both sides start from the same tree: Alice creates /a.md, Bob
+/// replays it. Returns the entity id.
+async fn shared_file(alice: &Fs<MemBlobs>, bob: &Fs<MemBlobs>) -> zim_crypto::EntryId {
+    let a = AbsPath::new("/a.md").unwrap();
+    alice.add(&a, Cursor::new(b"v1")).await.unwrap();
+    let ops = alice.inner().await.ops_log.clone();
+    bob.apply_ops(&ops).await.unwrap();
+    alice.get_entry_at_path(&a).await.unwrap().unwrap().id()
+}
+
+/// Exchange full logs the way `chain::merge` does: each side replays
+/// the merged window (its own ops ∪ the other's).
+async fn exchange(alice: &Fs<MemBlobs>, bob: &Fs<MemBlobs>) {
+    let a_log = alice.inner().await.ops_log.clone();
+    let b_log = bob.inner().await.ops_log.clone();
+    let mut for_bob = b_log.clone();
+    for_bob.merge(&a_log);
+    let mut for_alice = a_log;
+    for_alice.merge(&b_log);
+    bob.apply_ops(&for_bob).await.unwrap();
+    alice.apply_ops(&for_alice).await.unwrap();
+}
+
+async fn assert_edit_followed_rename(
+    fs: &Fs<MemBlobs>,
+    who: &str,
+    to: &str,
+    id: zim_crypto::EntryId,
+) {
+    let old = AbsPath::new("/a.md").unwrap();
+    let new = AbsPath::new(to).unwrap();
+    assert!(
+        fs.get_entry_at_path(&old).await.unwrap().is_none(),
+        "{who}: the old name must not be resurrected"
+    );
+    let e = fs
+        .get_entry_at_path(&new)
+        .await
+        .unwrap()
+        .expect("renamed file present");
+    assert_eq!(e.id(), id, "{who}: same entity at the new path");
+    assert_eq!(
+        fs.cat(&new).await.unwrap(),
+        b"v2 edited",
+        "{who}: carries the edit"
+    );
+}
+
+#[tokio::test]
+async fn an_edit_follows_a_concurrent_rename_when_the_rename_replays_first() {
+    let (alice, _) = setup().await;
+    let bob = peer_sharing_blobs_of(&alice).await;
+    let id = shared_file(&alice, &bob).await;
+
+    // Bob renames to a name that sorts BEFORE /a.md — the ordering that
+    // broke under per-path replay. Alice bumps her clock first so her
+    // edit carries the later OpId: the rename replays first, and the
+    // edit must be redirected onto /0.md.
+    alice
+        .mkdir(&AbsPath::new("/scratch").unwrap(), false)
+        .await
+        .unwrap();
+    alice
+        .add(&AbsPath::new("/a.md").unwrap(), Cursor::new(b"v2 edited"))
+        .await
+        .unwrap();
+    bob.mv(
+        &AbsPath::new("/a.md").unwrap(),
+        &AbsPath::new("/0.md").unwrap(),
+    )
+    .await
+    .unwrap();
+
+    exchange(&alice, &bob).await;
+    assert_edit_followed_rename(&alice, "alice", "/0.md", id).await;
+    assert_edit_followed_rename(&bob, "bob", "/0.md", id).await;
+}
+
+#[tokio::test]
+async fn an_edit_follows_a_concurrent_rename_when_the_edit_replays_first() {
+    let (alice, _) = setup().await;
+    let bob = peer_sharing_blobs_of(&alice).await;
+    let id = shared_file(&alice, &bob).await;
+
+    // Bob bumps his clock first so the RENAME carries the later OpId:
+    // the edit replays first (at /a.md), then the rename must carry the
+    // edited content along to /0.md.
+    bob.mkdir(&AbsPath::new("/scratch").unwrap(), false)
+        .await
+        .unwrap();
+    bob.mv(
+        &AbsPath::new("/a.md").unwrap(),
+        &AbsPath::new("/0.md").unwrap(),
+    )
+    .await
+    .unwrap();
+    alice
+        .add(&AbsPath::new("/a.md").unwrap(), Cursor::new(b"v2 edited"))
+        .await
+        .unwrap();
+
+    exchange(&alice, &bob).await;
+    assert_edit_followed_rename(&alice, "alice", "/0.md", id).await;
+    assert_edit_followed_rename(&bob, "bob", "/0.md", id).await;
 }

@@ -463,6 +463,7 @@ dependencies = [
  "cfg-if",
  "constant_time_eq",
  "cpufeatures",
+ "digest 0.10.7",
 ]
 
 [[package]]
@@ -1080,7 +1081,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ab67060fc6b8ef687992d439ca0fa36e7ed17e9a0b16b25b601e8757df720de"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -5151,6 +5152,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "skip_ratchet"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "395f41f8cb666c0a1e559b816e07f3e396505483c1863cd211534feac29141b7"
+dependencies = [
+ "blake3",
+ "hex",
+ "rand_core 0.6.4",
+ "serde",
+ "serde_bytes",
+]
+
+[[package]]
 name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7500,10 +7514,12 @@ dependencies = [
  "getrandom 0.2.17",
  "hex",
  "pem",
+ "rand_core 0.6.4",
  "serde",
  "serde_json",
  "serde_with",
  "sha2 0.10.9",
+ "skip_ratchet",
  "tempfile",
  "thiserror 1.0.69",
  "x25519-dalek",

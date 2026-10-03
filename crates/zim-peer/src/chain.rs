@@ -55,14 +55,16 @@ pub async fn collect_ops_since<B: BlobStore>(
 
         let manifest = blobs.get_cbor::<Manifest, _>(&link).await?;
 
-        let Some(share) = manifest.get_share(&secret_key.public()) else {
+        if manifest.get_share(&secret_key.public()).is_none() {
             tracing::debug!(
                 "collect_ops_since: stopping at link {} - no share for current user",
                 link.hash()
             );
             break;
-        };
-        let secret = share.secret_share().recover(secret_key)?;
+        }
+        // Root key at this version: our sealed ratchet state, advanced to
+        // this manifest's height.
+        let secret = manifest.root_secret_for(secret_key)?;
 
         if *manifest.ops() != Link::default() {
             let encrypted = blobs.get(&manifest.ops().hash()).await?;

@@ -18,7 +18,7 @@ use mime::Mime;
 use serde::{Deserialize, Serialize};
 
 use crate::linked_data::{Link, LinkedData};
-use zim_crypto::Secret;
+use zim_crypto::{EntryId, EntryRatchet, Secret};
 
 use super::maybe_mime::MaybeMime;
 
@@ -45,8 +45,6 @@ pub enum Entry {
     File {
         /// Content-addressed pointer to the encrypted file bytes.
         link: Link,
-        /// Per-file encryption secret.
-        secret: Secret,
         /// Optional MIME type, typically inferred from a filename via
         /// [`Entry::file_from_path`].
         mime: MaybeMime,
@@ -56,71 +54,75 @@ pub enum Entry {
         /// vault key can recompute this off any candidate plaintext
         /// to decide "did this file change?" without fetching or
         /// decrypting the ciphertext blob — the load-bearing
-        /// optimisation for sync diffing. `None` on entries written
-        /// before this field existed, or on synthetic constructions
-        /// (tests, defaults).
-        #[serde(default)]
-        plaintext_hash: Option<Hash>,
+        /// optimisation for sync diffing.
+        plaintext_hash: Hash,
+        /// This revision's key schedule. The content key is derived from
+        /// it (`ratchet.key()`); so is the entity's identity.
+        ratchet: EntryRatchet,
+        /// Prior version of THIS entity (its previous `link`), so one
+        /// file's history is an O(1) walk. `Link::default()` means
+        /// revision 0 — the same null-link sentinel `Manifest::previous`
+        /// uses for genesis. Read it through [`Entry::previous`], which
+        /// maps the sentinel to `None`.
+        previous: Link,
     },
     /// A subdirectory entry. The link points at an encrypted [`Dir`] body
     /// staged in the metadata pack.
     Dir {
         /// Content-addressed pointer to the encrypted [`Dir`] body.
         link: Link,
-        /// Per-dir encryption secret (rotated when the dir is rewritten).
-        secret: Secret,
+        /// See [`Entry::File::ratchet`]. The root carries the vault's root
+        /// ratchet like any other directory.
+        ratchet: EntryRatchet,
+        /// See [`Entry::File::previous`].
+        previous: Link,
     },
 }
 
 impl Entry {
-    /// Construct a bare file entry. `mime`, `metadata`, and
-    /// `plaintext_hash` all default to `None`. Use
-    /// [`Self::file_from_path_with_hash`] in production paths that
-    /// actually have a hashed plaintext.
-    pub fn file(link: Link, secret: Secret) -> Self {
-        Entry::File {
-            link,
-            secret,
-            mime: MaybeMime(None),
-            metadata: None,
-            plaintext_hash: None,
-        }
+    /// A bare file entry at revision 0 of a fresh entity — mints an id,
+    /// derives `secret` from `ratchet`. `mime`/`metadata`/`plaintext_hash`
+    /// default to `None`. Tests and synthetic fixtures; production uses
+    /// [`Self::file_at_path`].
+    pub fn file(link: Link, ratchet: EntryRatchet) -> Self {
+        Self::file_at_path(link, ratchet, None, Path::new(""), Hash::new(b""))
     }
 
-    /// Construct a file entry whose `mime` is inferred from `path`'s
-    /// extension. `plaintext_hash` is left unset — useful for tests
-    /// and synthetic fixtures.
-    pub fn file_from_path(link: Link, secret: Secret, path: &Path) -> Self {
-        Entry::File {
-            link,
-            secret,
-            mime: MaybeMime::from_path(path),
-            metadata: None,
-            plaintext_hash: None,
-        }
-    }
-
-    /// Production file constructor. Same as [`Self::file_from_path`]
-    /// but stamps in the `blake3(plaintext)` hash so sync diffing can
-    /// answer "did this file change?" without decrypting the body.
-    pub fn file_from_path_with_hash(
+    /// Production file constructor. `secret` is derived from `ratchet`
+    /// so the two can never disagree; `mime` is inferred from `path`.
+    /// On a rewrite the caller passes the entity's *advanced* ratchet
+    /// (identity rides inside it) and `previous = Some(old link)`; on
+    /// creation a seeded ratchet and `None`.
+    pub fn file_at_path(
         link: Link,
-        secret: Secret,
+        ratchet: EntryRatchet,
+        previous: Option<Link>,
         path: &Path,
         plaintext_hash: Hash,
     ) -> Self {
         Entry::File {
             link,
-            secret,
             mime: MaybeMime::from_path(path),
             metadata: None,
-            plaintext_hash: Some(plaintext_hash),
+            plaintext_hash,
+            ratchet,
+            previous: previous.unwrap_or_default(),
         }
     }
 
-    /// Construct a directory entry.
-    pub fn dir(link: Link, secret: Secret) -> Self {
-        Entry::Dir { link, secret }
+    /// A directory entry at revision 0 of a fresh entity. See
+    /// [`Self::dir_versioned`] for rewrites.
+    pub fn dir(link: Link, ratchet: EntryRatchet) -> Self {
+        Self::dir_versioned(link, ratchet, None)
+    }
+
+    /// Production directory constructor; `secret` derived from `ratchet`.
+    pub fn dir_versioned(link: Link, ratchet: EntryRatchet, previous: Option<Link>) -> Self {
+        Entry::Dir {
+            link,
+            ratchet,
+            previous: previous.unwrap_or_default(),
+        }
     }
 
     /// The content-addressed link to this entry's bytes.
@@ -131,11 +133,30 @@ impl Entry {
         }
     }
 
-    /// The per-entry secret used to encrypt the addressed bytes.
-    pub fn secret(&self) -> &Secret {
+    /// The content key for this revision, derived from the ratchet.
+    pub fn secret(&self) -> Secret {
+        self.ratchet().key()
+    }
+
+    /// Stable entity identity; `None` only for the root.
+    pub fn id(&self) -> EntryId {
+        self.ratchet().id()
+    }
+
+    /// This revision's key schedule.
+    pub fn ratchet(&self) -> &EntryRatchet {
         match self {
-            Entry::File { secret, .. } => secret,
-            Entry::Dir { secret, .. } => secret,
+            Entry::File { ratchet, .. } | Entry::Dir { ratchet, .. } => ratchet,
+        }
+    }
+
+    /// The prior version of this entity; `None` at revision 0 (the
+    /// stored sentinel is `Link::default()`, never handed out).
+    pub fn previous(&self) -> Option<&Link> {
+        match self {
+            Entry::File { previous, .. } | Entry::Dir { previous, .. } => {
+                (*previous != Link::default()).then_some(previous)
+            }
         }
     }
 
@@ -158,11 +179,10 @@ impl Entry {
     }
 
     /// `blake3(plaintext)` of this file's body, when known. `None` for
-    /// directories and for legacy file entries written before the
-    /// field existed.
+    /// directories.
     pub fn plaintext_hash(&self) -> Option<Hash> {
         match self {
-            Entry::File { plaintext_hash, .. } => *plaintext_hash,
+            Entry::File { plaintext_hash, .. } => Some(*plaintext_hash),
             Entry::Dir { .. } => None,
         }
     }
@@ -244,7 +264,7 @@ mod test {
         let mut dir = Dir::new();
         dir.insert(
             "example".to_string(),
-            Entry::file(Link::default(), Secret::default()),
+            Entry::file(Link::default(), EntryRatchet::seed()),
         );
 
         let encoded = dir.encode().unwrap();
@@ -258,24 +278,25 @@ mod test {
         use std::path::PathBuf;
 
         let link = Link::default();
-        let secret = Secret::default();
 
-        let entry = Entry::file_from_path(
+        let entry = Entry::file_at_path(
             link.clone(),
-            secret.clone(),
+            EntryRatchet::seed(),
+            None,
             &PathBuf::from("/test/file.json"),
+            Hash::new(b""),
         );
         assert_eq!(entry.mime().map(|m| m.as_ref()), Some("application/json"));
         assert!(entry.is_file());
 
-        let entry = Entry::dir(link, secret);
+        let entry = Entry::dir(link, EntryRatchet::seed());
         assert!(entry.is_dir());
         assert_eq!(entry.mime(), None);
     }
 
     #[test]
     fn test_entry_metadata() {
-        let mut entry = Entry::file(Link::default(), Secret::default());
+        let mut entry = Entry::file(Link::default(), EntryRatchet::seed());
         assert_eq!(entry.metadata(), None);
 
         entry.set_metadata("key".to_string(), LinkedData::Null);

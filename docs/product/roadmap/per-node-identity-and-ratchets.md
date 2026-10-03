@@ -146,5 +146,102 @@ refactor.
 - Ops-log key derivation once entries ratchet (today it rides the root
   secret).
 - Skip-level parameters (branching, how far ahead readers commonly jump).
-- Whether the entry `id` is stored explicitly or the creation-OpId is
-  recoverable without storing it redundantly.
+- ~~Whether the entry `id` is stored explicitly or the creation-OpId is
+  recoverable~~ — resolved in v1: stored explicitly (see below).
+
+## v1 implementation record (2026-10, `alex/ratchet-experiment`)
+
+What actually shipped, and where it deliberately stops short of the
+design above:
+
+- **Ratchet library:** `skip_ratchet =0.3.0` (WNFS reference impl),
+  wrapped as `zim_crypto::EntryRatchet` — `seed()`, `advanced()`,
+  `key()` (blake3 derive-key, domain `zim/entry-content/v1`). Boxed
+  internally (~135 bytes of state → 8 bytes wherever it rides). Exact-
+  pinned; fork tracked as KRO-224.
+- **Identity is intrinsic to the ratchet, not a separate field.** The
+  skip ratchet's salt is `H(seed)` and `inc()` never changes it, so
+  `EntryRatchet` holds its seed and `id()` *derives* `EntryId` from it
+  (blake3 derive-key, domain `zim/entry-id/v1`). Identity and key
+  schedule cannot disagree, and nothing extra ships. Upstream keeps the
+  salt `pub(crate)`; the fork (KRO-224) can expose it and retire the
+  stored seed. *Not* the creation `OpId` — that would need pre-minting
+  before the mutation that records the op; provenance stays recoverable
+  from the log.
+- **`Entry` is `{ link, ratchet, previous, … }` — no stored key, nothing
+  optional for identity or keys.** `secret()` *derives* the content key
+  from the ratchet by value; `id()` derives identity. `ratchet` is
+  required on every entry, the root included (it carries the vault's
+  root ratchet — `Entry::root_dir` is gone); `plaintext_hash` is
+  required too. `previous` is a plain `Link` whose `Link::default()` means revision 0
+  — the same null-link sentinel `Manifest::previous` uses for genesis,
+  so the model has one representation of "no predecessor"; the
+  `previous()` accessor maps it to `None` so no caller fetches the zero
+  hash. No `#[serde(default)]` hedges for data that no longer exists.
+- **The writer ships the ratchet — and only the ratchet.** `AddFile`
+  carries `ratchet` + `previous`, `Mkdir` carries `ratchet`; the op's
+  old `secret` field is gone (derivable) and there is no `id` field
+  (derivable). A replaying peer rebuilds
+  the writer's *exact* entity and key — peers never advance
+  independently (tested: `replaying_ops_rebuilds_the_writers_exact_entities`).
+  An `AddFile` without a ratchet (pre-ratchet op) **errors on replay**
+  rather than seeding a fresh ratchet, which would derive a key that
+  does not decrypt the content.
+- **Rewrite = same entity, next revision:** `add` over an existing file
+  advances its ratchet (identity unchanged by construction), chains
+  `previous = old link`.
+  Dir bodies rewritten on the root→leaf path do the same. `mv` moves the
+  entry intact (same id/ratchet/link). Synthetic `-p` ancestors seed.
+- **A conflict sidecar is a fork of the same entity.** The resolver's
+  sidecar must carry the loser's ratchet (the blob is encrypted under
+  that key and there is no plaintext to re-key), and identity derives
+  from the ratchet — so the sidecar shares the entity id with the file
+  it forked from: one lineage, two heads, until a human resolves it.
+  Any id-keyed lookup must therefore expect multiple heads after a
+  conflict. (Key reuse across the fork is safe: every encryption draws a
+  fresh random nonce.)
+- **The root is ratcheted too — and that changed the share model.**
+  Shares seal the root ratchet **state** (`zim_crypto::RatchetShare`:
+  ephemeral X25519 → AES-KW-with-padding over the bincode'd state, plus
+  `sealed_at`, the height it derives). A holder brings it forward with
+  `inc_by(height − sealed_at)` and derives any later root key itself.
+  Consequences, all intentional:
+  - `save()` just advances the root ratchet. It **no longer re-mints
+    every share** on every save (previously O(shareholders) ECDH per
+    save). Shares change only on membership changes.
+  - `add_share` creates a *pending* share (`None`); the next `save`
+    seals the live state at that height — the newcomer reads from that
+    version onward and nothing before. Grant-from-a-point, by
+    construction.
+  - `remove_share` / `remove_relay` **re-seed the root lineage** and mark
+    every remaining share pending, so the next save encrypts under the
+    new lineage and re-seals it to everyone still present. Required: a
+    revoked holder could otherwise derive every later key. Versions
+    before the revocation stay readable through their own manifests'
+    shares.
+  - All four root-key recoveries (vault open/reload, peer chain walk)
+    go through one helper, `Manifest::root_ratchet_for` /
+    `root_secret_for`. The ops-log key is the root key.
+  - `SecretShare` (32-byte key sealing) is untouched; the hub and the
+    browser envelope still use it for non-root purposes.
+- **Rename-aware merge is in.** `Mv` and `Remove` ops carry the moved /
+  removed entity's `EntryId` (required — every mv/rm target has one; the
+  root refuses both). `Fs::apply_ops` replays the merge window in
+  **causal (OpId) order** with an entity → current-path tracker, instead
+  of latest-op-per-path iterated in filename sort order. So an `AddFile`
+  recorded against a path a concurrent rename vacated is redirected to
+  the entity's current path: **an edit follows a rename** rather than
+  resurrecting the old name. (Previously the outcome depended on
+  whether the new name sorted before or after the old one — silent.)
+  Precondition, as `chain::merge` already guarantees: `apply_ops` gets
+  the full window, local ops included, since the redirect tracks moves
+  across the ops it replays. Tested for both tie-break orderings.
+  Known conservative corner: the resolver's conflict check is still
+  path-keyed, so two *different* entities colliding on a path after a
+  rename can still produce a sidecar — never data loss.
+- **Ops carry no `Option`s for identity or key material.** `AddFile` /
+  `Mkdir` require the ratchet, `Mv` / `Remove` require the id. "Legacy
+  ops" don't exist; the model doesn't pretend they might.
+- **Verified:** `make check` green in both CI variants (fuse / no-fuse,
+  rustc 1.99); `make e2e` PASS end-to-end — convergence, isolation,
+  concurrent forks, FUSE across nodes, restart durability.

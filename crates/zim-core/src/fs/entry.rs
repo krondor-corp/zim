@@ -60,8 +60,11 @@ pub enum Entry {
         /// it (`ratchet.key()`); so is the entity's identity.
         ratchet: EntryRatchet,
         /// Prior version of THIS entity (its previous `link`), so one
-        /// file's history is an O(1) walk. `None` means revision 0.
-        previous: Option<Link>,
+        /// file's history is an O(1) walk. `Link::default()` means
+        /// revision 0 — the same null-link sentinel `Manifest::previous`
+        /// uses for genesis. Read it through [`Entry::previous`], which
+        /// maps the sentinel to `None`.
+        previous: Link,
     },
     /// A subdirectory entry. The link points at an encrypted [`Dir`] body
     /// staged in the metadata pack.
@@ -72,7 +75,7 @@ pub enum Entry {
         /// ratchet like any other directory.
         ratchet: EntryRatchet,
         /// See [`Entry::File::previous`].
-        previous: Option<Link>,
+        previous: Link,
     },
 }
 
@@ -103,7 +106,7 @@ impl Entry {
             metadata: None,
             plaintext_hash,
             ratchet,
-            previous,
+            previous: previous.unwrap_or_default(),
         }
     }
 
@@ -118,7 +121,7 @@ impl Entry {
         Entry::Dir {
             link,
             ratchet,
-            previous,
+            previous: previous.unwrap_or_default(),
         }
     }
 
@@ -147,10 +150,13 @@ impl Entry {
         }
     }
 
-    /// The prior version of this entity, if any.
+    /// The prior version of this entity; `None` at revision 0 (the
+    /// stored sentinel is `Link::default()`, never handed out).
     pub fn previous(&self) -> Option<&Link> {
         match self {
-            Entry::File { previous, .. } | Entry::Dir { previous, .. } => previous.as_ref(),
+            Entry::File { previous, .. } | Entry::Dir { previous, .. } => {
+                (*previous != Link::default()).then_some(previous)
+            }
         }
     }
 

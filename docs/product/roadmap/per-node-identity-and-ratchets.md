@@ -173,9 +173,11 @@ design above:
   from the ratchet by value; `id()` derives identity. `ratchet` is
   required on every entry, the root included (it carries the vault's
   root ratchet — `Entry::root_dir` is gone); `plaintext_hash` is
-  required too. `previous: Option<Link>` remains optional for a
-  *semantic* reason: revision 0 has no predecessor. No `#[serde(default)]`
-  hedges for data that no longer exists.
+  required too. `previous` is a plain `Link` whose `Link::default()` means revision 0
+  — the same null-link sentinel `Manifest::previous` uses for genesis,
+  so the model has one representation of "no predecessor"; the
+  `previous()` accessor maps it to `None` so no caller fetches the zero
+  hash. No `#[serde(default)]` hedges for data that no longer exists.
 - **The writer ships the ratchet — and only the ratchet.** `AddFile`
   carries `ratchet` + `previous`, `Mkdir` carries `ratchet`; the op's
   old `secret` field is gone (derivable) and there is no `id` field

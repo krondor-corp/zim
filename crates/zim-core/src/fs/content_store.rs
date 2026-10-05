@@ -30,7 +30,7 @@ use crate::blobs::{BlobError, BlobStore};
 use crate::linked_data::{BlockEncoded, CodecError, Hash, Link, LD_RAW_CODEC};
 use zim_crypto::{Secret, SecretError};
 
-use super::entry::{Dir, Entry};
+use super::entry::Dir;
 
 /// On-disk format: a map from content-hash to encrypted dir-body bytes.
 /// Serialized as DAG-CBOR and stored inline inside every manifest.
@@ -79,14 +79,10 @@ impl Metadata {
     }
 }
 
-/// Errors emitted by the [`ContentStore`] API.
-///
-/// The first three are transparent passthroughs of lower-level errors.
-/// [`Self::WrongVariant`] is the layer boundary — the content store
-/// can't statically know which [`Entry`] variant a caller will hand it,
-/// so it surfaces a mismatch as a recoverable error. Callers that
-/// always pattern-match before calling (notably [`Fs`](super::Fs)) treat
-/// this case as a programmer error and panic in their `From` impl.
+/// Errors emitted by the [`ContentStore`] API — transparent
+/// passthroughs of lower-level errors. The store reads by `(link,
+/// key)`; which [`Entry`] variant those came from is the caller's
+/// business, decided by a `match` and not at runtime here.
 #[derive(Debug, thiserror::Error)]
 pub enum ContentError {
     /// The inner blob store failed (network, I/O, missing blob).
@@ -98,14 +94,6 @@ pub enum ContentError {
     /// DAG-CBOR encode/decode failed.
     #[error("codec: {0}")]
     Codec(#[from] CodecError),
-    /// A typed getter was handed the wrong [`Entry`] variant.
-    #[error("wrong entry variant: expected {expected}, got {got}")]
-    WrongVariant {
-        /// The variant the API requires.
-        expected: &'static str,
-        /// The variant the caller actually passed.
-        got: &'static str,
-    },
 }
 
 /// Holds the in-memory metadata pack and a handle to the underlying
@@ -168,25 +156,12 @@ impl<B: BlobStore> ContentStore<B> {
         Ok(Link::new(LD_RAW_CODEC, hash))
     }
 
-    /// Fetch + decrypt + decode the dir body referenced by `entry`.
-    /// Tiered: checks the metadata pack first, falls through to the
-    /// inner store for bodies referenced from older manifests.
-    ///
-    /// Returns [`ContentError::WrongVariant`] if `entry` is an
-    /// [`Entry::File`].
-    pub async fn get_metadata(&self, entry: &Entry) -> Result<Dir, ContentError> {
-        match entry {
-            Entry::Dir { link, ratchet, .. } => self.get_dir(link, &ratchet.key()).await,
-            Entry::File { .. } => Err(ContentError::WrongVariant {
-                expected: "Entry::Dir",
-                got: "Entry::File",
-            }),
-        }
-    }
-
     /// Fetch + decrypt + decode the dir body at `link` under `secret`.
-    /// This is how the root is read: it has no [`Entry`] — its link
-    /// lives on the manifest and its key on the vault.
+    /// Tiered: checks the metadata pack first, falls through to the
+    /// inner store for bodies referenced from older manifests. For a
+    /// child dir the caller matched an [`Entry::Dir`] and passes its
+    /// link and `ratchet.key()`; for the root, the manifest's link and
+    /// the vault's root key.
     pub async fn get_dir(&self, link: &Link, secret: &Secret) -> Result<Dir, ContentError> {
         let ciphertext = self.get_metadata_bytes(&link.hash()).await?;
         let plaintext = secret.decrypt(&ciphertext)?;
@@ -249,16 +224,11 @@ impl<B: BlobStore> ContentStore<B> {
     /// Stream decrypted file content out of the inner blob store. The
     /// fetch itself is buffered today (the [`BlobStore`] trait has no
     /// streaming `get`); decryption is genuinely streaming on top.
-    pub async fn get_file(&self, entry: &Entry) -> Result<Box<dyn Read + Send>, ContentError> {
-        let (link, secret) = match entry {
-            Entry::File { link, ratchet, .. } => (link, ratchet.key()),
-            Entry::Dir { .. } => {
-                return Err(ContentError::WrongVariant {
-                    expected: "Entry::File",
-                    got: "Entry::Dir",
-                })
-            }
-        };
+    pub async fn get_file(
+        &self,
+        link: &Link,
+        secret: &Secret,
+    ) -> Result<Box<dyn Read + Send>, ContentError> {
         let ciphertext = self.inner.get(&link.hash()).await?;
         let reader = secret.decrypt_reader(std::io::Cursor::new(ciphertext.to_vec()))?;
         Ok(Box::new(reader))
@@ -267,7 +237,7 @@ impl<B: BlobStore> ContentStore<B> {
     // ─── Internal ─────────────────────────────────────────────────────
 
     /// Pack-first byte lookup for dir bodies. Private — callers go
-    /// through `get_metadata`.
+    /// through `get_dir`.
     async fn get_metadata_bytes(&self, hash: &Hash) -> Result<Vec<u8>, BlobError> {
         if let Some(cached) = self.metadata.lock().unwrap().get(hash).cloned() {
             return Ok(cached);
@@ -279,6 +249,7 @@ impl<B: BlobStore> ContentStore<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::Entry;
     use bytes::Bytes;
     use std::io::Cursor;
     use std::path::Path;
@@ -338,16 +309,14 @@ mod tests {
 
         let store = ContentStore::new(MemBlobs::default(), Metadata::new());
         let link = store.put_metadata(&secret, &dir).unwrap();
-        let entry = Entry::dir(link, ratchet, None);
 
-        let round_tripped = store.get_metadata(&entry).await.unwrap();
+        let round_tripped = store.get_dir(&link, &secret).await.unwrap();
         assert_eq!(round_tripped, dir);
     }
 
     #[tokio::test]
-    async fn get_metadata_falls_through_to_inner_on_pack_miss() {
-        let ratchet = EntryRatchet::seed();
-        let secret = ratchet.key();
+    async fn get_dir_falls_through_to_inner_on_pack_miss() {
+        let secret = EntryRatchet::seed().key();
         let mut dir = Dir::new();
         dir.insert(
             "x".to_string(),
@@ -367,29 +336,16 @@ mod tests {
         inner.put(ciphertext).await.unwrap();
         let store = ContentStore::new(inner, Metadata::new());
 
-        let entry = Entry::dir(Link::new(LD_RAW_CODEC, hash), ratchet, None);
-        let round_tripped = store.get_metadata(&entry).await.unwrap();
+        let round_tripped = store
+            .get_dir(&Link::new(LD_RAW_CODEC, hash), &secret)
+            .await
+            .unwrap();
         assert_eq!(round_tripped, dir);
     }
 
     #[tokio::test]
-    async fn get_metadata_rejects_file_entry() {
-        let store = ContentStore::new(MemBlobs::default(), Metadata::new());
-        let file_entry = Entry::file(
-            Link::default(),
-            EntryRatchet::seed(),
-            None,
-            Path::new("example"),
-            Hash::new(b""),
-        );
-        let err = store.get_metadata(&file_entry).await.unwrap_err();
-        assert!(matches!(err, ContentError::WrongVariant { .. }));
-    }
-
-    #[tokio::test]
     async fn put_then_get_file_round_trip() {
-        let ratchet = EntryRatchet::seed();
-        let secret = ratchet.key();
+        let secret = EntryRatchet::seed().key();
         let store = ContentStore::new(MemBlobs::default(), Metadata::new());
 
         let plaintext = b"hello, encrypted world";
@@ -402,8 +358,7 @@ mod tests {
         // link — sanity-check it before exercising the round trip.
         assert_eq!(pt_hash.as_bytes(), blake3::hash(plaintext).as_bytes());
 
-        let entry = Entry::file(link, ratchet, None, Path::new("hello.txt"), pt_hash);
-        let mut reader = store.get_file(&entry).await.unwrap();
+        let mut reader = store.get_file(&link, &secret).await.unwrap();
         let mut got = Vec::new();
         reader.read_to_end(&mut got).unwrap();
         assert_eq!(got.as_slice(), plaintext);
@@ -422,18 +377,6 @@ mod tests {
 
         assert!(inner.stat(&link.hash()).await.unwrap());
         assert!(!store.snapshot_metadata().contains(&link.hash()));
-    }
-
-    #[tokio::test]
-    async fn get_file_rejects_dir_entry() {
-        let store = ContentStore::new(MemBlobs::default(), Metadata::new());
-        let dir_entry = Entry::dir(Link::default(), EntryRatchet::seed(), None);
-        let result = store.get_file(&dir_entry).await;
-        match result {
-            Err(ContentError::WrongVariant { .. }) => {}
-            Err(other) => panic!("expected WrongVariant, got {:?}", other),
-            Ok(_) => panic!("expected WrongVariant error, got Ok"),
-        }
     }
 
     #[tokio::test]

@@ -322,7 +322,7 @@ impl<B: BlobStore> Fs<B> {
         let blobs = ContentStore::new(blobs, metadata);
         // The root is a directory entity like any other; its history is the
         // manifest chain, so `previous` is not tracked on the entry.
-        let root_entry = Entry::dir_versioned(root_link.clone(), root_ratchet, None);
+        let root_entry = Entry::dir(root_link.clone(), root_ratchet, None);
         let root = blobs.get_metadata(&root_entry).await?;
         let ops_log = OpsLog::with_clock(ops_clock);
         Ok(Fs(
@@ -434,7 +434,7 @@ impl<B: BlobStore> Fs<B> {
         previous: Option<Link>,
         plaintext_hash: crate::linked_data::Hash,
     ) -> Result<(), FsError> {
-        let entry = Entry::file_at_path(link.clone(), ratchet, previous, path, plaintext_hash);
+        let entry = Entry::file(link.clone(), ratchet, previous, path, plaintext_hash);
         let new_root = self.set_entry_at_path(entry, path).await?;
         let mut inner = self.0.lock().await;
         inner.pins.insert(link.hash());
@@ -863,7 +863,7 @@ impl<B: BlobStore> Fs<B> {
                 },
             };
             let link = self.1.put_metadata(&ratchet.key(), &dir)?;
-            let entry = Entry::dir_versioned(link, ratchet, previous);
+            let entry = Entry::dir(link, ratchet, previous);
             let new_root = self.set_entry_at_path(entry, path).await?;
             let mut inner = self.0.lock().await;
             inner.root = new_root;
@@ -988,7 +988,7 @@ impl<B: BlobStore> Fs<B> {
                     _ => (EntryRatchet::seed(), None),
                 };
                 let link = blobs.put_metadata(&ratchet.key(), &dir)?;
-                entry = Entry::dir_versioned(link, ratchet, previous);
+                entry = Entry::dir(link, ratchet, previous);
                 name = current_path
                     .file_name()
                     .unwrap_or_default()

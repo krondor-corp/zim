@@ -58,6 +58,6 @@ pub use crdt::{
 };
 pub use entry::{Dir, Entry};
 pub use fs_inner::{Fs, FsError, FsInner};
-pub use manifest::{Manifest, ManifestError, Shares};
+pub use manifest::{Manifest, ManifestError};
 pub use pins::Pins;
-pub use share::Share;
+pub use share::{Share, ShareError, Shares};

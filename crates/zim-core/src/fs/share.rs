@@ -1,5 +1,5 @@
-//! [`Share`] — a peer's encrypted handle to vault content, stored on
-//! the [`Manifest`](super::Manifest).
+//! [`Share`] — a peer's sealed handle to the vault's root ratchet,
+//! stored on the [`Manifest`](super::Manifest) in a [`Shares`] map.
 //!
 //! A share carries an [`Identity`] (`did:key` or `did:web`) rather than
 //! a raw pubkey — see `zim-did`. It also carries an optional `via`: the
@@ -20,16 +20,45 @@
 //! [`zim_did::resolve_reaches`], sealing each client and stamping the
 //! shared `via`. Every `Share` persisted on disk therefore carries a
 //! concrete `did:key` for both `identity` and `via`.
+//!
+//! # Key material
+//!
+//! A share always holds key material: the root ratchet **state** sealed
+//! to the recipient, stamped with the height that state derives
+//! (`sealed_at`). A holder brings it forward by `height − sealed_at`
+//! and derives any later root key itself, so saves never touch shares.
+//! A share is sealed the moment it is granted, with the live root
+//! state; revocation re-seeds the root and re-seals everyone remaining
+//! on the spot. There is no "granted but not yet sealed" state.
+
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use zim_crypto::{PublicKey, RatchetShare};
+use zim_crypto::{EntryRatchet, PrivateKey, PublicKey, RatchetShare, RatchetShareError};
 use zim_did::Did;
+
+/// Errors recovering the root ratchet from a share.
+#[derive(Debug, thiserror::Error)]
+pub enum ShareError {
+    /// The key has no share on this manifest — not a member.
+    #[error("no share for this key")]
+    NotFound,
+    /// A share is sealed at or before the height of the manifest it
+    /// sits in. A newer `sealed_at` means the manifest is corrupt;
+    /// deriving a key from it would only fail later with an opaque
+    /// decrypt error.
+    #[error("share sealed at height {sealed_at} is newer than manifest height {height}")]
+    SealedAfterManifest { sealed_at: u64, height: u64 },
+    /// Sealing to, or unsealing with, the recipient's key failed.
+    #[error("ratchet share: {0}")]
+    Crypto(#[from] RatchetShareError),
+}
 
 /// A peer's share of vault access.
 ///
-/// Pairs a [`Did`] (the seal target) with a [`RatchetShare`] (the
-/// vault secret encrypted to that identity's pubkey) and an optional
+/// Pairs a [`Did`] (the seal target) with a [`RatchetShare`] (the root
+/// ratchet state sealed to that identity's pubkey) and an optional
 /// `via` host the client is reached through.
 ///
 /// Dialability is derived, never stored as a flag: a share with
@@ -39,10 +68,8 @@ use zim_did::Did;
 pub struct Share {
     identity: Did,
     /// The root ratchet state sealed to `identity`, with the height it
-    /// derives. `None` = pending: granted but not yet sealed — the next
-    /// `save` seals the live state, so the holder reads from that
-    /// version onward. Never `None` on a persisted manifest.
-    ratchet_share: Option<RatchetShare>,
+    /// derives.
+    ratchet_share: RatchetShare,
     /// The always-on host this client is reached through. `None` for a
     /// directly-dialable peer; `Some(did:key of host)` for a hosted
     /// client (e.g. a browser reached via the hub). The host never holds
@@ -52,19 +79,43 @@ pub struct Share {
 }
 
 impl Share {
-    /// Construct a share.
+    /// Construct a share from an already-sealed ratchet state.
     ///
-    /// - `ratchet_share` — the vault secret encrypted to `identity`'s
-    ///   underlying pubkey.
+    /// - `ratchet_share` — the root ratchet state encrypted to
+    ///   `identity`'s underlying pubkey.
     /// - `identity` — the peer's DID-shaped identity (the seal target).
     /// - `via` — the host the client is reached through, or `None` for a
     ///   directly-dialable peer.
-    pub fn new(ratchet_share: Option<RatchetShare>, identity: Did, via: Option<Did>) -> Self {
+    pub fn new(ratchet_share: RatchetShare, identity: Did, via: Option<Did>) -> Self {
         Self {
             identity,
             ratchet_share,
             via,
         }
+    }
+
+    /// Seal `root` — the root ratchet state at `sealed_at` — to
+    /// `recipient`, reached through `via`.
+    pub fn seal(
+        root: &EntryRatchet,
+        recipient: &PublicKey,
+        sealed_at: u64,
+        via: Option<Did>,
+    ) -> Result<Self, ShareError> {
+        let ratchet_share = RatchetShare::new(root, recipient, sealed_at)?;
+        Ok(Self::new(ratchet_share, Did::from_key(recipient), via))
+    }
+
+    /// Replace the sealed state with `root` at `sealed_at`, keeping
+    /// identity and `via`. Used when the root lineage is re-seeded.
+    pub fn reseal(
+        &mut self,
+        root: &EntryRatchet,
+        recipient: &PublicKey,
+        sealed_at: u64,
+    ) -> Result<(), ShareError> {
+        self.ratchet_share = RatchetShare::new(root, recipient, sealed_at)?;
+        Ok(())
     }
 
     // Two distinct questions a share answers — keep them apart:
@@ -86,14 +137,9 @@ impl Share {
         self.identity.pubkey()
     }
 
-    /// The vault secret encrypted to [`Self::identity`].
-    pub fn ratchet_share(&self) -> Option<&RatchetShare> {
-        self.ratchet_share.as_ref()
-    }
-
-    /// Granted but not yet sealed by a `save`.
-    pub fn is_pending(&self) -> bool {
-        self.ratchet_share.is_none()
+    /// The root ratchet state sealed to [`Self::identity`].
+    pub fn ratchet_share(&self) -> &RatchetShare {
+        &self.ratchet_share
     }
 
     /// The always-on host this client is reached through, if any. `None`
@@ -120,15 +166,177 @@ impl Share {
             .or_else(|| self.identity.pubkey())
     }
 
-    /// Replace the encrypted secret share (called at save time when the
-    /// vault secret rotates and shares are re-minted).
-    pub fn set_ratchet_share(&mut self, ratchet_share: RatchetShare) {
-        self.ratchet_share = Some(ratchet_share);
+    /// The root ratchet state as of `height`, for the holder of `key`:
+    /// unseal the stored state and bring it forward by
+    /// `height − sealed_at`.
+    pub fn root_ratchet_at(
+        &self,
+        key: &PrivateKey,
+        height: u64,
+    ) -> Result<EntryRatchet, ShareError> {
+        let sealed_at = self.ratchet_share.sealed_at();
+        if sealed_at > height {
+            return Err(ShareError::SealedAfterManifest { sealed_at, height });
+        }
+        let state = self.ratchet_share.recover(key)?;
+        Ok(state.advanced_by(height - sealed_at))
+    }
+}
+
+/// The set of peers who can decrypt the vault: a map from each peer's
+/// [`PublicKey`] to the [`Share`] that grants them access.
+///
+/// Stored on the [`Manifest`](super::Manifest).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Shares(BTreeMap<PublicKey, Share>);
+
+impl Shares {
+    /// An empty shares map.
+    pub fn new() -> Self {
+        Self(BTreeMap::new())
     }
 
-    /// Mark pending again — used when the root lineage is re-seeded on
-    /// revocation, so the next `save` re-seals the new state.
-    pub fn clear_ratchet_share(&mut self) {
-        self.ratchet_share = None;
+    /// Insert (or overwrite) the share for `key`.
+    pub fn insert(&mut self, key: PublicKey, share: Share) {
+        self.0.insert(key, share);
+    }
+
+    /// Look up `key`'s share.
+    pub fn get(&self, key: &PublicKey) -> Option<&Share> {
+        self.0.get(key)
+    }
+
+    /// True if `key` has a share recorded.
+    pub fn contains_key(&self, key: &PublicKey) -> bool {
+        self.0.contains_key(key)
+    }
+
+    /// Iterate the public keys.
+    pub fn keys(&self) -> impl Iterator<Item = &PublicKey> {
+        self.0.keys()
+    }
+
+    /// Iterate `(public_key, share)` pairs.
+    pub fn iter(&self) -> impl Iterator<Item = (&PublicKey, &Share)> {
+        self.0.iter()
+    }
+
+    /// Number of shares.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// True if there are no shares.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Remove and return `key`'s share, if present.
+    pub fn remove(&mut self, key: &PublicKey) -> Option<Share> {
+        self.0.remove(key)
+    }
+
+    /// The root ratchet state as of `height` for the holder of `key`.
+    /// [`ShareError::NotFound`] when `key` has no share.
+    pub fn root_ratchet_for(
+        &self,
+        key: &PrivateKey,
+        height: u64,
+    ) -> Result<EntryRatchet, ShareError> {
+        self.get(&key.public())
+            .ok_or(ShareError::NotFound)?
+            .root_ratchet_at(key, height)
+    }
+
+    /// Re-seal every share to `root` at `sealed_at`. Called after the
+    /// root lineage is re-seeded on revocation.
+    pub fn reseal_all(&mut self, root: &EntryRatchet, sealed_at: u64) -> Result<(), ShareError> {
+        for (pubkey, share) in self.0.iter_mut() {
+            share.reseal(root, pubkey, sealed_at)?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_share_sealed_at_a_height_derives_every_later_root_key() {
+        // Alice seals the root state at height 3. Reading at height 5 must
+        // produce the same key as stepping the live ratchet twice.
+        let alice = PrivateKey::generate();
+        let root = EntryRatchet::seed();
+        let share = Share::seal(&root, &alice.public(), 3, None).unwrap();
+
+        let at_five = share.root_ratchet_at(&alice, 5).unwrap();
+        assert_eq!(at_five.key(), root.advanced_by(2).key());
+        assert_eq!(share.root_ratchet_at(&alice, 3).unwrap().key(), root.key());
+    }
+
+    #[test]
+    fn a_share_newer_than_its_manifest_is_rejected() {
+        let alice = PrivateKey::generate();
+        let share = Share::seal(&EntryRatchet::seed(), &alice.public(), 4, None).unwrap();
+
+        assert!(matches!(
+            share.root_ratchet_at(&alice, 3),
+            Err(ShareError::SealedAfterManifest {
+                sealed_at: 4,
+                height: 3
+            })
+        ));
+    }
+
+    #[test]
+    fn only_members_recover_the_root() {
+        let alice = PrivateKey::generate();
+        let bob = PrivateKey::generate();
+        let root = EntryRatchet::seed();
+        let mut shares = Shares::new();
+        shares.insert(
+            alice.public(),
+            Share::seal(&root, &alice.public(), 0, None).unwrap(),
+        );
+
+        assert!(shares.root_ratchet_for(&alice, 0).is_ok());
+        assert!(matches!(
+            shares.root_ratchet_for(&bob, 0),
+            Err(ShareError::NotFound)
+        ));
+    }
+
+    #[test]
+    fn resealing_keeps_identity_and_via_but_swaps_the_lineage() {
+        let alice = PrivateKey::generate();
+        let hub = PrivateKey::generate().public();
+        let old = EntryRatchet::seed();
+        let new = EntryRatchet::seed();
+        let mut shares = Shares::new();
+        shares.insert(
+            alice.public(),
+            Share::seal(&old, &alice.public(), 2, Some(Did::from_key(&hub))).unwrap(),
+        );
+
+        shares.reseal_all(&new, 7).unwrap();
+        let share = shares.get(&alice.public()).unwrap();
+        assert_eq!(share.via(), Some(&Did::from_key(&hub)));
+        assert_eq!(share.ratchet_share().sealed_at(), 7);
+        assert_eq!(share.root_ratchet_at(&alice, 7).unwrap().key(), new.key());
+    }
+
+    #[test]
+    fn share_roundtrips_through_dag_cbor() {
+        use ipld_core::codec::Codec;
+        use serde_ipld_dagcbor::codec::DagCborCodec;
+
+        let alice = PrivateKey::generate().public();
+        let share = Share::seal(&EntryRatchet::seed(), &alice, 0, None).unwrap();
+
+        let encoded = DagCborCodec::encode_to_vec(&share).unwrap();
+        let decoded: Share = DagCborCodec::decode_from_slice(&encoded).unwrap();
+
+        assert_eq!(share, decoded);
     }
 }

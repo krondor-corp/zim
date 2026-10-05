@@ -522,7 +522,7 @@ where
         };
         let mut vault = match open_result {
             Ok(v) => v,
-            Err(zim_core::vault::VaultError::Fs(zim_core::fs::FsError::ShareNotFound)) => {
+            Err(zim_core::vault::VaultError::Share(zim_core::fs::ShareError::NotFound)) => {
                 // Relay path: walk the chain by raw blob fetches and
                 // append to the log. No Vault, no decrypt.
                 return crate::relay_pull::apply_chain_log_only(

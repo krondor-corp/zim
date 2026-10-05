@@ -64,7 +64,7 @@ pub async fn collect_ops_since<B: BlobStore>(
         }
         // Root key at this version: our sealed ratchet state, advanced to
         // this manifest's height.
-        let secret = manifest.root_secret_for(secret_key)?;
+        let secret = manifest.root_ratchet_for(secret_key)?.key();
 
         if *manifest.ops() != Link::default() {
             let encrypted = blobs.get(&manifest.ops().hash()).await?;

@@ -91,7 +91,7 @@ async fn hub_mirrors_chain_without_a_share() {
     );
 
     // ── Trigger the pull. The relay branch in `pull_from_peer`
-    // detects `ShareNotFound` and delegates to
+    // detects `ShareError::NotFound` and delegates to
     // `zim_peer::relay_pull::apply_chain_log_only`. ──
     hub.coord()
         .execute(Effect::PullFromPeer {

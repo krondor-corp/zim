@@ -13,7 +13,7 @@ use bytes::Bytes;
 use zim_crypto::PrivateKey;
 
 use crate::blobs::{BlobError, BlobStore};
-use crate::fs::{AbsPath, FsError};
+use crate::fs::{AbsPath, ShareError};
 use crate::linked_data::{Hash, Link};
 
 use super::log::{VaultLog, VaultLogError};
@@ -284,9 +284,9 @@ async fn open_errors_when_caller_has_no_share() {
 
     let result: Result<Vault<MemBlobs, MemLog>, _> = Vault::open(id, blobs, log, &bob).await;
     match result {
-        Err(VaultError::Fs(FsError::ShareNotFound)) => {}
-        Err(other) => panic!("expected ShareNotFound, got {other:?}"),
-        Ok(_) => panic!("expected ShareNotFound, got Ok"),
+        Err(VaultError::Share(ShareError::NotFound)) => {}
+        Err(other) => panic!("expected ShareError::NotFound, got {other:?}"),
+        Ok(_) => panic!("expected ShareError::NotFound, got Ok"),
     }
 }
 
@@ -350,8 +350,7 @@ async fn saves_advance_the_root_without_reminting_shares() {
         .get_share(&alice.public())
         .unwrap()
         .ratchet_share()
-        .cloned()
-        .expect("owner share sealed at genesis");
+        .clone();
     assert_eq!(share_at_genesis.sealed_at(), 0);
 
     for (i, body) in [&b"one"[..], &b"two"[..]].iter().enumerate() {
@@ -366,11 +365,9 @@ async fn saves_advance_the_root_without_reminting_shares() {
             .manifest()
             .get_share(&alice.public())
             .unwrap()
-            .ratchet_share()
-            .cloned()
-            .unwrap();
+            .ratchet_share();
         assert_eq!(
-            share_now,
+            *share_now,
             share_at_genesis,
             "save {} did not re-mint",
             i + 1
@@ -391,9 +388,10 @@ async fn saves_advance_the_root_without_reminting_shares() {
 }
 
 #[tokio::test]
-async fn a_newcomer_is_sealed_at_their_grant_and_reads_from_there() {
-    // Alice writes, saves, then grants Bob. Bob's share is sealed at the
-    // height of the save that granted him, and he reads that version.
+async fn a_newcomer_is_sealed_at_the_grant_and_reads_from_there() {
+    // Alice writes, saves, then grants Bob. His share is sealed on the
+    // spot with the live root state — the current height — and the
+    // next save needs no re-sealing: he derives its key himself.
     let blobs = MemBlobs::default();
     let log = MemLog::default();
     let alice = PrivateKey::generate();
@@ -411,22 +409,24 @@ async fn a_newcomer_is_sealed_at_their_grant_and_reads_from_there() {
     vault.save().await.expect("save 1");
 
     vault.add_share(bob.public()).expect("grant");
-    assert!(
-        vault
-            .manifest()
-            .get_share(&bob.public())
-            .unwrap()
-            .is_pending(),
-        "granted but not yet sealed"
-    );
-    vault.save().await.expect("save 2 seals bob");
-    let bob_share = vault
+    let sealed_at_grant = vault
         .manifest()
         .get_share(&bob.public())
         .unwrap()
         .ratchet_share()
-        .expect("sealed by the save");
-    assert_eq!(bob_share.sealed_at(), 2);
+        .clone();
+    assert_eq!(sealed_at_grant.sealed_at(), 1, "sealed at the grant height");
+
+    vault.save().await.expect("save 2 publishes bob's share");
+    assert_eq!(
+        *vault
+            .manifest()
+            .get_share(&bob.public())
+            .unwrap()
+            .ratchet_share(),
+        sealed_at_grant,
+        "the save did not touch the share"
+    );
 
     let bobs = Vault::open(id, blobs, log, &bob).await.expect("bob opens");
     assert_eq!(bobs.height(), 2);
@@ -455,18 +455,19 @@ async fn revoking_bob_reseeds_the_root_lineage() {
         .get_share(&alice.public())
         .unwrap()
         .ratchet_share()
-        .cloned()
-        .unwrap();
+        .clone();
 
     vault.remove_share(bob.public()).expect("revoke");
-    assert!(
-        vault
-            .manifest()
-            .get_share(&alice.public())
-            .unwrap()
-            .is_pending(),
-        "revocation marks the remaining shares for re-sealing"
-    );
+    // Alice is re-sealed immediately, on the new lineage, at the current
+    // height — nothing is left for the save to fill in.
+    let alice_share_after = vault
+        .manifest()
+        .get_share(&alice.public())
+        .unwrap()
+        .ratchet_share()
+        .clone();
+    assert_ne!(alice_share_after, alice_share_before);
+    assert_eq!(alice_share_after.sealed_at(), 1);
     vault
         .fs()
         .add(
@@ -482,19 +483,10 @@ async fn revoking_bob_reseeds_the_root_lineage() {
         Vault::open(id, blobs.clone(), log.clone(), &bob).await;
     assert!(matches!(
         result,
-        Err(VaultError::Fs(FsError::ShareNotFound))
+        Err(VaultError::Share(ShareError::NotFound))
     ));
 
-    // …Alice was re-sealed on the NEW lineage and reads the new version.
-    let alice_share_after = vault
-        .manifest()
-        .get_share(&alice.public())
-        .unwrap()
-        .ratchet_share()
-        .cloned()
-        .unwrap();
-    assert_ne!(alice_share_after, alice_share_before);
-    assert_eq!(alice_share_after.sealed_at(), 2);
+    // …and Alice reads the new version off the NEW lineage.
     let reopened = Vault::open(id, blobs, log, &alice)
         .await
         .expect("alice opens");

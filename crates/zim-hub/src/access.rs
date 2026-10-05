@@ -24,7 +24,7 @@ use crate::state::AppState;
 ///
 /// Reads the head manifest blob *directly* — the hub is a relay,
 /// not a shareholder, so `Peer::vault(id)` would fail with
-/// `ShareNotFound`. The manifest's `shares` map keys are
+/// `ShareError::NotFound`. The manifest's `shares` map keys are
 /// [`PublicKey`]s (the addressing for who can decrypt), not the
 /// `SecretShare` payloads, so the JOIN against `user_peers` works
 /// without decrypting anything. Lookup errors fall through to

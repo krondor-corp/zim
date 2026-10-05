@@ -74,6 +74,15 @@ async fn setup() -> (Fs<MemBlobs>, PrivateKey) {
     (fs, owner)
 }
 
+/// Stand in for a `Vault::save`: persist the tree so everything minted
+/// so far counts as a saved revision. The root ratchet and prior root
+/// hash don't matter to these tests.
+async fn checkpoint(fs: &Fs<MemBlobs>) {
+    fs.save_tree(Hash::new(b""), &EntryRatchet::seed())
+        .await
+        .expect("save_tree");
+}
+
 #[tokio::test]
 async fn alice_adds_a_file_and_reads_it_back() {
     let (fs, _owner) = setup().await;
@@ -180,11 +189,12 @@ async fn mv_moves_a_file_to_a_new_path() {
 
 #[tokio::test]
 async fn rewriting_a_file_keeps_its_identity_and_advances_its_key() {
-    // Alice writes a note, then saves a second draft over it.
+    // Alice writes a note and saves, then writes a second draft over it.
     let (fs, _) = setup().await;
     let path = AbsPath::new("/note.md").unwrap();
     fs.add(&path, Cursor::new(b"first draft")).await.unwrap();
     let v1 = fs.get_entry_at_path(&path).await.unwrap().unwrap();
+    checkpoint(&fs).await;
 
     fs.add(&path, Cursor::new(b"second draft, longer"))
         .await
@@ -201,9 +211,65 @@ async fn rewriting_a_file_keeps_its_identity_and_advances_its_key() {
         *v2.ratchet(),
         "v2's ratchet is exactly v1's advanced once"
     );
-    // …and history chains: v2 points back at v1.
+    // …and history chains: v2 points back at the saved v1.
     assert_eq!(v1.previous(), None, "the first version has no predecessor");
     assert_eq!(v2.previous(), Some(v1.link()));
+}
+
+#[tokio::test]
+async fn previous_skips_revisions_that_were_never_saved() {
+    // Alice saves v1, then writes v2 and v3 without saving in between.
+    // v2 lands in no manifest — nobody could fetch or decrypt it — so
+    // v3's lineage points at v1, and v2 (while it lived) did too.
+    let (fs, _) = setup().await;
+    let path = AbsPath::new("/note.md").unwrap();
+    fs.add(&path, Cursor::new(b"v1")).await.unwrap();
+    let v1 = fs.get_entry_at_path(&path).await.unwrap().unwrap();
+    checkpoint(&fs).await;
+
+    fs.add(&path, Cursor::new(b"v2")).await.unwrap();
+    let v2 = fs.get_entry_at_path(&path).await.unwrap().unwrap();
+    assert_eq!(v2.previous(), Some(v1.link()));
+
+    fs.add(&path, Cursor::new(b"v3")).await.unwrap();
+    let v3 = fs.get_entry_at_path(&path).await.unwrap().unwrap();
+    assert_eq!(
+        v3.previous(),
+        Some(v1.link()),
+        "an unsaved revision is not a predecessor"
+    );
+    // The key schedule still moved once per write: v3 = v1 advanced twice.
+    assert_eq!(v1.ratchet().advanced_by(2), *v3.ratchet());
+
+    // Two unsaved writes with nothing saved before them have no lineage.
+    let fresh = AbsPath::new("/scratch.md").unwrap();
+    fs.add(&fresh, Cursor::new(b"a")).await.unwrap();
+    fs.add(&fresh, Cursor::new(b"b")).await.unwrap();
+    let b = fs.get_entry_at_path(&fresh).await.unwrap().unwrap();
+    assert_eq!(b.previous(), None);
+}
+
+#[tokio::test]
+async fn a_directory_s_previous_also_skips_unsaved_bodies() {
+    // Alice saves a folder, then drops two files into it before saving
+    // again. Each add rewrites the folder body; the second rewrite must
+    // chain to the saved body, not to the evicted intermediate one.
+    let (fs, _) = setup().await;
+    let docs = AbsPath::new("/docs").unwrap();
+    fs.mkdir(&docs, false).await.unwrap();
+    let saved = fs.get_entry_at_path(&docs).await.unwrap().unwrap();
+    checkpoint(&fs).await;
+
+    fs.add(&AbsPath::new("/docs/a.md").unwrap(), Cursor::new(b"a"))
+        .await
+        .unwrap();
+    fs.add(&AbsPath::new("/docs/b.md").unwrap(), Cursor::new(b"b"))
+        .await
+        .unwrap();
+    let now = fs.get_entry_at_path(&docs).await.unwrap().unwrap();
+
+    assert_eq!(now.previous(), Some(saved.link()));
+    assert_eq!(saved.ratchet().advanced_by(2), *now.ratchet());
 }
 
 #[tokio::test]
@@ -227,13 +293,14 @@ async fn renaming_a_file_moves_the_same_entity_unchanged() {
 
 #[tokio::test]
 async fn a_directory_has_an_identity_and_advances_when_its_contents_change() {
-    // Alice makes a folder, then adds a file inside it — which rewrites
-    // the folder's body.
+    // Alice makes a folder and saves, then adds a file inside it — which
+    // rewrites the folder's body.
     let (fs, _) = setup().await;
     let docs = AbsPath::new("/docs").unwrap();
     fs.mkdir(&docs, false).await.unwrap();
     let d1 = fs.get_entry_at_path(&docs).await.unwrap().unwrap();
     assert!(d1.is_dir());
+    checkpoint(&fs).await;
 
     fs.add(&AbsPath::new("/docs/a.md").unwrap(), Cursor::new(b"inside"))
         .await

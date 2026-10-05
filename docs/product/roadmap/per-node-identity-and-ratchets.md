@@ -188,10 +188,22 @@ design above:
   rather than seeding a fresh ratchet, which would derive a key that
   does not decrypt the content.
 - **Rewrite = same entity, next revision:** `add` over an existing file
-  advances its ratchet (identity unchanged by construction), chains
-  `previous = old link`.
-  Dir bodies rewritten on the root→leaf path do the same. `mv` moves the
-  entry intact (same id/ratchet/link). Synthetic `-p` ancestors seed.
+  advances its ratchet (identity unchanged by construction) and chains
+  `previous` to the prior **saved** revision's link. Dir bodies
+  rewritten on the root→leaf path do the same. `mv` moves the entry
+  intact (same id/ratchet/link). Synthetic `-p` ancestors seed.
+- **`previous` means the previous *saved* revision, everywhere.** A
+  revision minted and overwritten between two saves lands in no
+  manifest: no pin replicates it, and no entry anywhere carries the
+  ratchet state that decrypts it (skip ratchets don't step backward).
+  Pointing at it would be a dangling, undecryptable link. So the fs
+  tracks the hashes minted since the last save and a rewrite of an
+  unsaved revision inherits *its* `previous` instead of chaining to it.
+  The ratchet still advances once per write. Version history is the
+  manifest chain; saves are versions. The root has no `Entry` at all —
+  its link is the manifest's, its ratchet the vault's, its history the
+  manifest chain — so there is no fake root entry with a meaningless
+  `previous`.
 - **A conflict sidecar is a fork of the same entity.** The resolver's
   sidecar must carry the loser's ratchet (the blob is encrypted under
   that key and there is no plaintext to re-key), and identity derives

@@ -34,6 +34,7 @@ use zim_crypto::{EntryRatchet, PrivateKey, PublicKey, RatchetShare, Secret, Sign
 use zim_did::Did;
 
 use super::content_store::Metadata;
+use super::fs_inner::FsError;
 use super::pins::Pins;
 use super::share::Share;
 
@@ -252,27 +253,33 @@ impl Manifest {
 
     /// The root ratchet state as of THIS manifest's height, for `key`'s
     /// shareholder: recover the sealed state and bring it forward by
-    /// `height - sealed_at`. `ShareNotFound` if `key` has no share, or its
-    /// share is still pending (granted but not yet sealed by a save).
-    pub fn root_ratchet_for(&self, key: &PrivateKey) -> Result<EntryRatchet, crate::fs::FsError> {
-        use crate::fs::FsError;
-
+    /// `height - sealed_at`. `ShareNotFound` if `key` has no share;
+    /// `SharePending` if it was granted but not yet sealed by a save.
+    pub fn root_ratchet_for(&self, key: &PrivateKey) -> Result<EntryRatchet, FsError> {
         let share = self
             .get_share(&key.public())
             .ok_or(FsError::ShareNotFound)?;
-
-        let sealed = share.ratchet_share().ok_or(FsError::ShareNotFound)?;
-
+        let sealed = share.ratchet_share().ok_or(FsError::SharePending)?;
+        // A share is sealed at the height of the save that wrote it, so it
+        // can never be newer than the manifest it sits in. If it is, the
+        // manifest is corrupt — say so, rather than derive a wrong key and
+        // fail later with an opaque decrypt error.
+        let height = self.height();
+        if sealed.sealed_at() > height {
+            return Err(FsError::Backing(anyhow::anyhow!(
+                "share sealed at height {} is newer than manifest height {height}",
+                sealed.sealed_at()
+            )));
+        }
         let state = sealed
             .recover(key)
             .map_err(|e| FsError::Backing(e.into()))?;
-
-        Ok(state.advanced_by(self.height().saturating_sub(sealed.sealed_at())))
+        Ok(state.advanced_by(height - sealed.sealed_at()))
     }
 
     /// The root content key (root dir body + ops log) at this height for
     /// `key`'s shareholder.
-    pub fn root_secret_for(&self, key: &PrivateKey) -> Result<Secret, crate::fs::FsError> {
+    pub fn root_secret_for(&self, key: &PrivateKey) -> Result<Secret, FsError> {
         Ok(self.root_ratchet_for(key)?.key())
     }
 

@@ -209,19 +209,21 @@ design above:
   - `save()` just advances the root ratchet. It **no longer re-mints
     every share** on every save (previously O(shareholders) ECDH per
     save). Shares change only on membership changes.
-  - `add_share` creates a *pending* share (`None`); the next `save`
-    seals the live state at that height — the newcomer reads from that
-    version onward and nothing before. Grant-from-a-point, by
-    construction.
-  - `remove_share` / `remove_relay` **re-seed the root lineage** and mark
-    every remaining share pending, so the next save encrypts under the
-    new lineage and re-seals it to everyone still present. Required: a
-    revoked holder could otherwise derive every later key. Versions
-    before the revocation stay readable through their own manifests'
-    shares.
-  - All four root-key recoveries (vault open/reload, peer chain walk)
-    go through one helper, `Manifest::root_ratchet_for` /
-    `root_secret_for`. The ops-log key is the root key.
+  - `add_share` seals the **live** root state to the newcomer on the
+    spot, stamped with the current height — they read from that version
+    onward and nothing before. Grant-from-a-point, by construction. A
+    share always carries key material; there is no "granted but not yet
+    sealed" state in memory or on disk.
+  - `remove_share` / `remove_relay` **re-seed the root lineage** and
+    immediately re-seal the fresh state to everyone remaining; the next
+    save encrypts under it. Required: a revoked holder could otherwise
+    derive every later key. Versions before the revocation stay
+    readable through their own manifests' shares.
+  - Recovery lives in the shares module: `Share::root_ratchet_at` /
+    `Shares::root_ratchet_for` with their own `ShareError` (`NotFound`,
+    `SealedAfterManifest`, `Crypto`), surfaced as `VaultError::Share`.
+    `Manifest::root_ratchet_for` is a one-line delegate supplying the
+    height. The ops-log key is the root key.
   - `SecretShare` (32-byte key sealing) is untouched; the hub and the
     browser envelope still use it for non-root purposes.
 - **Rename-aware merge is in.** `Mv` and `Remove` ops carry the moved /

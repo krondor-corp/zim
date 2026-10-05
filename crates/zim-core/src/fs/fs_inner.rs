@@ -15,6 +15,7 @@ use super::crdt::{OpKind, OpsLog};
 use super::entry::{Dir, Entry};
 use super::manifest::ManifestError;
 use super::pins::Pins;
+use super::share::ShareError;
 
 /// The mutable state inside an [`Fs`]: the decrypted root [`Dir`], the
 /// pending [`OpsLog`], the pin set, and the local peer's public key.
@@ -120,8 +121,7 @@ pub struct TreeSaveOutput {
 /// Two categories:
 ///
 /// - **Fs-domain conditions** the caller can react to:
-///   [`Self::PathNotFound`], [`Self::CannotMutate`],
-///   [`Self::ShareNotFound`].
+///   [`Self::PathNotFound`], [`Self::CannotMutate`].
 /// - **Backing-layer failures** — every error from beneath the fs layer
 ///   (blob I/O, crypto, codec, signature verification, log backend,
 ///   content-store) folds into [`Self::Backing`]. Callers can't
@@ -146,18 +146,9 @@ pub enum FsError {
     /// the human-readable reason.
     #[error("cannot mutate {0}: {1}")]
     CannotMutate(AbsPath, String),
-    /// The local peer doesn't have a [`Share`] on the manifest being
-    /// opened, so the vault secret can't be recovered.
-    #[error("peers share was not found")]
-    ShareNotFound,
-    /// The peer has a share but it has not been sealed yet — granted
-    /// since the last save. Only ever observed in-memory, never on a
-    /// persisted manifest.
-    #[error("peer's share is pending — granted but not yet sealed by a save")]
-    SharePending,
     /// A failure from a layer beneath fs: [`BlobError`], [`SecretError`],
-    /// [`CodecError`], [`ManifestError`], [`SecretShareError`](zim_crypto::SecretShareError),
-    /// or a bucket-log backend error. The original error is preserved
+    /// [`CodecError`], [`ManifestError`], [`ShareError`], or a
+    /// bucket-log backend error. The original error is preserved
     /// inside the [`anyhow::Error`] and walkable via
     /// [`std::error::Error::source`].
     #[error(transparent)]
@@ -183,7 +174,7 @@ impl_backing_from!(
     CodecError,
     ManifestError,
     ContentError,
-    zim_crypto::SecretShareError,
+    ShareError,
 );
 
 impl<B: BlobStore> Fs<B> {

@@ -25,83 +25,18 @@
 //! manifest's [`Link`]. Genesis manifests have `height = 0` and a
 //! default `previous`.
 
-use std::collections::BTreeMap;
-
 use serde::{Deserialize, Serialize};
 
 use crate::linked_data::{BlockEncoded, CodecError, Link};
-use zim_crypto::{EntryRatchet, PrivateKey, PublicKey, RatchetShare, Secret, Signature};
+use zim_crypto::{EntryRatchet, PrivateKey, PublicKey, RatchetShare, Signature};
 use zim_did::Did;
 
 use super::content_store::Metadata;
-use super::fs_inner::FsError;
 use super::pins::Pins;
-use super::share::Share;
+use super::share::{Share, ShareError, Shares};
 
 /// Version type for manifest bookkeeping (kept as a string alias).
 pub type Version = String;
-
-/// The set of peers who can decrypt the vault: a map from each peer's
-/// [`PublicKey`] to the [`Share`] that grants them access.
-///
-/// Stored on the [`Manifest`]; mutated by [`Fs::add_share`](super::Fs::add_share).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct Shares(BTreeMap<PublicKey, Share>);
-
-impl Shares {
-    /// An empty shares map.
-    pub fn new() -> Self {
-        Self(BTreeMap::new())
-    }
-
-    /// Insert (or overwrite) the share for `key`.
-    pub fn insert(&mut self, key: PublicKey, share: Share) {
-        self.0.insert(key, share);
-    }
-
-    /// Look up `key`'s share.
-    pub fn get(&self, key: &PublicKey) -> Option<&Share> {
-        self.0.get(key)
-    }
-
-    /// True if `key` has a share recorded.
-    pub fn contains_key(&self, key: &PublicKey) -> bool {
-        self.0.contains_key(key)
-    }
-
-    /// Iterate the public keys.
-    pub fn keys(&self) -> impl Iterator<Item = &PublicKey> {
-        self.0.keys()
-    }
-
-    /// Iterate `(public_key, share)` pairs.
-    pub fn iter(&self) -> impl Iterator<Item = (&PublicKey, &Share)> {
-        self.0.iter()
-    }
-
-    /// Mutable `(public_key, share)` iterator. The save loop uses
-    /// this to re-mint each share's encrypted secret against the
-    /// stored pubkey — no need to fish a pubkey back out of the
-    /// share's `Did`.
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&PublicKey, &mut Share)> {
-        self.0.iter_mut()
-    }
-
-    /// Number of shares.
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    /// True if there are no shares.
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    /// Remove and return `key`'s share, if present.
-    pub fn remove(&mut self, key: &PublicKey) -> Option<Share> {
-        self.0.remove(key)
-    }
-}
 
 /// Errors raised by manifest [`encode`](BlockEncoded::encode) /
 /// [`decode`](BlockEncoded::decode) / [`sign`](Manifest::sign) /
@@ -179,7 +114,7 @@ impl Manifest {
             name,
             shares: {
                 let mut s = Shares::new();
-                s.insert(owner, Share::new(Some(share), Did::from_key(&owner), None));
+                s.insert(owner, Share::new(share, Did::from_key(&owner), None));
                 s
             },
             root,
@@ -251,36 +186,10 @@ impl Manifest {
         &mut self.shares
     }
 
-    /// The root ratchet state as of THIS manifest's height, for `key`'s
-    /// shareholder: recover the sealed state and bring it forward by
-    /// `height - sealed_at`. `ShareNotFound` if `key` has no share;
-    /// `SharePending` if it was granted but not yet sealed by a save.
-    pub fn root_ratchet_for(&self, key: &PrivateKey) -> Result<EntryRatchet, FsError> {
-        let share = self
-            .get_share(&key.public())
-            .ok_or(FsError::ShareNotFound)?;
-        let sealed = share.ratchet_share().ok_or(FsError::SharePending)?;
-        // A share is sealed at the height of the save that wrote it, so it
-        // can never be newer than the manifest it sits in. If it is, the
-        // manifest is corrupt — say so, rather than derive a wrong key and
-        // fail later with an opaque decrypt error.
-        let height = self.height();
-        if sealed.sealed_at() > height {
-            return Err(FsError::Backing(anyhow::anyhow!(
-                "share sealed at height {} is newer than manifest height {height}",
-                sealed.sealed_at()
-            )));
-        }
-        let state = sealed
-            .recover(key)
-            .map_err(|e| FsError::Backing(e.into()))?;
-        Ok(state.advanced_by(height - sealed.sealed_at()))
-    }
-
-    /// The root content key (root dir body + ops log) at this height for
-    /// `key`'s shareholder.
-    pub fn root_secret_for(&self, key: &PrivateKey) -> Result<Secret, FsError> {
-        Ok(self.root_ratchet_for(key)?.key())
+    /// The root ratchet state as of THIS manifest's height, for the
+    /// holder of `key`. Its `.key()` is the root dir + ops-log key.
+    pub fn root_ratchet_for(&self, key: &PrivateKey) -> Result<EntryRatchet, ShareError> {
+        self.shares.root_ratchet_for(key, self.height)
     }
 
     pub fn get_share(&self, public_key: &PublicKey) -> Option<&Share> {
@@ -399,8 +308,6 @@ impl Manifest {
 mod tests {
     use super::*;
     use crate::linked_data::Link;
-    #[allow(unused_imports)]
-    use zim_crypto::{PublicKey, Secret};
 
     fn create_test_manifest(secret_key: &PrivateKey) -> Manifest {
         Manifest::new(
@@ -411,20 +318,6 @@ mod tests {
             0,
         )
         .unwrap()
-    }
-
-    #[test]
-    fn test_share_struct_serialize() {
-        use ipld_core::codec::Codec;
-        use serde_ipld_dagcbor::codec::DagCborCodec;
-
-        let public_key = zim_crypto::PrivateKey::generate().public();
-        let share = Share::new(None, Did::from_key(&public_key), None);
-
-        let encoded = DagCborCodec::encode_to_vec(&share).unwrap();
-        let decoded: Share = DagCborCodec::decode_from_slice(&encoded).unwrap();
-
-        assert_eq!(share, decoded);
     }
 
     #[test]

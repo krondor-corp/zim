@@ -3,7 +3,7 @@
 //! Gated by [`crate::access::can_access_vault`]: non-owners get 404.
 //! Reads from `coord.log()` directly — the hub holds ciphertext + the
 //! log, but not a Share, so the higher-level `Peer::vault()` would
-//! fail with `ShareNotFound`.
+//! fail with `ShareError::NotFound`.
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;

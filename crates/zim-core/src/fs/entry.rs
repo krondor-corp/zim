@@ -59,11 +59,15 @@ pub enum Entry {
         /// This revision's key schedule. The content key is derived from
         /// it (`ratchet.key()`); so is the entity's identity.
         ratchet: EntryRatchet,
-        /// Prior version of THIS entity (its previous `link`), so one
-        /// file's history is an O(1) walk. `Link::default()` means
-        /// revision 0 — the same null-link sentinel `Manifest::previous`
-        /// uses for genesis. Read it through [`Entry::previous`], which
-        /// maps the sentinel to `None`.
+        /// The prior **saved** revision of THIS entity (its `link` in
+        /// the last manifest that carried it), so one file's history is
+        /// a walk from manifest to manifest. Revisions minted and
+        /// overwritten between two saves are skipped: they land in no
+        /// manifest, so nothing could fetch or decrypt them.
+        /// `Link::default()` means no saved predecessor — the same
+        /// null-link sentinel `Manifest::previous` uses for genesis.
+        /// Read it through [`Entry::previous`], which maps the sentinel
+        /// to `None`.
         previous: Link,
     },
     /// A subdirectory entry. The link points at an encrypted [`Dir`] body
@@ -71,8 +75,8 @@ pub enum Entry {
     Dir {
         /// Content-addressed pointer to the encrypted [`Dir`] body.
         link: Link,
-        /// See [`Entry::File::ratchet`]. The root carries the vault's root
-        /// ratchet like any other directory.
+        /// See [`Entry::File::ratchet`]. (The root has no `Entry`: its
+        /// link lives on the manifest and its ratchet on the vault.)
         ratchet: EntryRatchet,
         /// See [`Entry::File::previous`].
         previous: Link,
@@ -82,8 +86,9 @@ pub enum Entry {
 impl Entry {
     /// A file entry. Every field comes from the caller — there is no
     /// defaulted or placeholder form. `ratchet` is this revision's key
-    /// schedule (and identity); `previous` is `None` at revision 0 and
-    /// the prior `link` on a rewrite; `path` drives MIME inference;
+    /// schedule (and identity); `previous` is the prior **saved**
+    /// revision's `link`, `None` when there is none (stored as the
+    /// null-link sentinel); `path` drives MIME inference;
     /// `plaintext_hash` is `blake3` of the body as written.
     pub fn file(
         link: Link,
@@ -102,8 +107,9 @@ impl Entry {
         }
     }
 
-    /// A directory entry. `previous` is `None` at revision 0 and the
-    /// prior `link` on a rewrite.
+    /// A directory entry. `previous` is the prior **saved** revision's
+    /// `link`, `None` when there is none (stored as the null-link
+    /// sentinel).
     pub fn dir(link: Link, ratchet: EntryRatchet, previous: Option<Link>) -> Self {
         Entry::Dir {
             link,
@@ -125,7 +131,7 @@ impl Entry {
         self.ratchet().key()
     }
 
-    /// Stable entity identity; `None` only for the root.
+    /// Stable entity identity, derived from the ratchet's seed.
     pub fn id(&self) -> EntryId {
         self.ratchet().id()
     }
@@ -137,8 +143,8 @@ impl Entry {
         }
     }
 
-    /// The prior version of this entity; `None` at revision 0 (the
-    /// stored sentinel is `Link::default()`, never handed out).
+    /// The prior saved revision of this entity; `None` when there is
+    /// none (the stored sentinel is `Link::default()`, never handed out).
     pub fn previous(&self) -> Option<&Link> {
         match self {
             Entry::File { previous, .. } | Entry::Dir { previous, .. } => {

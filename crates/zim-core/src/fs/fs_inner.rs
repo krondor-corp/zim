@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -6,7 +6,7 @@ use std::sync::Arc;
 use futures::lock::Mutex;
 
 use crate::blobs::{BlobError, BlobStore};
-use crate::linked_data::{BlockEncoded, CodecError, Link};
+use crate::linked_data::{BlockEncoded, CodecError, Hash, Link};
 use zim_crypto::{EntryId, EntryRatchet, PublicKey, SecretError};
 
 use super::abs_path::AbsPath;
@@ -46,6 +46,22 @@ pub struct FsInner {
     pub ops_log: OpsLog,
     /// Local peer's public key (the author of any newly recorded ops).
     pub public_key: PublicKey,
+    /// Hashes of file blobs and dir bodies minted since the last save.
+    /// None of them is in any manifest yet, so a rewrite of one must
+    /// not chain `previous` to it — nobody could fetch or decrypt it.
+    /// Cleared by [`Fs::save_tree`].
+    pub unsaved: HashSet<Hash>,
+}
+
+/// The lineage pointer for a rewrite of `old`: its link if that
+/// revision was saved, else the pointer it carried. See
+/// [`FsInner::unsaved`].
+fn lineage_previous(unsaved: &HashSet<Hash>, old: &Entry) -> Option<Link> {
+    if unsaved.contains(&old.link().hash()) {
+        old.previous().cloned()
+    } else {
+        Some(old.link().clone())
+    }
 }
 
 impl FsInner {
@@ -247,11 +263,13 @@ impl<B: BlobStore> Fs<B> {
 
         // Update internal state: ops_log is now persisted; future
         // operations start a fresh log but preserve the clock so new
-        // ops stay monotonic.
+        // ops stay monotonic. Everything minted this session is now in
+        // a manifest, so rewrites may chain to it.
         {
             let mut inner = self.0.lock().await;
             inner.ops_log.clear_preserving_clock();
             inner.pins = pins.clone();
+            inner.unsaved.clear();
         }
 
         Ok(TreeSaveOutput {
@@ -289,6 +307,7 @@ impl<B: BlobStore> Fs<B> {
                 pins: Pins::default(),
                 ops_log: OpsLog::new(),
                 public_key: owner_pubkey,
+                unsaved: HashSet::new(),
             })),
             blobs,
         );
@@ -316,10 +335,9 @@ impl<B: BlobStore> Fs<B> {
         blobs: B,
     ) -> Result<Self, FsError> {
         let blobs = ContentStore::new(blobs, metadata);
-        // The root is a directory entity like any other; its history is the
-        // manifest chain, so `previous` is not tracked on the entry.
-        let root_entry = Entry::dir(root_link.clone(), root_ratchet, None);
-        let root = blobs.get_metadata(&root_entry).await?;
+        // The root has no `Entry`: its link is the manifest's, its key the
+        // vault's, and its history the manifest chain.
+        let root = blobs.get_dir(root_link, &root_ratchet.key()).await?;
         let ops_log = OpsLog::with_clock(ops_clock);
         Ok(Fs(
             Arc::new(Mutex::new(FsInner {
@@ -327,6 +345,7 @@ impl<B: BlobStore> Fs<B> {
                 pins,
                 ops_log,
                 public_key: owner_pubkey,
+                unsaved: HashSet::new(),
             })),
             blobs,
         ))
@@ -356,7 +375,7 @@ impl<B: BlobStore> Fs<B> {
         // - dest is a directory: refuse — open() can't write a directory.
         let prior = match self.get_entry_at_path(path).await? {
             None => None,
-            Some(Entry::File { link, ratchet, .. }) => Some((link, ratchet)),
+            Some(old @ Entry::File { .. }) => Some(old),
             Some(Entry::Dir { .. }) => {
                 return Err(FsError::CannotMutate(
                     path.clone(),
@@ -367,12 +386,15 @@ impl<B: BlobStore> Fs<B> {
 
         // Key schedule (identity rides inside it). A rewrite is the SAME
         // entity at its next revision: advance its ratchet, chain the
-        // prior link. A create seeds a fresh entity.
+        // prior saved link. A create seeds a fresh entity.
         let (ratchet, previous) = match &prior {
-            Some((old_link, r)) => (r.advanced(), Some(old_link.clone())),
+            Some(old) => {
+                let unsaved = &self.0.lock().await.unsaved;
+                (old.ratchet().advanced(), lineage_previous(unsaved, old))
+            }
             None => (EntryRatchet::seed(), None),
         };
-        let prior_file_hash = prior.as_ref().map(|(l, _)| l.hash());
+        let prior_file_hash = prior.as_ref().map(|old| old.link().hash());
         let secret = ratchet.key();
 
         // Stream encryption + storage. `put_file` tees the plaintext
@@ -390,17 +412,17 @@ impl<B: BlobStore> Fs<B> {
         )
         .await?;
 
-        // Drop the prior pin if we overwrote a different blob. (Same hash
-        // means same content — the new pin we just added would coincide
-        // with the prior one; nothing to do.)
-        if let Some(prior) = prior_file_hash {
-            if prior != link.hash() {
-                self.0.lock().await.pins.remove(&prior);
-            }
-        }
-
         {
             let mut inner = self.0.lock().await;
+            // Drop the prior pin if we overwrote a different blob. (Same
+            // hash means same content — the new pin we just added would
+            // coincide with the prior one; nothing to do.)
+            if let Some(prior) = prior_file_hash {
+                if prior != link.hash() {
+                    inner.pins.remove(&prior);
+                }
+            }
+            inner.unsaved.insert(link.hash());
             let peer_id = inner.public_key;
             inner.ops_log.record(
                 peer_id,
@@ -419,16 +441,16 @@ impl<B: BlobStore> Fs<B> {
 
     /// `add` minus the op-log record and prior-pin bookkeeping. Builds the
     /// [`Entry`], rebuilds the spine, pins `link`, and updates the root.
-    /// `plaintext_hash` is `Some` for fresh local writes (computed by
-    /// [`ContentStore::put_file`]) and whatever the op log carries on
-    /// remote replays — possibly `None` for legacy ops.
+    /// Used by local writes and by op replay alike; a replayed op's
+    /// `content` is the writer's and is not marked unsaved here — the
+    /// writer's manifest pins it.
     async fn add_tree(
         &self,
         path: &AbsPath,
         link: Link,
         ratchet: EntryRatchet,
         previous: Option<Link>,
-        plaintext_hash: crate::linked_data::Hash,
+        plaintext_hash: Hash,
     ) -> Result<(), FsError> {
         let entry = Entry::file(link.clone(), ratchet, previous, path, plaintext_hash);
         let new_root = self.set_entry_at_path(entry, path).await?;
@@ -845,24 +867,27 @@ impl<B: BlobStore> Fs<B> {
             let mut inner = self.0.lock().await;
             inner.root = dir;
         } else {
-            // `identity` is Some for a brand-new dir (mkdir, local or
+            // `ratchet` is Some for a brand-new dir (mkdir, local or
             // replayed — the op carries it). None means we're rewriting
             // an existing dir: keep its id, advance its ratchet, chain
-            // the prior link. Seed only if nothing is there.
+            // the prior saved link. Seed only if nothing is there.
             let (ratchet, previous) = match ratchet {
                 Some(r) => (r, None),
                 None => match self.get_entry_at_path(path).await? {
-                    Some(Entry::Dir {
-                        link, ratchet: r, ..
-                    }) => (r.advanced(), Some(link)),
+                    Some(old @ Entry::Dir { .. }) => {
+                        let unsaved = &self.0.lock().await.unsaved;
+                        (old.ratchet().advanced(), lineage_previous(unsaved, &old))
+                    }
                     _ => (EntryRatchet::seed(), None),
                 },
             };
             let link = self.1.put_metadata(&ratchet.key(), &dir)?;
+            let minted = link.hash();
             let entry = Entry::dir(link, ratchet, previous);
             let new_root = self.set_entry_at_path(entry, path).await?;
             let mut inner = self.0.lock().await;
             inner.root = new_root;
+            inner.unsaved.insert(minted);
         }
         Ok(())
     }
@@ -911,15 +936,15 @@ impl<B: BlobStore> Fs<B> {
     /// spot, so there's no save-time GC walk to amortize across.
     pub async fn set_entry_at_path(&self, entry: Entry, path: &AbsPath) -> Result<Dir, FsError> {
         let blobs = &self.1;
-        let mut dir = {
+        let (mut dir, unsaved) = {
             let inner = self.0.lock().await;
-            inner.root.clone()
+            (inner.root.clone(), inner.unsaved.clone())
         };
         let rel = path.relative().to_path_buf();
         // (path, dir, the OLD Entry::Dir for it). The old entry gives the
-        // rebuild its identity + ratchet to advance, and its link to
-        // evict (the body is about to be orphaned) and to chain as
-        // `previous`. `None` for the root (not tracked here; `save`
+        // rebuild its identity + ratchet to advance, its link to evict
+        // (the body is about to be orphaned), and its lineage to chain
+        // as `previous`. `None` for the root (it has no entry; `save`
         // evicts the prior root) and for synthetic ancestors.
         let mut visited_dirs: Vec<(PathBuf, Dir, Option<Entry>)> = Vec::new();
         let mut name = rel.file_name().unwrap().to_string_lossy().to_string();
@@ -961,6 +986,7 @@ impl<B: BlobStore> Fs<B> {
         // `rev()` processes it last — the final `dir` is the new root.
         let mut entry = entry;
         let mut new_root = None;
+        let mut minted: Vec<Hash> = Vec::new();
         for (current_path, mut dir, old_entry) in visited_dirs.into_iter().rev() {
             // If the prior entry under `name` was a Entry::Dir, its
             // dir body is about to be orphaned by the overwrite. (For dir
@@ -976,14 +1002,14 @@ impl<B: BlobStore> Fs<B> {
             // references and immediately orphan it.
             if current_path != Path::new("/") {
                 // Same entity, next revision: advance the old dir's
-                // ratchet and chain its link. Synthetic ancestors seed.
+                // ratchet and chain its saved link. Synthetic ancestors
+                // seed.
                 let (ratchet, previous) = match &old_entry {
-                    Some(Entry::Dir {
-                        link, ratchet: r, ..
-                    }) => (r.advanced(), Some(link.clone())),
-                    _ => (EntryRatchet::seed(), None),
+                    Some(old) => (old.ratchet().advanced(), lineage_previous(&unsaved, old)),
+                    None => (EntryRatchet::seed(), None),
                 };
                 let link = blobs.put_metadata(&ratchet.key(), &dir)?;
+                minted.push(link.hash());
                 entry = Entry::dir(link, ratchet, previous);
                 name = current_path
                     .file_name()
@@ -1002,6 +1028,7 @@ impl<B: BlobStore> Fs<B> {
             }
             new_root = Some(dir);
         }
+        self.0.lock().await.unsaved.extend(minted);
         Ok(new_root.expect("visited_dirs always contains the root"))
     }
 

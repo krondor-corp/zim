@@ -175,15 +175,19 @@ impl<B: BlobStore> ContentStore<B> {
     /// Returns [`ContentError::WrongVariant`] if `entry` is an
     /// [`Entry::File`].
     pub async fn get_metadata(&self, entry: &Entry) -> Result<Dir, ContentError> {
-        let (link, secret) = match entry {
-            Entry::Dir { link, ratchet, .. } => (link, ratchet.key()),
-            Entry::File { .. } => {
-                return Err(ContentError::WrongVariant {
-                    expected: "Entry::Dir",
-                    got: "Entry::File",
-                })
-            }
-        };
+        match entry {
+            Entry::Dir { link, ratchet, .. } => self.get_dir(link, &ratchet.key()).await,
+            Entry::File { .. } => Err(ContentError::WrongVariant {
+                expected: "Entry::Dir",
+                got: "Entry::File",
+            }),
+        }
+    }
+
+    /// Fetch + decrypt + decode the dir body at `link` under `secret`.
+    /// This is how the root is read: it has no [`Entry`] — its link
+    /// lives on the manifest and its key on the vault.
+    pub async fn get_dir(&self, link: &Link, secret: &Secret) -> Result<Dir, ContentError> {
         let ciphertext = self.get_metadata_bytes(&link.hash()).await?;
         let plaintext = secret.decrypt(&ciphertext)?;
         Ok(Dir::decode(&plaintext)?)

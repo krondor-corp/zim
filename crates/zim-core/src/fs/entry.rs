@@ -3,10 +3,10 @@
 //!
 //! The on-disk dir body is the DAG-CBOR encoding of [`Dir`], encrypted
 //! per-dir with its [`Secret`]. See [`ContentStore::put_metadata`] and
-//! [`ContentStore::get_metadata`] for the round-trip.
+//! [`ContentStore::get_dir`] for the round-trip.
 //!
 //! [`ContentStore::put_metadata`]: super::content_store::ContentStore::put_metadata
-//! [`ContentStore::get_metadata`]: super::content_store::ContentStore::get_metadata
+//! [`ContentStore::get_dir`]: super::content_store::ContentStore::get_dir
 
 #![allow(clippy::doc_lazy_continuation)]
 
@@ -36,8 +36,8 @@ type MaybeMetadata = Option<Metadata>;
 ///   inner blob store. `mime` and `metadata` are optional client-side
 ///   annotations (the store doesn't inspect them).
 /// - [`Entry::Dir`] — `link` addresses an encrypted [`Dir`] body in the
-///   metadata pack. Dereference via
-///   [`ContentStore::get_metadata`](super::content_store::ContentStore::get_metadata).
+///   metadata pack. Dereference with its link and `ratchet.key()` via
+///   [`ContentStore::get_dir`](super::content_store::ContentStore::get_dir).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Entry {
     /// A file entry. The link points at encrypted bytes; `mime` and

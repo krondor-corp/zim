@@ -512,11 +512,10 @@ impl<B: BlobStore> Fs<B> {
         // If we're removing a directory, walk its subtree and collect every
         // dir-body hash it contained — those become orphans the metadata
         // tier needs to evict.
-        if removed_entry.is_dir() {
-            let mut orphans: std::collections::HashSet<crate::linked_data::Hash> =
-                std::collections::HashSet::new();
-            orphans.insert(removed_entry.link().hash());
-            let removed_dir = self.1.get_metadata(&removed_entry).await?;
+        if let Entry::Dir { link, ratchet, .. } = &removed_entry {
+            let mut orphans: HashSet<Hash> = HashSet::new();
+            orphans.insert(link.hash());
+            let removed_dir = self.1.get_dir(link, &ratchet.key()).await?;
             Self::_collect_dir_hashes(&removed_dir, &self.1, &mut orphans).await?;
             self.1.evict_many(&orphans);
         }
@@ -779,8 +778,8 @@ impl<B: BlobStore> Fs<B> {
     /// - [`FsError::Backing`] — any underlying I/O or crypto failure.
     ///
     /// For large files prefer fetching the [`Entry`] yourself and
-    /// streaming via [`ContentStore::get_file`] — `cat` buffers the
-    /// whole plaintext.
+    /// streaming its link + key through [`ContentStore::get_file`] —
+    /// `cat` buffers the whole plaintext.
     pub async fn cat(&self, path: &AbsPath) -> Result<Vec<u8>, FsError> {
         let (abs_parent, file_name) = path
             .split()
@@ -792,8 +791,8 @@ impl<B: BlobStore> Fs<B> {
             .ok_or_else(|| FsError::PathNotFound(path.clone()))?;
 
         match entry {
-            Entry::File { .. } => {
-                let mut reader = self.1.get_file(entry).await?;
+            Entry::File { link, ratchet, .. } => {
+                let mut reader = self.1.get_file(link, &ratchet.key()).await?;
                 let mut data = Vec::new();
                 reader
                     .read_to_end(&mut data)
@@ -838,9 +837,9 @@ impl<B: BlobStore> Fs<B> {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), FsError>> + Send + 'a>> {
         Box::pin(async move {
             for child in dir.entries().values() {
-                if let Entry::Dir { link, .. } = child {
+                if let Entry::Dir { link, ratchet, .. } = child {
                     if live.insert(link.hash()) {
-                        let child_dir = blobs.get_metadata(child).await?;
+                        let child_dir = blobs.get_dir(link, &ratchet.key()).await?;
                         Self::_collect_dir_hashes(&child_dir, blobs, live).await?;
                     }
                 }
@@ -914,13 +913,15 @@ impl<B: BlobStore> Fs<B> {
                     .ok_or(FsError::PathNotFound(AbsPath::from_abs(
                         consumed_path.clone(),
                     )))?;
-            if !next_entry.is_dir() {
-                return Err(FsError::CannotMutate(
-                    AbsPath::from_abs(consumed_path.clone()),
-                    "path is not a directory".into(),
-                ));
-            }
-            current_dir = self.1.get_metadata(next_entry).await?;
+            current_dir = match next_entry {
+                Entry::Dir { link, ratchet, .. } => self.1.get_dir(link, &ratchet.key()).await?,
+                Entry::File { .. } => {
+                    return Err(FsError::CannotMutate(
+                        AbsPath::from_abs(consumed_path.clone()),
+                        "path is not a directory".into(),
+                    ))
+                }
+            };
         }
         Ok(current_dir)
     }
@@ -959,8 +960,8 @@ impl<B: BlobStore> Fs<B> {
             if let Some(next_entry) = next_entry {
                 consumed_path.push(part);
                 match &next_entry {
-                    Entry::Dir { .. } => {
-                        dir = blobs.get_metadata(&next_entry).await?;
+                    Entry::Dir { link, ratchet, .. } => {
+                        dir = blobs.get_dir(link, &ratchet.key()).await?;
                         visited_dirs.push((
                             consumed_path.clone(),
                             dir.clone(),

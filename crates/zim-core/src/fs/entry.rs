@@ -80,20 +80,12 @@ pub enum Entry {
 }
 
 impl Entry {
-    /// A bare file entry at revision 0 of a fresh entity — mints an id,
-    /// derives `secret` from `ratchet`. `mime`/`metadata`/`plaintext_hash`
-    /// default to `None`. Tests and synthetic fixtures; production uses
-    /// [`Self::file_at_path`].
-    pub fn file(link: Link, ratchet: EntryRatchet) -> Self {
-        Self::file_at_path(link, ratchet, None, Path::new(""), Hash::new(b""))
-    }
-
-    /// Production file constructor. `secret` is derived from `ratchet`
-    /// so the two can never disagree; `mime` is inferred from `path`.
-    /// On a rewrite the caller passes the entity's *advanced* ratchet
-    /// (identity rides inside it) and `previous = Some(old link)`; on
-    /// creation a seeded ratchet and `None`.
-    pub fn file_at_path(
+    /// A file entry. Every field comes from the caller — there is no
+    /// defaulted or placeholder form. `ratchet` is this revision's key
+    /// schedule (and identity); `previous` is `None` at revision 0 and
+    /// the prior `link` on a rewrite; `path` drives MIME inference;
+    /// `plaintext_hash` is `blake3` of the body as written.
+    pub fn file(
         link: Link,
         ratchet: EntryRatchet,
         previous: Option<Link>,
@@ -110,14 +102,9 @@ impl Entry {
         }
     }
 
-    /// A directory entry at revision 0 of a fresh entity. See
-    /// [`Self::dir_versioned`] for rewrites.
-    pub fn dir(link: Link, ratchet: EntryRatchet) -> Self {
-        Self::dir_versioned(link, ratchet, None)
-    }
-
-    /// Production directory constructor; `secret` derived from `ratchet`.
-    pub fn dir_versioned(link: Link, ratchet: EntryRatchet, previous: Option<Link>) -> Self {
+    /// A directory entry. `previous` is `None` at revision 0 and the
+    /// prior `link` on a rewrite.
+    pub fn dir(link: Link, ratchet: EntryRatchet, previous: Option<Link>) -> Self {
         Entry::Dir {
             link,
             ratchet,
@@ -264,7 +251,13 @@ mod test {
         let mut dir = Dir::new();
         dir.insert(
             "example".to_string(),
-            Entry::file(Link::default(), EntryRatchet::seed()),
+            Entry::file(
+                Link::default(),
+                EntryRatchet::seed(),
+                None,
+                Path::new("example"),
+                Hash::new(b""),
+            ),
         );
 
         let encoded = dir.encode().unwrap();
@@ -279,7 +272,7 @@ mod test {
 
         let link = Link::default();
 
-        let entry = Entry::file_at_path(
+        let entry = Entry::file(
             link.clone(),
             EntryRatchet::seed(),
             None,
@@ -289,14 +282,20 @@ mod test {
         assert_eq!(entry.mime().map(|m| m.as_ref()), Some("application/json"));
         assert!(entry.is_file());
 
-        let entry = Entry::dir(link, EntryRatchet::seed());
+        let entry = Entry::dir(link, EntryRatchet::seed(), None);
         assert!(entry.is_dir());
         assert_eq!(entry.mime(), None);
     }
 
     #[test]
     fn test_entry_metadata() {
-        let mut entry = Entry::file(Link::default(), EntryRatchet::seed());
+        let mut entry = Entry::file(
+            Link::default(),
+            EntryRatchet::seed(),
+            None,
+            Path::new("example"),
+            Hash::new(b""),
+        );
         assert_eq!(entry.metadata(), None);
 
         entry.set_metadata("key".to_string(), LinkedData::Null);

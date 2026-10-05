@@ -242,7 +242,7 @@ impl<B: BlobStore> Fs<B> {
         // Put the root with the new secret. Evict the prior root's
         // dir body so the metadata snapshot below contains only the
         // live set.
-        let root_link = blobs.put_metadata(&root_ratchet.key(), &root_dir)?;
+        let root_link = blobs.put_dir(&root_ratchet.key(), &root_dir)?;
         if root_link.hash() != prior_root_hash {
             blobs.evict(&prior_root_hash);
         }
@@ -300,7 +300,7 @@ impl<B: BlobStore> Fs<B> {
     ) -> Result<(Self, Link), FsError> {
         let blobs = ContentStore::new(blobs, Metadata::new());
         let root = Dir::default();
-        let root_link = blobs.put_metadata(&root_ratchet.key(), &root)?;
+        let root_link = blobs.put_dir(&root_ratchet.key(), &root)?;
         let fs = Fs(
             Arc::new(Mutex::new(FsInner {
                 root,
@@ -850,10 +850,10 @@ impl<B: BlobStore> Fs<B> {
 
     /// Install `dir` at `path` as the live tree's new state at that
     /// path, and update `inner.root` to reflect the cascade. For root
-    /// (`/`), the dir is installed directly — no `put_metadata`, since
+    /// (`/`), the dir is installed directly — no `put_dir`, since
     /// the root only enters the metadata tier at save time. For deeper
     /// paths, the dir is sealed via
-    /// [`ContentStore::put_metadata`](super::content_store::ContentStore::put_metadata)
+    /// [`ContentStore::put_dir`](super::content_store::ContentStore::put_dir)
     /// and the resulting [`Entry`] is cascaded through
     /// [`Self::set_entry_at_path`].
     pub async fn set_dir_at_path(
@@ -880,7 +880,7 @@ impl<B: BlobStore> Fs<B> {
                     _ => (EntryRatchet::seed(), None),
                 },
             };
-            let link = self.1.put_metadata(&ratchet.key(), &dir)?;
+            let link = self.1.put_dir(&ratchet.key(), &dir)?;
             let minted = link.hash();
             let entry = Entry::dir(link, ratchet, previous);
             let new_root = self.set_entry_at_path(entry, path).await?;
@@ -1009,7 +1009,7 @@ impl<B: BlobStore> Fs<B> {
                     Some(old) => (old.ratchet().advanced(), lineage_previous(&unsaved, old)),
                     None => (EntryRatchet::seed(), None),
                 };
-                let link = blobs.put_metadata(&ratchet.key(), &dir)?;
+                let link = blobs.put_dir(&ratchet.key(), &dir)?;
                 minted.push(link.hash());
                 entry = Entry::dir(link, ratchet, previous);
                 name = current_path

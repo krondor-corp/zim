@@ -7,7 +7,7 @@
 //! Two storage destinations sit behind the same type:
 //!
 //! - **Metadata pack** (in-memory): encrypted dir bodies, snapshotted
-//!   inline into the next manifest. [`ContentStore::put_metadata`]
+//!   inline into the next manifest. [`ContentStore::put_dir`]
 //!   stages, [`ContentStore::get_metadata`] reads (tiered — checks the
 //!   pack first, then falls through to the inner store for older bodies
 //!   referenced from prior manifests).
@@ -129,7 +129,7 @@ impl<B: BlobStore> ContentStore<B> {
     /// Wrap `inner` with an initial `metadata` pack. The pack is the one
     /// just decoded from a manifest (on load) or freshly constructed (on
     /// init); subsequent dir-body writes mutate it via
-    /// [`Self::put_metadata`].
+    /// [`Self::put_dir`].
     pub fn new(inner: B, metadata: Metadata) -> Self {
         Self {
             metadata: Arc::new(Mutex::new(metadata)),
@@ -148,7 +148,7 @@ impl<B: BlobStore> ContentStore<B> {
 
     /// Encode + encrypt `dir`, stage the ciphertext in the metadata pack,
     /// and return the [`Entry`] a parent would store in its children map.
-    pub fn put_metadata(&self, secret: &Secret, dir: &Dir) -> Result<Link, ContentError> {
+    pub fn put_dir(&self, secret: &Secret, dir: &Dir) -> Result<Link, ContentError> {
         let plaintext = dir.encode()?;
         let encrypted = secret.encrypt(&plaintext)?;
         let hash = Hash::new(&encrypted);
@@ -163,7 +163,7 @@ impl<B: BlobStore> ContentStore<B> {
     /// link and `ratchet.key()`; for the root, the manifest's link and
     /// the vault's root key.
     pub async fn get_dir(&self, link: &Link, secret: &Secret) -> Result<Dir, ContentError> {
-        let ciphertext = self.get_metadata_bytes(&link.hash()).await?;
+        let ciphertext = self.get_dir_bytes(&link.hash()).await?;
         let plaintext = secret.decrypt(&ciphertext)?;
         Ok(Dir::decode(&plaintext)?)
     }
@@ -238,7 +238,7 @@ impl<B: BlobStore> ContentStore<B> {
 
     /// Pack-first byte lookup for dir bodies. Private — callers go
     /// through `get_dir`.
-    async fn get_metadata_bytes(&self, hash: &Hash) -> Result<Vec<u8>, BlobError> {
+    async fn get_dir_bytes(&self, hash: &Hash) -> Result<Vec<u8>, BlobError> {
         if let Some(cached) = self.metadata.lock().unwrap().get(hash).cloned() {
             return Ok(cached);
         }
@@ -308,7 +308,7 @@ mod tests {
         );
 
         let store = ContentStore::new(MemBlobs::default(), Metadata::new());
-        let link = store.put_metadata(&secret, &dir).unwrap();
+        let link = store.put_dir(&secret, &dir).unwrap();
 
         let round_tripped = store.get_dir(&link, &secret).await.unwrap();
         assert_eq!(round_tripped, dir);
@@ -384,7 +384,7 @@ mod tests {
         let secret = Secret::generate();
         let dir = Dir::new();
         let store = ContentStore::new(MemBlobs::default(), Metadata::new());
-        let link = store.put_metadata(&secret, &dir).unwrap();
+        let link = store.put_dir(&secret, &dir).unwrap();
 
         store.evict(&link.hash());
         assert!(!store.snapshot_metadata().contains(&link.hash()));

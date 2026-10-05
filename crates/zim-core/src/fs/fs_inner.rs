@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -7,7 +7,7 @@ use futures::lock::Mutex;
 
 use crate::blobs::{BlobError, BlobStore};
 use crate::linked_data::{BlockEncoded, CodecError, Link};
-use zim_crypto::{EntryRatchet, PublicKey, SecretError};
+use zim_crypto::{EntryId, EntryRatchet, PublicKey, SecretError};
 
 use super::abs_path::AbsPath;
 use super::content_store::{ContentError, Metadata};
@@ -150,6 +150,11 @@ pub enum FsError {
     /// opened, so the vault secret can't be recovered.
     #[error("peers share was not found")]
     ShareNotFound,
+    /// The peer has a share but it has not been sealed yet — granted
+    /// since the last save. Only ever observed in-memory, never on a
+    /// persisted manifest.
+    #[error("peer's share is pending — granted but not yet sealed by a save")]
+    SharePending,
     /// A failure from a layer beneath fs: [`BlobError`], [`SecretError`],
     /// [`CodecError`], [`ManifestError`], [`SecretShareError`](zim_crypto::SecretShareError),
     /// or a bucket-log backend error. The original error is preserved
@@ -1042,8 +1047,7 @@ impl<B: BlobStore> Fs<B> {
         // path a concurrent rename vacated is redirected to the entity's
         // current path: the edit follows the rename. Per-path collapsing
         // made the outcome depend on filename sort order.
-        let mut at: std::collections::HashMap<zim_crypto::EntryId, AbsPath> =
-            std::collections::HashMap::new();
+        let mut at: HashMap<EntryId, AbsPath> = HashMap::new();
         for op in ops.operations().values() {
             let path = op.path().clone();
             match &op.kind {

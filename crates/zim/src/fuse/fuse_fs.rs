@@ -79,6 +79,7 @@ fn errno(e: &FsError) -> libc::c_int {
         // case (create/mkdir over an existing name); good enough for v1.
         FsError::CannotMutate(_, _) => libc::EEXIST,
         FsError::ShareNotFound => libc::EACCES,
+        FsError::SharePending => libc::EACCES,
         FsError::Backing(_) => libc::EIO,
     }
 }

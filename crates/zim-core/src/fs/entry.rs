@@ -2,10 +2,10 @@
 //! [`Dir`] holds for each child) and [`Dir`] (a children map).
 //!
 //! The on-disk dir body is the DAG-CBOR encoding of [`Dir`], encrypted
-//! per-dir with its [`Secret`]. See [`ContentStore::put_metadata`] and
+//! per-dir with its [`Secret`]. See [`ContentStore::put_dir`] and
 //! [`ContentStore::get_dir`] for the round-trip.
 //!
-//! [`ContentStore::put_metadata`]: super::content_store::ContentStore::put_metadata
+//! [`ContentStore::put_dir`]: super::content_store::ContentStore::put_dir
 //! [`ContentStore::get_dir`]: super::content_store::ContentStore::get_dir
 
 #![allow(clippy::doc_lazy_continuation)]

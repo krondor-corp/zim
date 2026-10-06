@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/krondor-corp/zim/compare/zim-peer-v0.1.1...zim-peer-v0.1.2) - 2026-10-06
+
+### Added
+
+- *(core)* ratchet the root — shares seal ratchet state, saves stop re-minting
+
+### Other
+
+- *(core)* shares are sealed at grant; recovery lives in share.rs with ShareError
+
 ## [0.1.1](https://github.com/krondor-corp/zim/compare/zim-peer-v0.1.0...zim-peer-v0.1.1) - 2026-07-27
 
 ### Other

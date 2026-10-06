@@ -7403,7 +7403,7 @@ dependencies = [
 
 [[package]]
 name = "zim-api"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "base64",
@@ -7422,7 +7422,7 @@ dependencies = [
 
 [[package]]
 name = "zim-cli"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7464,7 +7464,7 @@ dependencies = [
 
 [[package]]
 name = "zim-core"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7499,7 +7499,7 @@ dependencies = [
 
 [[package]]
 name = "zim-crypto"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aes-gcm",
  "aes-kw",
@@ -7527,7 +7527,7 @@ dependencies = [
 
 [[package]]
 name = "zim-did"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "hex",
@@ -7626,7 +7626,7 @@ dependencies = [
 
 [[package]]
 name = "zim-peer"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",

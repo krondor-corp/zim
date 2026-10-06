@@ -153,6 +153,17 @@ impl Manifest {
         &self.pins
     }
 
+    /// The pins that are file content: [`Self::pins`] minus this
+    /// version's ops-log blob and previous manifest. This is the live
+    /// pin set an [`Fs`](super::Fs) carries between saves; the other
+    /// two are per-version and re-derived at the next save.
+    pub fn file_pins(&self) -> Pins {
+        let mut pins = self.pins.clone();
+        pins.remove(&self.ops.hash());
+        pins.remove(&self.previous.hash());
+        pins
+    }
+
     pub fn pins_mut(&mut self) -> &mut Pins {
         &mut self.pins
     }

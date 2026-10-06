@@ -35,10 +35,11 @@ pub struct FsInner {
     /// into this; `save_tree` puts it into the metadata pack to mint
     /// the new root link.
     pub root: Dir,
-    /// Pinned content hashes — file blobs the tree currently
-    /// references, plus the encrypted ops-log blob (if any). Seeded
-    /// from the manifest's pins at load time, snapshotted back into
-    /// the manifest at save time.
+    /// Pinned content hashes — the file blobs the tree currently
+    /// references. Seeded from the manifest's file pins at load time
+    /// ([`Manifest::file_pins`](super::Manifest::file_pins)); at save
+    /// time the manifest's pin set is this plus the version's ops-log
+    /// blob and previous manifest.
     pub pins: Pins,
     /// In-memory log of ops issued since the last load. Seeded with the
     /// persisted Lamport clock so newly recorded ops stay monotonic
@@ -222,18 +223,21 @@ impl<B: BlobStore> Fs<B> {
     ///   [`Link::default`] when no ops were issued this session
     /// - `ops_clock` — Lamport clock at save time
     /// - `metadata` — snapshot of every dir body in the metadata pack
-    /// - `pins` — file blob hashes + the ops_log blob hash (when
-    ///   present). Caller (Vault) layers in the previous manifest
-    ///   hash before writing the manifest blob.
+    /// - `pins` — the live file blob hashes + THIS version's ops-log
+    ///   blob hash (when present). Caller (Vault) layers in the previous
+    ///   manifest hash before writing the manifest blob.
     ///
     /// The previous root's dir body is evicted from the metadata
     /// pack so the snapshot is exactly the live set. Mid-session
     /// mutations (`add` / `rm` / `mv` / `set_entry_at_path`) already
-    /// keep the pin set in sync; this method does no extra pin
-    /// bookkeeping beyond the ops-log blob.
+    /// keep the live pin set in sync; this method does not touch it.
+    /// The ops-log hash goes only into the returned set: each version's
+    /// ops log is pinned by that version's manifest, and sync fetches
+    /// every manifest in the chain with its own pins, so carrying old
+    /// ops logs forward would only make every pin set grow forever.
     pub async fn save_tree(
         &self,
-        prior_root_hash: crate::linked_data::Hash,
+        prior_root_hash: Hash,
         root_ratchet: &EntryRatchet,
     ) -> Result<TreeSaveOutput, FsError> {
         let blobs = &self.1;
@@ -275,7 +279,6 @@ impl<B: BlobStore> Fs<B> {
         {
             let mut inner = self.0.lock().await;
             inner.ops_log.clear_preserving_clock();
-            inner.pins = pins.clone();
             inner.unsaved.clear();
         }
 

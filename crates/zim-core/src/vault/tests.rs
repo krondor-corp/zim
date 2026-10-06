@@ -332,6 +332,79 @@ async fn refresh_fast_forwards_a_stale_handle() {
     assert_eq!(browser.height(), 2);
 }
 
+// ── Pins ─────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn each_version_pins_exactly_the_blobs_it_references() {
+    // Alice writes /a and saves, then writes /a twice more and saves
+    // again. The middle write never reaches a manifest, so no version
+    // may pin it. Each version pins exactly: its live file blob, its
+    // ops-log blob, and the previous manifest blob.
+    let blobs = MemBlobs::default();
+    let log = MemLog::default();
+    let alice = PrivateKey::generate();
+    let mut vault = Vault::init("pins".to_string(), &alice, blobs, log)
+        .await
+        .expect("init");
+    let path = AbsPath::new("/a").unwrap();
+
+    async fn file_blob(vault: &Vault<MemBlobs, MemLog>, path: &AbsPath) -> Hash {
+        vault
+            .fs()
+            .get_entry_at_path(path)
+            .await
+            .unwrap()
+            .unwrap()
+            .link()
+            .hash()
+    }
+    let expected = |file: Hash, vault: &Vault<MemBlobs, MemLog>| {
+        let m = vault.manifest();
+        let mut want = std::collections::BTreeSet::from([file, m.ops().hash()]);
+        want.insert(m.previous().hash());
+        want
+    };
+    let actual = |vault: &Vault<MemBlobs, MemLog>| {
+        vault
+            .manifest()
+            .pins()
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+
+    // Version 1: one write.
+    vault.fs().add(&path, Cursor::new(b"v1")).await.unwrap();
+    let genesis_link = vault.manifest_link().clone();
+    vault.save().await.expect("save 1");
+    let v1 = file_blob(&vault, &path).await;
+    assert_eq!(actual(&vault), expected(v1, &vault), "version 1 pins");
+    assert_eq!(*vault.manifest().previous(), genesis_link);
+
+    // Version 2: two writes, the first of which is never saved.
+    vault.fs().add(&path, Cursor::new(b"v2")).await.unwrap();
+    let v2 = file_blob(&vault, &path).await;
+    vault.fs().add(&path, Cursor::new(b"v3")).await.unwrap();
+    let v3 = file_blob(&vault, &path).await;
+    assert_ne!(v2, v3);
+    vault.save().await.expect("save 2");
+
+    let pins = actual(&vault);
+    assert_eq!(pins, expected(v3, &vault), "version 2 pins");
+    assert!(!pins.contains(&v1), "the superseded saved blob is unpinned");
+    assert!(!pins.contains(&v2), "the unsaved intermediate is unpinned");
+
+    // Version 3, from a fresh open: the per-version pins (ops log,
+    // previous manifest) loaded off version 2 must not be carried
+    // forward as if they were content.
+    let (id, blobs, log) = (vault.id(), vault.blobs().clone(), vault.log().clone());
+    let mut reopened = Vault::open(id, blobs, log, &alice).await.expect("open");
+    reopened.fs().add(&path, Cursor::new(b"v4")).await.unwrap();
+    reopened.save().await.expect("save 3");
+    let v4 = file_blob(&reopened, &path).await;
+    assert_eq!(actual(&reopened), expected(v4, &reopened), "version 3 pins");
+}
+
 // ── Root ratchet + share lifecycle ───────────────────────────────────────
 
 #[tokio::test]

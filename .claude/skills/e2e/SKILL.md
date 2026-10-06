@@ -5,8 +5,7 @@ allowed-tools:
   - Bash(./bin/dev *)
   - Bash(./bin/minio *)
   - Bash(curl *)
-  - Bash(docker exec zim-minio *)
-  - Bash(podman exec zim-minio *)
+  - Bash(./bin/minio *)
   - Bash(tmux capture-pane *)
   - Bash(tmux has-session *)
   - Bash(tmux list-windows *)
@@ -91,7 +90,7 @@ on macOS, `/dev/fuse` on Linux) and (b) a daemon built with the fuse feature
 - FUSE available but a fixture fails → **IS a failure**
 - The report must state whether FUSE fixtures ran or were skipped
 
-## Track B — full stack: web↔local sync (needs docker + confit)
+## Track B — full stack: web↔local sync (needs docker or podman + confit)
 
 10. One-shot bring-up: `ZIM_DEV_FUSE=1 ./bin/dev --hub`
     (daemons → hub up [minio + real OAuth via confit] → seed/fixtures →
@@ -108,8 +107,8 @@ on macOS, `/dev/fuse` on Linux) and (b) a daemon built with the fuse feature
 14. **local → web**: `echo hi | ./bin/dev cli alice vault add demo /from-alice.md`,
     refresh the tree. (Stuck? `./bin/dev cli alice hub peers sync`, wait.)
 15. Verify blobs in minio: `./bin/minio status`, then
-    `podman exec zim-minio mc ls local/zim-blobs/` (or `docker exec` — whichever
-    runtime `bin/minio` picked; container `zim-minio`, bucket `zim-blobs`).
+    `./bin/minio ls` (signed `curl` from the host — same under docker and
+    podman; container `zim-minio`, bucket `zim-blobs`).
 
 ## Report Format
 

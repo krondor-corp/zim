@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
-# Script to manage a local MinIO container for development (Mac-optimized)
+# Manage the dev S3 blob store: one container, docker OR podman.
+#
+# The server is RustFS (https://rustfs.com), a MinIO-compatible S3
+# implementation. MinIO itself pulled its public images from Docker Hub
+# and Quay in 2026, so `minio/minio:latest` no longer resolves; RustFS
+# serves the same API on the same ports (9000 S3, 9001 console) and
+# honours the same path-style requests the hub's `object_store` client
+# sends. Names below keep the `minio` spelling so existing env vars,
+# the `zim-minio` container, and the `./bin/minio` entry point still
+# work; only the image changed.
 
 set -o errexit
 set -o nounset
@@ -38,7 +47,8 @@ MINIO_API_PORT=${MINIO_API_PORT:-17180}
 MINIO_CONSOLE_PORT=${MINIO_CONSOLE_PORT:-17181}
 MINIO_ROOT_USER=minioadmin
 MINIO_ROOT_PASSWORD=minioadmin
-MINIO_IMAGE_NAME=minio/minio:latest
+# Fully-qualified so podman doesn't prompt for a registry.
+MINIO_IMAGE_NAME="${MINIO_IMAGE_NAME:-docker.io/rustfs/rustfs:latest}"
 MINIO_BUCKET_NAME="${PROJECT_NAME}-blobs"
 
 # Pick a container runtime. `ZIM_CONTAINER_RUNTIME` forces one;
@@ -180,7 +190,7 @@ function verify_connection {
 
     echo "Testing connection from host to container..."
     if command -v curl &>/dev/null; then
-        if curl -f -s -o /dev/null http://localhost:${MINIO_API_PORT}/minio/health/live; then
+        if curl -f -s -o /dev/null http://localhost:${MINIO_API_PORT}/health; then
             confit log --ok "API connection successful!"
         else
             confit log --err "API connection test failed. See troubleshooting tips below."
@@ -192,37 +202,64 @@ function verify_connection {
     fi
 }
 
+# Signed S3 request against the dev store from the host. curl's native
+# SigV4 means no `mc`/`aws` CLI and nothing exec'd inside the container,
+# so this is identical under docker and podman. Prints the HTTP status.
+function s3 {
+    local method="$1" path="$2"; shift 2
+    curl -s -o /dev/null -w '%{http_code}' -X "$method" \
+        --aws-sigv4 "aws:amz:us-east-1:s3" \
+        --user "$MINIO_ROOT_USER:$MINIO_ROOT_PASSWORD" \
+        "$@" "http://localhost:${MINIO_API_PORT}${path}"
+}
+
 # Ensure the zim-blobs bucket exists
 function ensure_bucket {
     echo "Ensuring bucket '${MINIO_BUCKET_NAME}' exists..."
-    # Set up mc alias and create bucket if it doesn't exist
-    $CONTAINER_RUNTIME exec $MINIO_CONTAINER_NAME mc alias set local http://localhost:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD >/dev/null 2>&1
-    if $CONTAINER_RUNTIME exec $MINIO_CONTAINER_NAME mc ls local/${MINIO_BUCKET_NAME} >/dev/null 2>&1; then
+    local code
+    code=$(s3 HEAD "/${MINIO_BUCKET_NAME}")
+    if [[ "$code" == "200" ]]; then
         confit log --ok "Bucket '${MINIO_BUCKET_NAME}' already exists."
-    else
-        $CONTAINER_RUNTIME exec $MINIO_CONTAINER_NAME mc mb local/${MINIO_BUCKET_NAME}
-        confit log --ok "Created bucket '${MINIO_BUCKET_NAME}'."
+        return 0
     fi
+    code=$(s3 PUT "/${MINIO_BUCKET_NAME}")
+    if [[ "$code" == "200" ]]; then
+        confit log --ok "Created bucket '${MINIO_BUCKET_NAME}'."
+    else
+        confit log --err "Could not create bucket '${MINIO_BUCKET_NAME}' (HTTP $code)."
+        exit 1
+    fi
+}
+
+# List the objects in the dev bucket (what the hub has mirrored).
+function ls {
+    check_runtime
+    curl -s --aws-sigv4 "aws:amz:us-east-1:s3" \
+        --user "$MINIO_ROOT_USER:$MINIO_ROOT_PASSWORD" \
+        "http://localhost:${MINIO_API_PORT}/${MINIO_BUCKET_NAME}?list-type=2" \
+        | grep -oE '<Key>[^<]+</Key>' | sed -E 's#</?Key>##g'
 }
 
 # Helper function to show troubleshooting tips
 function show_troubleshooting {
     echo ""
-    print_header "Troubleshooting Tips for macOS"
-    echo "1. Check Docker Desktop settings - ensure port forwarding is enabled"
-    echo "2. Try restarting Docker Desktop completely"
+    print_header "Troubleshooting Tips"
+    echo "1. Is the runtime up? docker: Docker Desktop running; podman: 'podman machine start'"
+    echo "2. Force a runtime: ZIM_CONTAINER_RUNTIME=docker (or podman) $0 up"
     echo "3. Check if another service is using ports $MINIO_API_PORT or $MINIO_CONSOLE_PORT:"
     echo "   lsof -i :$MINIO_API_PORT"
     echo "   lsof -i :$MINIO_CONSOLE_PORT"
-    echo "4. Verify your Mac firewall settings allow Docker connections"
-    echo "5. Try explicitly connecting with host.docker.internal instead of localhost:"
-    echo "   export MINIO_ENDPOINT=http://host.docker.internal:${MINIO_API_PORT}"
+    echo "4. Container logs: $CONTAINER_RUNTIME logs $MINIO_CONTAINER_NAME"
     echo ""
 }
 
 # Helper function to create and start a new MinIO container
 function start_minio_container {
-    $CONTAINER_RUNTIME pull $MINIO_IMAGE_NAME
+    # Pull only when the image isn't already local — keeps `up` working
+    # offline and avoids a registry round-trip on every start.
+    if ! $CONTAINER_RUNTIME image inspect "$MINIO_IMAGE_NAME" >/dev/null 2>&1; then
+        $CONTAINER_RUNTIME pull "$MINIO_IMAGE_NAME"
+    fi
     $CONTAINER_RUNTIME volume create $MINIO_VOLUME_NAME || true
 
     # OS-optimized container settings
@@ -232,15 +269,14 @@ function start_minio_container {
         --publish $MINIO_API_PORT:9000 \
         --publish $MINIO_CONSOLE_PORT:9001 \
         --volume $MINIO_VOLUME_NAME:/data \
-        --env MINIO_ROOT_USER=$MINIO_ROOT_USER \
-        --env MINIO_ROOT_PASSWORD=$MINIO_ROOT_PASSWORD \
-        --health-cmd="curl -f http://localhost:9000/minio/health/live || exit 1" \
+        --env RUSTFS_ACCESS_KEY=$MINIO_ROOT_USER \
+        --env RUSTFS_SECRET_KEY=$MINIO_ROOT_PASSWORD \
+        --health-cmd="curl -f http://localhost:9000/health || exit 1" \
         --health-interval=5s \
         --health-timeout=5s \
         --health-retries=5 \
         --detach \
-        $MINIO_IMAGE_NAME \
-        server /data --console-address :9001
+        $MINIO_IMAGE_NAME
 }
 
 function down {
@@ -308,7 +344,7 @@ function status {
 
         if command -v curl &>/dev/null; then
             confit log "Connection status:"
-            if curl -f -s -o /dev/null http://localhost:${MINIO_API_PORT}/minio/health/live; then
+            if curl -f -s -o /dev/null http://localhost:${MINIO_API_PORT}/health; then
                 confit log --ok "API connection active"
                 confit log --ok "Console available at http://localhost:${MINIO_CONSOLE_PORT}"
             else
@@ -323,19 +359,21 @@ function status {
 }
 
 function help {
-    confit log "MinIO Container Manager"
+    confit log "Dev S3 blob store (RustFS, MinIO-compatible) — docker or podman"
     echo ""
     echo "Usage: $0 [command]"
     echo ""
     echo "Commands:"
-    echo "  up                 - Start a local MinIO container for development"
-    echo "  down               - Remove the MinIO container and volume"
-    echo "  endpoint           - Print the MinIO S3 API endpoint URL"
-    echo "  console            - Open MinIO web console in browser"
+    echo "  up                 - Start the blob store container (pulls the image once)"
+    echo "  down               - Remove the container and its volume"
+    echo "  endpoint           - Print the S3 API endpoint URL"
+    echo "  console            - Open the web console in a browser"
     echo "  status             - Check container status and connection"
+    echo "  ls                 - List objects in the ${MINIO_BUCKET_NAME} bucket"
     echo "  help               - Show this help message"
     echo ""
-    echo "MinIO provides S3-compatible object storage for local development."
+    echo "Runtime: podman preferred, docker otherwise; force with ZIM_CONTAINER_RUNTIME."
+    echo "Image: \$MINIO_IMAGE_NAME (default docker.io/rustfs/rustfs:latest)."
     echo "Default credentials: minioadmin / minioadmin"
     echo ""
     echo "Example usage with zim:"
@@ -348,7 +386,7 @@ CMD=${1:-help}
 shift || true  # Shift to remove command from arguments
 
 case "$CMD" in
-up | down | endpoint | console | status | help)
+up | down | endpoint | console | status | ls | help)
     $CMD "$@"
     ;;
 *)

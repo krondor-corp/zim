@@ -174,14 +174,14 @@ Use `./bin/dev api` for quick API tests:
    ./bin/dev logs grep "peer\|connect"
    ```
 
-### MinIO (S3) Issues
+### Blob store (S3) Issues
 
-1. Check MinIO is running:
+1. Check the store is running (and which runtime it picked):
    ```bash
    ./bin/minio status
    ```
 
-2. View MinIO console: http://localhost:17181
+2. View the console: http://localhost:17181
    - Username: minioadmin
    - Password: minioadmin
 
@@ -245,6 +245,6 @@ For performance issues:
 # Remove all data (fresh start)
 ./bin/dev clean
 
-# Stop MinIO
+# Stop the blob store
 ./bin/minio down
 ```

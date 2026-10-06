@@ -48,7 +48,7 @@ Commands:
       [--fuse]            ...with the \`fuse\` feature so \`zim mount\` works
       [--hub]            ...then start the hub, seed fixtures, and enroll
                           the daemons — the whole stack in one command
-                          (\`./bin/dev --hub\` works too). Needs docker.
+                          (\`./bin/dev --hub\` works too). Needs docker or podman.
   clean                   Remove all data under $DATA_DIR
   kill [-f|--force]       Kill the tmux session; -f also frees ports
   status                  Show which daemons are up
@@ -64,7 +64,7 @@ Commands:
   fuse-check              Report whether FUSE fixtures will run here
   hub [up|enroll|did|down]
                           Run zim-hub in a tmux window (real OAuth via
-                          confit + minio; needs docker). \`enroll\` seeds
+                          confit + minio; needs docker or podman). \`enroll\` seeds
                           the hub user + enrolls dev daemons (stands in
                           for \`zim login\`). \`did\` prints its did:web.
   help                    Show this help

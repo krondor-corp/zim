@@ -80,7 +80,7 @@ P2P discovery takes a few seconds; the seed step waits for dialability before sh
 
 ## Hub in dev (`./bin/dev hub`)
 
-The hub embeds a peer (`zim::ServiceState`) and serves the web mirror. In dev it needs docker (minio, via `bin/minio`) for the S3 blob store.
+The hub embeds a peer (`zim::ServiceState`) and serves the web mirror. In dev it needs a container runtime, docker or podman, for the S3 blob store (via `bin/minio`).
 
 ```bash
 ./bin/dev hub up       # minio + web SPA build + zim-hub in the `hub` tmux window
@@ -107,15 +107,16 @@ ZIM_HUB_HOME=data/zim-hub ZIM_DEV_SEED_EMAIL=al@krondor.org \
 
 **One-shot.** `./bin/dev --hub` runs the whole sequence: start daemons → wait for them → `hub up` → wait for the hub → `seed` (p2p cross-add, so alice & bob know each other even without the hub) → `hub enroll` (hub rows + `hub peers sync`), then drops you in tmux. Finish by signing into the web view as the seed email and minting your web key.
 
-### MinIO (S3-compatible blob storage)
+### S3 blob store (RustFS, MinIO-compatible)
 
 ```bash
 ./bin/minio up       # container `zim-minio`, API :17180, console :17181 (17xxx port convention)
+./bin/minio ls       # objects the hub has mirrored into the `zim-blobs` bucket
 ./bin/minio down
 ./bin/minio status
 ```
 
-Credentials `minioadmin:minioadmin`, bucket `zim-blobs`. Prefers `podman`, falls back to `docker`; force with `ZIM_CONTAINER_RUNTIME`.
+Runs `docker.io/rustfs/rustfs` (MinIO pulled its public images; RustFS speaks the same S3 API on the same ports). Credentials `minioadmin:minioadmin`, bucket `zim-blobs`. Works with podman or docker: prefers whichever is running, podman first; force with `ZIM_CONTAINER_RUNTIME`. Bucket setup is a SigV4 `curl` from the host, so nothing is exec'd inside the container.
 
 ## FUSE mounting
 

@@ -14,7 +14,8 @@
 # al@krondor.org). You still mint the browser web-key manually in the
 # onboarding UI.
 #
-# Needs docker (minio, via bin/minio) for the S3 blob store.
+# Needs a container runtime — docker or podman — for the S3 blob store
+# (via bin/minio, which picks whichever is running).
 #
 #   ./bin/dev hub up       Start minio + the hub (tmux window 'hub')
 #   ./bin/dev hub enroll   Seed the hub user + enroll all dev daemons
@@ -50,7 +51,7 @@ hub_up() {
 
     echo -e "${BLUE}Starting minio (blob store)…${NC}"
     "$PROJECT_ROOT/bin/minio" up >/dev/null || {
-        echo -e "${RED}minio failed to start — is docker running?${NC}"
+        echo -e "${RED}blob store failed to start — is docker or podman running? (./bin/minio status)${NC}"
         exit 1
     }
 

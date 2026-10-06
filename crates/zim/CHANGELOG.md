@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3](https://github.com/krondor-corp/zim/compare/zim-v0.1.2...zim-v0.1.3) - 2026-10-06
+
+### Other
+
+- *(core)* shares are sealed at grant; recovery lives in share.rs with ShareError
+- *(core)* hoist imports; explicit share-height invariant; SharePending error
+
 ## [0.1.2](https://github.com/krondor-corp/zim/compare/zim-v0.1.1...zim-v0.1.2) - 2026-07-28
 
 ### Other

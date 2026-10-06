@@ -403,6 +403,34 @@ async fn each_version_pins_exactly_the_blobs_it_references() {
     reopened.save().await.expect("save 3");
     let v4 = file_blob(&reopened, &path).await;
     assert_eq!(actual(&reopened), expected(v4, &reopened), "version 3 pins");
+
+    // Version 4: a removed subtree takes its file pins with it. Only
+    // this version's ops log and predecessor remain.
+    let nested = AbsPath::new("/dir/sub/b").unwrap();
+    reopened
+        .fs()
+        .mkdir(&AbsPath::new("/dir/sub").unwrap(), true)
+        .await
+        .unwrap();
+    reopened
+        .fs()
+        .add(&nested, Cursor::new(b"nested"))
+        .await
+        .unwrap();
+    reopened.fs().rm(&path).await.unwrap();
+    reopened
+        .fs()
+        .rm(&AbsPath::new("/dir").unwrap())
+        .await
+        .unwrap();
+    reopened.save().await.expect("save 4");
+    let m = reopened.manifest();
+    let want = std::collections::BTreeSet::from([m.ops().hash(), m.previous().hash()]);
+    assert_eq!(
+        actual(&reopened),
+        want,
+        "version 4 pins: nothing but bookkeeping"
+    );
 }
 
 // ── Root ratchet + share lifecycle ───────────────────────────────────────

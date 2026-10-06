@@ -238,8 +238,12 @@ async fn previous_skips_revisions_that_were_never_saved() {
         Some(v1.link()),
         "an unsaved revision is not a predecessor"
     );
-    // The key schedule still moved once per write: v3 = v1 advanced twice.
-    assert_eq!(v1.ratchet().advanced_by(2), *v3.ratchet());
+    // The key schedule counts saved revisions too: v2 never became one,
+    // so v3 is the revision v2 was going to be — v1 advanced ONCE, and
+    // v2 and v3 share a key (each encryption drew its own nonce).
+    assert_eq!(v1.ratchet().advanced(), *v3.ratchet());
+    assert_eq!(v2.ratchet(), v3.ratchet());
+    assert_ne!(v2.link(), v3.link(), "different bytes, different blob");
 
     // Two unsaved writes with nothing saved before them have no lineage.
     let fresh = AbsPath::new("/scratch.md").unwrap();
@@ -269,7 +273,11 @@ async fn a_directory_s_previous_also_skips_unsaved_bodies() {
     let now = fs.get_entry_at_path(&docs).await.unwrap().unwrap();
 
     assert_eq!(now.previous(), Some(saved.link()));
-    assert_eq!(saved.ratchet().advanced_by(2), *now.ratchet());
+    assert_eq!(
+        saved.ratchet().advanced(),
+        *now.ratchet(),
+        "two unsaved rewrites are one revision"
+    );
 }
 
 #[tokio::test]

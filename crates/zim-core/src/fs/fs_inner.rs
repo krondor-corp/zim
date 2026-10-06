@@ -53,14 +53,21 @@ pub struct FsInner {
     pub unsaved: HashSet<Hash>,
 }
 
-/// The lineage pointer for a rewrite of `old`: its link if that
-/// revision was saved, else the pointer it carried. See
+/// The key schedule and lineage pointer for a rewrite of `old`.
+///
+/// If `old` was saved, this is the next revision: advance its ratchet
+/// and chain to its link. If `old` is unsaved, it never became a
+/// revision — nobody can fetch or decrypt it — so the rewrite *is* the
+/// revision `old` was going to be: keep its ratchet (one key per saved
+/// revision; every encryption draws a fresh nonce, so reuse within a
+/// session is safe) and inherit the pointer it carried. Ratchet height
+/// and lineage therefore both count saved revisions. See
 /// [`FsInner::unsaved`].
-fn lineage_previous(unsaved: &HashSet<Hash>, old: &Entry) -> Option<Link> {
+fn next_revision(unsaved: &HashSet<Hash>, old: &Entry) -> (EntryRatchet, Option<Link>) {
     if unsaved.contains(&old.link().hash()) {
-        old.previous().cloned()
+        (old.ratchet().clone(), old.previous().cloned())
     } else {
-        Some(old.link().clone())
+        (old.ratchet().advanced(), Some(old.link().clone()))
     }
 }
 
@@ -385,13 +392,10 @@ impl<B: BlobStore> Fs<B> {
         };
 
         // Key schedule (identity rides inside it). A rewrite is the SAME
-        // entity at its next revision: advance its ratchet, chain the
-        // prior saved link. A create seeds a fresh entity.
+        // entity at its next saved revision — see `next_revision`. A
+        // create seeds a fresh entity.
         let (ratchet, previous) = match &prior {
-            Some(old) => {
-                let unsaved = &self.0.lock().await.unsaved;
-                (old.ratchet().advanced(), lineage_previous(unsaved, old))
-            }
+            Some(old) => next_revision(&self.0.lock().await.unsaved, old),
             None => (EntryRatchet::seed(), None),
         };
         let prior_file_hash = prior.as_ref().map(|old| old.link().hash());
@@ -868,14 +872,13 @@ impl<B: BlobStore> Fs<B> {
         } else {
             // `ratchet` is Some for a brand-new dir (mkdir, local or
             // replayed — the op carries it). None means we're rewriting
-            // an existing dir: keep its id, advance its ratchet, chain
-            // the prior saved link. Seed only if nothing is there.
+            // an existing dir: same entity, next saved revision (see
+            // `next_revision`). Seed only if nothing is there.
             let (ratchet, previous) = match ratchet {
                 Some(r) => (r, None),
                 None => match self.get_entry_at_path(path).await? {
                     Some(old @ Entry::Dir { .. }) => {
-                        let unsaved = &self.0.lock().await.unsaved;
-                        (old.ratchet().advanced(), lineage_previous(unsaved, &old))
+                        next_revision(&self.0.lock().await.unsaved, &old)
                     }
                     _ => (EntryRatchet::seed(), None),
                 },
@@ -1002,11 +1005,10 @@ impl<B: BlobStore> Fs<B> {
             // secret. Putting it here too would write a hash no one
             // references and immediately orphan it.
             if current_path != Path::new("/") {
-                // Same entity, next revision: advance the old dir's
-                // ratchet and chain its saved link. Synthetic ancestors
-                // seed.
+                // Same entity, next saved revision (see `next_revision`).
+                // Synthetic ancestors seed.
                 let (ratchet, previous) = match &old_entry {
-                    Some(old) => (old.ratchet().advanced(), lineage_previous(&unsaved, old)),
+                    Some(old) => next_revision(&unsaved, old),
                     None => (EntryRatchet::seed(), None),
                 };
                 let link = blobs.put_dir(&ratchet.key(), &dir)?;

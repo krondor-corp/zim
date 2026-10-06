@@ -458,8 +458,10 @@ impl<B: BlobStore> Fs<B> {
         let entry = Entry::file(link.clone(), ratchet, previous, path, plaintext_hash);
         let new_root = self.set_entry_at_path(entry, path).await?;
         let mut inner = self.0.lock().await;
-        // Same hash means same content: the pin stays.
-        if let Some(old) = overwritten.filter(|old| *old != link.hash()) {
+        // Pins are keyed by ciphertext hash. Unpin the blob this write
+        // replaced, then pin the new one; if a replay re-attaches the very
+        // same blob the two cancel out.
+        if let Some(old) = overwritten {
             inner.pins.remove(&old);
         }
         inner.pins.insert(link.hash());

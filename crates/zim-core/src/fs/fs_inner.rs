@@ -401,7 +401,6 @@ impl<B: BlobStore> Fs<B> {
             Some(old) => next_revision(&self.0.lock().await.unsaved, old),
             None => (EntryRatchet::seed(), None),
         };
-        let prior_file_hash = prior.as_ref().map(|old| old.link().hash());
         let secret = ratchet.key();
 
         // Stream encryption + storage. `put_file` tees the plaintext
@@ -421,14 +420,6 @@ impl<B: BlobStore> Fs<B> {
 
         {
             let mut inner = self.0.lock().await;
-            // Drop the prior pin if we overwrote a different blob. (Same
-            // hash means same content — the new pin we just added would
-            // coincide with the prior one; nothing to do.)
-            if let Some(prior) = prior_file_hash {
-                if prior != link.hash() {
-                    inner.pins.remove(&prior);
-                }
-            }
             inner.unsaved.insert(link.hash());
             let peer_id = inner.public_key;
             inner.ops_log.record(
@@ -446,11 +437,12 @@ impl<B: BlobStore> Fs<B> {
         Ok(())
     }
 
-    /// `add` minus the op-log record and prior-pin bookkeeping. Builds the
-    /// [`Entry`], rebuilds the spine, pins `link`, and updates the root.
-    /// Used by local writes and by op replay alike; a replayed op's
-    /// `content` is the writer's and is not marked unsaved here — the
-    /// writer's manifest pins it.
+    /// `add` minus the op-log record. Builds the [`Entry`], rebuilds the
+    /// spine, pins `link`, unpins the file blob it overwrote (if any),
+    /// and updates the root. Used by local writes and by op replay
+    /// alike, so a replayed overwrite drops the old pin exactly as a
+    /// local one does; a replayed op's `content` is the writer's and is
+    /// not marked unsaved here — the writer's manifest pins it.
     async fn add_tree(
         &self,
         path: &AbsPath,
@@ -459,9 +451,17 @@ impl<B: BlobStore> Fs<B> {
         previous: Option<Link>,
         plaintext_hash: Hash,
     ) -> Result<(), FsError> {
+        let overwritten = match self.get_entry_at_path(path).await? {
+            Some(Entry::File { link: old, .. }) => Some(old.hash()),
+            _ => None,
+        };
         let entry = Entry::file(link.clone(), ratchet, previous, path, plaintext_hash);
         let new_root = self.set_entry_at_path(entry, path).await?;
         let mut inner = self.0.lock().await;
+        // Same hash means same content: the pin stays.
+        if let Some(old) = overwritten.filter(|old| *old != link.hash()) {
+            inner.pins.remove(&old);
+        }
         inner.pins.insert(link.hash());
         inner.root = new_root;
         Ok(())
@@ -473,11 +473,12 @@ impl<B: BlobStore> Fs<B> {
     ///   traverses through a file.
     /// - [`FsError::PathNotFound`] if `path` doesn't exist.
     ///
-    /// If `path` is a directory, every dir body in the removed subtree
-    /// is evicted from the metadata pack. The file blobs in the removed
-    /// subtree stay in the inner store but their pins survive — they're
-    /// unaffected by `rm`; only the tree pointer disappears.
-    /// Records an [`OpKind::Remove`] in the ops log.
+    /// Every file blob under `path` is unpinned and, if `path` is a
+    /// directory, every dir body in the removed subtree is evicted from
+    /// the metadata pack: a version's pins describe what THAT version
+    /// needs. The blobs themselves stay in the inner store — earlier
+    /// manifests still pin them. Records an [`OpKind::Remove`] in the
+    /// ops log.
     pub async fn rm(&self, path: &AbsPath) -> Result<(), FsError> {
         // Capture the entity before it's gone so replay can follow a
         // concurrent rename to it.
@@ -514,20 +515,36 @@ impl<B: BlobStore> Fs<B> {
         let removed_entry = parent_dir
             .remove(&file_name)
             .ok_or_else(|| FsError::PathNotFound(path.clone()))?;
-        let is_dir = removed_entry.is_dir();
-
-        // If we're removing a directory, walk its subtree and collect every
-        // dir-body hash it contained — those become orphans the metadata
-        // tier needs to evict.
-        if let Entry::Dir { link, ratchet, .. } = &removed_entry {
-            let mut orphans: HashSet<Hash> = HashSet::new();
-            orphans.insert(link.hash());
-            let removed_dir = self.1.get_dir(link, &ratchet.key()).await?;
-            Self::_collect_dir_hashes(&removed_dir, &self.1, &mut orphans).await?;
-            self.1.evict_many(&orphans);
-        }
+        // Everything the removed subtree referenced is no longer this
+        // version's to pin: dir bodies are evicted from the metadata
+        // pack, file blobs are unpinned.
+        let mut dir_bodies: HashSet<Hash> = HashSet::new();
+        let mut file_blobs: HashSet<Hash> = HashSet::new();
+        let is_dir = match &removed_entry {
+            Entry::Dir { link, ratchet, .. } => {
+                dir_bodies.insert(link.hash());
+                let removed_dir = self.1.get_dir(link, &ratchet.key()).await?;
+                Self::_collect_subtree_hashes(
+                    &removed_dir,
+                    &self.1,
+                    &mut dir_bodies,
+                    &mut file_blobs,
+                )
+                .await?;
+                true
+            }
+            Entry::File { link, .. } => {
+                file_blobs.insert(link.hash());
+                false
+            }
+        };
+        self.1.evict_many(&dir_bodies);
 
         self.set_dir_at_path(&abs_parent, parent_dir, None).await?;
+        let mut inner = self.0.lock().await;
+        for hash in &file_blobs {
+            inner.pins.remove(hash);
+        }
         Ok(is_dir)
     }
 
@@ -833,21 +850,30 @@ impl<B: BlobStore> Fs<B> {
         Ok(parent_dir.get(&file_name).cloned())
     }
 
-    /// Walk `dir`'s subtree, inserting every reachable dir-body hash into
-    /// `live`. Recursion is heap-boxed because async fns can't recurse by
-    /// value. Used by `save` to compute the GC live-set for the metadata
-    /// tier.
-    fn _collect_dir_hashes<'a>(
+    /// Walk `dir`'s subtree, collecting every reachable dir-body hash
+    /// into `dir_bodies` and every file blob hash into `file_blobs`.
+    /// Recursion is heap-boxed because async fns can't recurse by value.
+    /// Used by `rm` to find what a removed subtree referenced.
+    fn _collect_subtree_hashes<'a>(
         dir: &'a Dir,
         blobs: &'a ContentStore<B>,
-        live: &'a mut std::collections::HashSet<crate::linked_data::Hash>,
+        dir_bodies: &'a mut HashSet<Hash>,
+        file_blobs: &'a mut HashSet<Hash>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), FsError>> + Send + 'a>> {
         Box::pin(async move {
             for child in dir.entries().values() {
-                if let Entry::Dir { link, ratchet, .. } = child {
-                    if live.insert(link.hash()) {
-                        let child_dir = blobs.get_dir(link, &ratchet.key()).await?;
-                        Self::_collect_dir_hashes(&child_dir, blobs, live).await?;
+                match child {
+                    Entry::Dir { link, ratchet, .. } => {
+                        if dir_bodies.insert(link.hash()) {
+                            let child_dir = blobs.get_dir(link, &ratchet.key()).await?;
+                            Self::_collect_subtree_hashes(
+                                &child_dir, blobs, dir_bodies, file_blobs,
+                            )
+                            .await?;
+                        }
+                    }
+                    Entry::File { link, .. } => {
+                        file_blobs.insert(link.hash());
                     }
                 }
             }

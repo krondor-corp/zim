@@ -33,8 +33,11 @@ HashSeq. They identify external content that should remain available.
 
 A save pins referenced file ciphertext, a newly written operations log, and
 the immediately previous manifest. Directory bodies are carried in the
-manifest metadata pack. Removed file content may remain pinned so deletion does
-not imply immediate garbage collection.
+manifest metadata pack. A version's pins describe exactly what that version
+needs: overwriting or removing a file (or a whole subtree) drops its pins, and
+earlier versions' operations logs are not carried forward. Content an older
+version still references remains pinned by that version's own manifest, so
+dropping a pin here does not imply garbage collection.
 
 ## Download
 

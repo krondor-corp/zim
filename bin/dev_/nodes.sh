@@ -45,7 +45,7 @@ cmd_kill() {
 kill_dev_ports() {
     local killed=0
     # Daemon ports + the hub port. The hub runs in its own tmux window
-    # under `cargo watch`/confit, which can outlive `kill-session` — so
+    # under `cargo watch`, which can outlive `kill-session` — so
     # without this a stale hub keeps holding :17190 and the next `hub up`
     # fails to bind.
     local ports

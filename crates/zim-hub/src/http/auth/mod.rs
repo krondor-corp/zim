@@ -1,4 +1,6 @@
-//! Multi-user Google OAuth gate.
+//! Multi-user login gate. Google OAuth in production; with the
+//! `dev-login` feature and `ZIM_HUB_AUTH=dev-trust`, a trust-mode form
+//! (see [`dev`]). Both paths mint sessions through [`session`].
 //!
 //! Three extractors layered by access level:
 //!
@@ -14,26 +16,29 @@
 //! the user row is looked up fresh on every gated request so role
 //! changes take effect immediately.
 
+#[cfg(feature = "dev-login")]
+pub mod dev;
 pub mod google;
 // Both ends of the JWT format (mint + verify) live in `zim_api::hub::jwt`
 // so they can't drift; re-exported here to keep the old import path.
 pub use zim_api::hub::jwt;
 pub mod logout;
+pub mod session;
 
 use axum::async_trait;
-use axum::extract::FromRequestParts;
+use axum::extract::{FromRequestParts, State};
 use axum::http::request::Parts;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::Router;
 use jsonwebtoken::{decode, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 
+use crate::config::{AuthConfig, AuthMode};
 use crate::database::models::{User, UserPeer};
 use crate::state::AppState;
 
-pub const LOGIN_PATH: &str = "/auth/google/login";
 pub const PENDING_PATH: &str = "/auth/pending";
 /// Where to send an authenticated-but-not-onboarded HTML client: the SPA
 /// root, which shows the web-key gate.
@@ -41,11 +46,31 @@ pub const ONBOARDING_PATH: &str = "/";
 pub const SESSION_COOKIE: &str = "session";
 
 pub fn router(state: AppState) -> Router<AppState> {
-    Router::new()
-        .nest("/google", google::router())
+    let r = Router::new()
+        // Mode-neutral sign-in entry: the SPA sends anonymous visitors
+        // here so it never needs to know which mode the hub runs in.
+        .route("/login", get(login_redirect))
         .route("/logout", post(logout::handler))
-        .route("/pending", axum::routing::get(pending_page))
-        .with_state(state)
+        .route("/pending", get(pending_page));
+    let r = match &state.auth.mode {
+        AuthMode::Google { .. } => r.nest("/google", google::router()),
+        #[cfg(feature = "dev-login")]
+        AuthMode::DevTrust => r.nest("/dev", dev::router()),
+    };
+    r.with_state(state)
+}
+
+/// Where an anonymous visitor goes to sign in, for this hub's mode.
+pub fn login_path(auth: &AuthConfig) -> &'static str {
+    match auth.mode {
+        AuthMode::Google { .. } => "/auth/google/login",
+        #[cfg(feature = "dev-login")]
+        AuthMode::DevTrust => "/auth/dev/login",
+    }
+}
+
+async fn login_redirect(State(state): State<AppState>) -> Response {
+    Redirect::to(login_path(&state.auth)).into_response()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,7 +107,7 @@ impl FromRequestParts<AppState> for RequireUser {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         let Some(user) = resolve_user(parts, state).await else {
-            return Err(unauthorized(parts));
+            return Err(unauthorized(parts, state));
         };
         if !user.can_use_app() {
             return Err(if wants_html(parts) {
@@ -116,7 +141,7 @@ impl FromRequestParts<AppState> for RequireOnboardedUser {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         let Some(user) = resolve_user(parts, state).await else {
-            return Err(unauthorized(parts));
+            return Err(unauthorized(parts, state));
         };
         if !user.can_use_app() {
             return Err(if wants_html(parts) {
@@ -162,7 +187,7 @@ impl FromRequestParts<AppState> for RequireAdmin {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         let Some(user) = resolve_user(parts, state).await else {
-            return Err(unauthorized(parts));
+            return Err(unauthorized(parts, state));
         };
         if !user.is_admin() {
             return Err(StatusCode::FORBIDDEN.into_response());
@@ -284,9 +309,9 @@ fn bearer_token(parts: &Parts) -> Option<String> {
     }
 }
 
-fn unauthorized(parts: &Parts) -> Response {
+fn unauthorized(parts: &Parts, state: &AppState) -> Response {
     if wants_html(parts) {
-        Redirect::to(LOGIN_PATH).into_response()
+        Redirect::to(login_path(&state.auth)).into_response()
     } else {
         StatusCode::UNAUTHORIZED.into_response()
     }

@@ -50,7 +50,7 @@ fn app() -> Html {
         }
         Some(None) => {
             if let Some(w) = web_sys::window() {
-                let _ = w.location().set_href("/auth/google/login");
+                let _ = w.location().set_href("/auth/login");
             }
             return html! {};
         }

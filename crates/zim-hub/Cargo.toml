@@ -31,6 +31,14 @@ path = "src/main.rs"
 name = "zim-hub-devseed"
 path = "src/bin/devseed.rs"
 
+[features]
+default = []
+# Trust-mode login for local dev (`ZIM_HUB_AUTH=dev-trust`): any typed
+# email signs in as admin. NEVER enabled in release/Docker builds — the
+# `/auth/dev/*` route and the `AuthMode::DevTrust` variant do not exist
+# without it.
+dev-login = []
+
 [dependencies]
 # workspace — in-process peer Service surface
 # Shared API contract: the server serializes these wire types; the CLI +

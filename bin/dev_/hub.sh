@@ -2,16 +2,19 @@
 # Optional zim-hub node for the dev environment.
 #
 # Boots `zim-hub` in a tmux window alongside the daemons, with dev
-# defaults. When `confit` is installed it resolves *real* Google OAuth
-# credentials so the web view is usable; otherwise it
-# falls back to dummy creds (web login disabled, daemon<->hub sync
-# still works — that path is pure iroh and never touches OAuth).
+# defaults. Login is trust mode (`--features dev-login`,
+# ZIM_HUB_AUTH=dev-trust): open the hub, type any email, you're an
+# admin — no Google account or OAuth client needed. Real Google OAuth
+# is opt-in:
+#
+#   ZIM_DEV_HUB_AUTH=google GOOGLE_O_AUTH_CLIENT_ID=… GOOGLE_O_AUTH_CLIENT_SECRET=… ./bin/dev hub up
 #
 # `hub enroll` stands in for `zim login`: it writes the user + daemon
 # device rows directly into the hub DB (via the `zim-hub-devseed` bin),
 # so the dev daemons are enrolled without the device-code browser
 # dance. The web user is seeded to $ZIM_DEV_SEED_EMAIL (default
-# al@krondor.org). You still mint the browser web-key manually in the
+# al@krondor.org) — type that email at the dev login to land on the
+# same account. You still mint the browser web-key manually in the
 # onboarding UI.
 #
 # Needs a container runtime — docker or podman — for the S3 blob store
@@ -65,7 +68,7 @@ hub_up() {
     }
 
     echo -e "${BLUE}Building zim-hub…${NC}"
-    (cd "$PROJECT_ROOT" && cargo build --bin zim-hub --quiet) || {
+    (cd "$PROJECT_ROOT" && cargo build --bin zim-hub --features dev-login --quiet) || {
         echo -e "${RED}cargo build failed${NC}"
         exit 1
     }
@@ -80,8 +83,9 @@ hub_up() {
     fi
 
     # Env the hub reads. `ZIM_HUB_HOST` is percent-encoded so did:web
-    # resolves to the URL. Admin email defaults to the seed user so a
-    # Google login as that account is auto-promoted to admin.
+    # resolves to the URL. Admin email defaults to the seed user: it
+    # pre-fills the dev login form, and in Google mode auto-promotes
+    # that account to admin.
     local env_prefix="\
 ZIM_HUB_LISTEN='127.0.0.1:$HUB_PORT' \
 ZIM_HUB_HOME='$HUB_HOME' \
@@ -92,9 +96,8 @@ ZIM_HUB_S3_ACCESS_KEY='minioadmin' \
 ZIM_HUB_S3_SECRET_KEY='minioadmin' \
 ZIM_HUB_S3_BUCKET='zim-blobs'"
 
-    # Real Google OAuth via confit when available (web view usable),
-    # else dummy creds (boots, but web login is disabled — sync only).
-    # Run under `cargo watch` (not the prebuilt binary) so server/sync edits
+    # Trust-mode login by default; `ZIM_DEV_HUB_AUTH=google` runs the
+    # real OAuth flow with creds from the caller's env. Run under `cargo watch` (not the prebuilt binary) so server/sync edits
     # rebuild + restart the hub live, in lockstep with the daemons.
     #
     # No `eval`: the command is parsed once by the tmux pane shell, which
@@ -103,15 +106,22 @@ ZIM_HUB_S3_BUCKET='zim-blobs'"
     # leaving cargo-watch to fall back to a bare `cargo run`.
     # `--bin zim-hub`: the package also ships `zim-hub-devseed`, so the bin
     # must be named explicitly.
-    local run_hub="cargo watch $HUB_WATCH_DIRS -x 'run --bin zim-hub'"
+    local run_hub="cargo watch $HUB_WATCH_DIRS -x 'run --bin zim-hub --features dev-login'"
     local launch
-    if command -v confit >/dev/null 2>&1; then
-        echo -e "${BLUE}Using real Google OAuth via confit (web view enabled).${NC}"
-        launch="$env_prefix confit run credentials.app --upper -- $run_hub"
-    else
-        echo -e "${YELLOW}confit not found — dummy OAuth (web login disabled; sync only).${NC}"
-        launch="$env_prefix GOOGLE_O_AUTH_CLIENT_ID='dev' GOOGLE_O_AUTH_CLIENT_SECRET='dev' $run_hub"
-    fi
+    case "${ZIM_DEV_HUB_AUTH:-dev-trust}" in
+        dev-trust)
+            echo -e "${BLUE}Dev-trust login: any email signs in as admin.${NC}"
+            launch="$env_prefix ZIM_HUB_AUTH=dev-trust $run_hub"
+            ;;
+        google)
+            echo -e "${BLUE}Google OAuth login (creds from GOOGLE_O_AUTH_CLIENT_ID/_SECRET).${NC}"
+            launch="$env_prefix $run_hub"
+            ;;
+        *)
+            echo -e "${RED}ZIM_DEV_HUB_AUTH must be dev-trust or google${NC}"
+            exit 1
+            ;;
+    esac
 
     tmux new-window -t "$TMUX_SESSION" -n "$HUB_WINDOW" \
         "cd $PROJECT_ROOT && printf '%b\n' '${GREEN}=== zim-hub on :$HUB_PORT ===${NC}' && $launch"
@@ -132,7 +142,7 @@ hub_enroll() {
     require_daemons_up
 
     echo -e "${BLUE}Building zim-hub-devseed…${NC}"
-    (cd "$PROJECT_ROOT" && cargo build --bin zim-hub-devseed --quiet) || {
+    (cd "$PROJECT_ROOT" && cargo build --bin zim-hub-devseed --features dev-login --quiet) || {
         echo -e "${RED}cargo build failed${NC}"; exit 1
     }
     local devseed="$PROJECT_ROOT/target/debug/zim-hub-devseed"

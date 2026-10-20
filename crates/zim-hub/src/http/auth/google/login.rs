@@ -8,12 +8,16 @@
 //! load-bearing as soon as we add a "link a second identity" flow.
 
 use axum::extract::State;
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 
 use crate::state::AppState;
 
 pub async fn handler(State(state): State<AppState>) -> Response {
-    let client_id = &state.auth.google_o_auth_client_id;
+    // Only mounted in Google mode, so the client is always there.
+    let Some((client_id, _)) = state.auth.google_client() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
     let redirect_uri = state.auth.callback_url();
 
     // Scopes: `openid email profile`. `openid` + `email` carry the

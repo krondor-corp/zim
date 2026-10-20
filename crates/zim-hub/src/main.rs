@@ -85,6 +85,10 @@ fn banner(config: &Config) {
         config.listen_address
     );
     tracing::info!("  services http, peer (in-process / relay)");
+    tracing::info!("  auth     {}", config.auth.mode_label());
+    if config.auth.google_client().is_none() {
+        tracing::warn!("ZIM_HUB_AUTH=dev-trust: ANY email signs in as admin. Dev only.");
+    }
     tracing::info!("─────────────────────────────────────────");
     tracing::info!("");
     tracing::info!("To mirror a vault on this hub, run on the owning peer:");

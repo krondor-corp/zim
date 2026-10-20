@@ -89,7 +89,13 @@ The hub embeds a peer (`zim::ServiceState`) and serves the web mirror. In dev it
 ./bin/dev hub down     # kill the hub window
 ```
 
-**OAuth.** `hub up` resolves real Google OAuth via `confit` when it's installed, so the web view is usable; without `confit` it boots with dummy creds (web login disabled, daemon↔hub sync still works — that path is pure iroh). The admin email defaults to `$ZIM_DEV_SEED_EMAIL` (default `al@krondor.org`).
+**Login.** `hub up` builds the hub with `--features dev-login` and runs it with `ZIM_HUB_AUTH=dev-trust`: open `http://127.0.0.1:17190`, type any email, and you're signed in as an admin. No Google account, OAuth client, or credential store needed. The form pre-fills `$ZIM_DEV_SEED_EMAIL` (default `al@krondor.org`); type that to land on the account `hub enroll` seeds. Dev-trust is refused unless `HOST_NAME` is loopback, and the route doesn't exist in builds without the feature (release/Docker). To exercise the real Google flow instead:
+
+```bash
+ZIM_DEV_HUB_AUTH=google GOOGLE_O_AUTH_CLIENT_ID=… GOOGLE_O_AUTH_CLIENT_SECRET=… ./bin/dev hub up
+```
+
+Both modes mint sessions through the same code (`http/auth/session.rs`); only who asserts the email differs.
 
 **Hub coupling is opt-in.** All hub commands live under `zim hub` (`zim hub login`, `zim hub peers sync`, `zim hub peers ls`). A daemon that only syncs with your own devices over p2p never needs any of them — the base `zim peers add|list|rm|ping` manage the address book directly with no hub involved. The hub is, at this point, mostly device management: it tracks your account's device roster (a `did:web` document at `/u/<user>/did.json`, one verification method per enrolled key), and `zim hub peers sync` folds that roster into the local `peers.toml` so all your devices know each other without manual cross-adds.
 

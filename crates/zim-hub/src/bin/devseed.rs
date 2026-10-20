@@ -8,6 +8,10 @@
 //! hub's HTTP API (bearer JWT, verified against `user_peers`) as that
 //! user — exactly as if they'd been approved through the browser.
 //!
+//! `ZIM_DEV_SEED_EMAIL` must match the email you sign into the web UI
+//! with — in dev that's whatever you type at the dev-trust login form
+//! (`ZIM_HUB_AUTH=dev-trust`), no Google account involved.
+//!
 //! It does NOT mint a web key — that's a browser-resident keypair the
 //! user still onboards manually (the workspace UI gates on it). This
 //! only stands in for the daemon enrollments.

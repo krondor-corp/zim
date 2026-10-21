@@ -19,11 +19,11 @@ These are settled direction, not open questions:
 - **Until the split executes, the hub keeps shipping from this repo** —
   keep them together until the APIs are stable (earlier decision, still
   in force). The split is the destination, not the current state.
-- **Hub-only dev config moves with the hub.** `confit.toml` (Google
-  OAuth via the 1Password Environment) exists only to serve hub dev; it
-  goes to the hub repo. The `confit export → .env.dev` idea is deferred
-  to the split for the same reason — and so does removing the
-  environment ID from this public repo's history-forward state.
+- **Hub-only dev config moves with the hub.** Dev hubs sign in via
+  trust-mode login (`--features dev-login`), so this repo carries no
+  OAuth credential config; the old `confit.toml` (Google OAuth via the
+  1Password Environment) is gone. Real-OAuth dev config, if the hub
+  repo wants one, is its concern after the split.
 - **Product framing:** `zim` = free, peer-to-peer, end-to-end-encrypted
   vaults. The hub = the hosted layer that makes it convenient (the
   GitHub-to-git analogy).

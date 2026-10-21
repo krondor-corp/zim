@@ -11,7 +11,8 @@
 #   1720x  site       — web/ Jekyll 17200
 #   1721x  livereload — site livereload 17210
 #   1722x  e2e        — zim-e2e harness daemons (17220+i; hermetic, own data/e2e/)
-# Within each band, slot +N belongs to worktree N (base repo = +0).
+# Ports are fixed today: only one worktree can run the dev env at a
+# time. Per-worktree port slots are planned in KRO-238.
 
 [alice]
 api_port = 17172

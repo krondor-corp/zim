@@ -24,9 +24,9 @@ pub mod vaults;
 
 #[cfg(feature = "admin")]
 pub use admin::{AdminActionRequest, AdminUser, AdminUsers, AdminUsersRequest};
+pub use auth::{AuthProviders, AuthProvidersRequest, Me, MeRequest, SignInOption};
 #[cfg(feature = "grant")]
 pub use auth::{GrantApproveRequest, GrantInfo, GrantInfoRequest};
-pub use auth::{Me, MeRequest};
 pub use client::HubClient;
 pub use devices::{
     device_did, device_nick, Device, DevicesRequest, DevicesResponse, RemoveDeviceRequest,

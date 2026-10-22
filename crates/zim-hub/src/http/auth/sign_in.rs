@@ -1,0 +1,99 @@
+//! `GET /api/v0/auth/providers` — the sign-in options this hub offers.
+//!
+//! The SPA renders one landing page for anonymous visitors from this
+//! list: a button per redirect-style provider (Google), an email field
+//! per email-style one (dev trust). Each provider's own routes live
+//! under `/auth/<provider>/`.
+
+use axum::extract::State;
+use axum::Json;
+// Shared wire types — the SPA deserializes the same `AuthProviders`.
+use zim_api::hub::{AuthProviders, SignInOption};
+
+use crate::config::{AuthConfig, AuthProvider};
+use crate::state::AppState;
+
+pub async fn handler(State(state): State<AppState>) -> Json<AuthProviders> {
+    Json(AuthProviders {
+        providers: sign_in_options(&state.auth),
+    })
+}
+
+fn sign_in_options(auth: &AuthConfig) -> Vec<SignInOption> {
+    auth.providers
+        .iter()
+        .map(|provider| match provider {
+            AuthProvider::Google(_) => SignInOption::Redirect {
+                id: provider.name().to_string(),
+                label: "Sign in with Google".to_string(),
+                path: "/auth/google/login".to_string(),
+            },
+            #[cfg(feature = "dev-login")]
+            AuthProvider::DevTrust => SignInOption::Email {
+                id: provider.name().to_string(),
+                label: "Dev login".to_string(),
+                action: "/auth/dev/login".to_string(),
+                default_email: auth.admin_emails.first().cloned(),
+                warning: Some("Any email signs in as admin. Dev only.".to_string()),
+            },
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::GoogleOAuth;
+
+    fn hub(providers: Vec<AuthProvider>) -> AuthConfig {
+        AuthConfig {
+            host_name: "http://127.0.0.1:17190".into(),
+            admin_emails: vec!["alice@example.com".into()],
+            providers,
+            service_secret: "secret".into(),
+        }
+    }
+
+    fn google() -> AuthProvider {
+        AuthProvider::Google(GoogleOAuth {
+            client_id: "id".into(),
+            client_secret: "secret".into(),
+        })
+    }
+
+    #[test]
+    fn google_is_offered_as_a_button_to_the_oauth_handshake() {
+        let options = sign_in_options(&hub(vec![google()]));
+        assert_eq!(
+            options,
+            [SignInOption::Redirect {
+                id: "google".into(),
+                label: "Sign in with Google".into(),
+                path: "/auth/google/login".into(),
+            }]
+        );
+    }
+
+    #[cfg(feature = "dev-login")]
+    #[test]
+    fn dev_hub_offers_both_in_configured_order_with_the_email_prefilled() {
+        let options = sign_in_options(&hub(vec![AuthProvider::DevTrust, google()]));
+
+        let SignInOption::Email {
+            id,
+            action,
+            default_email,
+            warning,
+            ..
+        } = &options[0]
+        else {
+            panic!("dev-trust should be an email form: {options:?}");
+        };
+        assert_eq!(id, "dev-trust");
+        assert_eq!(action, "/auth/dev/login");
+        assert_eq!(default_email.as_deref(), Some("alice@example.com"));
+        assert!(warning.is_some(), "dev-trust must warn it trusts anyone");
+
+        assert!(matches!(&options[1], SignInOption::Redirect { id, .. } if id == "google"));
+    }
+}

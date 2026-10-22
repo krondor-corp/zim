@@ -7,7 +7,8 @@
 //! Structure: `api/` (typed backend client) · `util/` (helpers) ·
 //! `components/` (presentational lib) · `layouts/` (page shells) ·
 //! `pages/` (route targets) · `routes.rs` (URL → page). `main.rs` only
-//! does auth, the web-key gate, and mounts the router.
+//! does auth (anonymous → the sign-in page), the web-key gate, and mounts
+//! the router.
 
 mod api;
 mod components;
@@ -19,6 +20,7 @@ mod util;
 use api::Me;
 use layouts::OnboardingShell;
 use pages::gate::KeyGate;
+use pages::sign_in::SignIn;
 use routes::{switch, Route};
 
 use wasm_bindgen_futures::spawn_local;
@@ -49,10 +51,7 @@ fn app() -> Html {
             };
         }
         Some(None) => {
-            if let Some(w) = web_sys::window() {
-                let _ = w.location().set_href("/auth/login");
-            }
-            return html! {};
+            return html! { <OnboardingShell><SignIn /></OnboardingShell> };
         }
         Some(Some(user)) => user.clone(),
     };

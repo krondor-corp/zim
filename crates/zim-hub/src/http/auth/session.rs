@@ -54,12 +54,14 @@ pub enum SessionError {
 }
 
 /// Find-or-create the user for `email`, sign a session JWT, and
-/// answer with the cookie + a redirect home.
+/// answer with the cookie + a redirect to `next` (an already-sanitized
+/// same-origin path; see [`super::return_to`]).
 pub async fn mint_session(
     state: &AppState,
     email: &str,
     name: &str,
     authority: Authority,
+    next: &str,
 ) -> Result<Response, SessionError> {
     let user = find_or_create_user(state, email, name, &authority).await?;
 
@@ -92,9 +94,7 @@ pub async fn mint_session(
         "user signed in"
     );
 
-    // Land authenticated users in the workspace, not on the public
-    // marketing page.
-    Ok(([(SET_COOKIE, cookie)], Redirect::to("/")).into_response())
+    Ok(([(SET_COOKIE, cookie)], Redirect::to(next)).into_response())
 }
 
 /// Look up the user by email or insert a fresh row, admin-ness per

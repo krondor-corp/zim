@@ -1,7 +1,8 @@
 //! Multi-user login gate. Login providers (Google OAuth; with the
 //! `dev-login` feature, the [`dev`] trust-mode form) are enabled via
 //! `ZIM_HUB_AUTH`, can run side by side, and all mint sessions through
-//! [`session`]. [`sign_in`] lists them for the SPA's sign-in page.
+//! [`session`]. [`login`] is the server-rendered sign-in page; the
+//! wasm app is only served to users who already have a session.
 //!
 //! Three extractors layered by access level:
 //!
@@ -20,16 +21,18 @@
 #[cfg(feature = "dev-login")]
 pub mod dev;
 pub mod google;
+pub mod login;
 // Both ends of the JWT format (mint + verify) live in `zim_api::hub::jwt`
 // so they can't drift; re-exported here to keep the old import path.
 pub use zim_api::hub::jwt;
 pub mod logout;
+pub mod return_to;
 pub mod session;
-pub mod sign_in;
 
 use axum::async_trait;
-use axum::extract::FromRequestParts;
+use axum::extract::{FromRequestParts, OriginalUri};
 use axum::http::request::Parts;
+use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
@@ -41,9 +44,9 @@ use crate::config::AuthProvider;
 use crate::database::models::{User, UserPeer};
 use crate::state::AppState;
 
-/// Where an anonymous HTML client goes to sign in: the SPA root, which
-/// renders the sign-in landing page from [`sign_in`]'s provider list.
-pub const LOGIN_PATH: &str = "/";
+/// The sign-in page ([`login`]). Use [`return_to::login_url`] to come
+/// back to the current page afterwards.
+pub const LOGIN_PATH: &str = "/auth/login";
 pub const PENDING_PATH: &str = "/auth/pending";
 /// Where to send an authenticated-but-not-onboarded HTML client: the SPA
 /// root, which shows the web-key gate.
@@ -52,6 +55,7 @@ pub const SESSION_COOKIE: &str = "session";
 
 pub fn router(state: AppState) -> Router<AppState> {
     let mut r = Router::new()
+        .route("/login", get(login::handler))
         .route("/logout", post(logout::handler))
         .route("/pending", get(pending_page));
     // Each enabled provider mounts its own routes; disabled ones 404.
@@ -303,7 +307,15 @@ fn bearer_token(parts: &Parts) -> Option<String> {
 
 fn unauthorized(parts: &Parts) -> Response {
     if wants_html(parts) {
-        Redirect::to(LOGIN_PATH).into_response()
+        // Nested routers see a prefix-stripped `uri`; `OriginalUri` has
+        // the path the browser actually asked for.
+        let here = parts
+            .extensions
+            .get::<OriginalUri>()
+            .map(|OriginalUri(u)| u)
+            .unwrap_or(&parts.uri);
+        let path = here.path_and_query().map(|p| p.as_str()).unwrap_or("/");
+        Redirect::to(&return_to::login_url(path)).into_response()
     } else {
         StatusCode::UNAUTHORIZED.into_response()
     }
@@ -317,21 +329,20 @@ fn wants_html(parts: &Parts) -> bool {
         .is_some_and(|s| s.contains("text/html"))
 }
 
-fn extract_claims(parts: &Parts, secret: &str) -> Option<Claims> {
-    let cookie_header = parts
-        .headers
+/// Value of cookie `name` from the request's `Cookie` header.
+pub(crate) fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
         .get(axum::http::header::COOKIE)?
         .to_str()
-        .ok()?;
-    let token = cookie_header
+        .ok()?
         .split(';')
-        .filter_map(|c| {
-            let mut kv = c.trim().splitn(2, '=');
-            let name = kv.next()?.trim();
-            let value = kv.next()?.trim();
-            (name == SESSION_COOKIE).then(|| value.to_string())
-        })
-        .next()?;
+        .filter_map(|c| c.trim().split_once('='))
+        .find(|(k, _)| k.trim() == name)
+        .map(|(_, v)| v.trim().to_string())
+}
+
+fn extract_claims(parts: &Parts, secret: &str) -> Option<Claims> {
+    let token = cookie(&parts.headers, SESSION_COOKIE)?;
     if secret.is_empty() {
         return None;
     }

@@ -1,14 +1,15 @@
 //! zim-hub Yew frontend.
 //!
 //! A Rust/WASM SPA that consumes `zim-hub-wasm` as an SDK (`HubClient` /
-//! `WasmFs` / crypto called directly as Rust). The hub owns OAuth + the
-//! session cookie + the JSON API; this app drives everything client-side.
+//! `WasmFs` / crypto called directly as Rust). The hub owns sign-in (its
+//! server-rendered `/auth/*` pages), the session cookie, and the JSON API —
+//! it only serves this app to signed-in, approved users. The app owns key
+//! custody (the web-key gate) and the vault UI.
 //!
 //! Structure: `api/` (typed backend client) · `util/` (helpers) ·
 //! `components/` (presentational lib) · `layouts/` (page shells) ·
 //! `pages/` (route targets) · `routes.rs` (URL → page). `main.rs` only
-//! does auth (anonymous → the sign-in page), the web-key gate, and mounts
-//! the router.
+//! loads the user, runs the web-key gate, and mounts the router.
 
 mod api;
 mod components;
@@ -20,7 +21,6 @@ mod util;
 use api::Me;
 use layouts::OnboardingShell;
 use pages::gate::KeyGate;
-use pages::sign_in::SignIn;
 use routes::{switch, Route};
 
 use wasm_bindgen_futures::spawn_local;
@@ -51,7 +51,19 @@ fn app() -> Html {
             };
         }
         Some(None) => {
-            return html! { <OnboardingShell><SignIn /></OnboardingShell> };
+            // The hub only serves this app with a session, so this is one
+            // that expired mid-use: sign in again, then come back here.
+            if let Some(w) = web_sys::window() {
+                let loc = w.location();
+                let here = format!(
+                    "{}{}",
+                    loc.pathname().unwrap_or_default(),
+                    loc.search().unwrap_or_default()
+                );
+                let next = String::from(js_sys::encode_uri_component(&here));
+                let _ = loc.set_href(&format!("/auth/login?next={next}"));
+            }
+            return html! {};
         }
         Some(Some(user)) => user.clone(),
     };

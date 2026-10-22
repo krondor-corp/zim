@@ -1,23 +1,29 @@
-//! `GET /auth/google/callback` — exchange the auth code, validate
-//! the ID-token claims, then hand the verified email to
-//! [`mint_session`] (shared with the dev-trust login).
+//! `GET /auth/google/callback` — check `state` against this browser's
+//! cookie (see [`super::state`]), exchange the auth code, validate the
+//! ID-token claims, then hand the verified email to [`mint_session`]
+//! (shared with the dev-trust login), landing on the carried `next`.
 //!
 //! ID-token signature: trusted via TLS from Google's token endpoint;
 //! we still audience+issuer-check to catch a misconfigured client_id.
 
 use axum::extract::{Query, State};
+use axum::http::header::SET_COOKIE;
+use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
 use http::StatusCode;
 use jsonwebtoken::{DecodingKey, Validation};
 use serde::Deserialize;
 
+use super::state as oauth_state;
 use crate::http::auth::session::{mint_session, Authority};
-use crate::http::auth::LOGIN_PATH;
+use crate::http::auth::{return_to, LOGIN_PATH};
 use crate::state::AppState;
 
 #[derive(Deserialize)]
 pub struct CallbackQuery {
     pub code: String,
+    #[serde(default)]
+    pub state: String,
 }
 
 #[derive(Deserialize)]
@@ -38,6 +44,7 @@ struct IdTokenClaims {
 pub async fn handler(
     State(state): State<AppState>,
     Query(query): Query<CallbackQuery>,
+    headers: HeaderMap,
 ) -> Response {
     // Only mounted when Google is an enabled provider.
     let Some(google) = state.auth.google() else {
@@ -45,12 +52,19 @@ pub async fn handler(
     };
     let (client_id, client_secret) = (&google.client_id, &google.client_secret);
     let redirect_uri = state.auth.callback_url();
+    let secure = state.auth.host_name.starts_with("https://");
+
+    let Some(next) = oauth_state::finish(&query.state, &headers) else {
+        tracing::warn!("oauth state missing or doesn't match this browser's cookie");
+        return Redirect::to(LOGIN_PATH).into_response();
+    };
+    let retry = return_to::login_url(&next);
 
     let id_token = match exchange_code(client_id, client_secret, &redirect_uri, &query.code).await {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("token exchange failed: {e}");
-            return Redirect::to(LOGIN_PATH).into_response();
+            return Redirect::to(&retry).into_response();
         }
     };
 
@@ -58,19 +72,24 @@ pub async fn handler(
         Ok(c) => c,
         Err(e) => {
             tracing::error!("id_token decode failed: {e}");
-            return Redirect::to(LOGIN_PATH).into_response();
+            return Redirect::to(&retry).into_response();
         }
     };
 
     if !id_claims.email_verified {
         tracing::warn!(email = %id_claims.email, "google reports email_verified=false");
-        return Redirect::to(LOGIN_PATH).into_response();
+        return Redirect::to(&retry).into_response();
     }
 
     let name = id_claims.name.unwrap_or_default();
     let authority = Authority::Google { sub: id_claims.sub };
-    match mint_session(&state, &id_claims.email, &name, authority).await {
-        Ok(r) => r,
+    match mint_session(&state, &id_claims.email, &name, authority, &next).await {
+        Ok(mut r) => {
+            if let Ok(clear) = oauth_state::clear_cookie(secure).parse() {
+                r.headers_mut().append(SET_COOKIE, clear);
+            }
+            r
+        }
         Err(e) => {
             tracing::error!("google sign-in failed: {e}");
             (StatusCode::INTERNAL_SERVER_ERROR, "sign-in failed").into_response()

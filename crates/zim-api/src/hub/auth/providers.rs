@@ -12,31 +12,27 @@ pub struct AuthProviders {
     pub providers: Vec<SignInOption>,
 }
 
-/// One way to sign in, described by the UI it needs rather than by
-/// provider, so a new provider of an existing kind needs no SPA change.
+/// One way to sign in, as the SPA's sign-in page should render it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum SignInOption {
-    /// A button: navigate the browser to `path` (e.g. an OAuth handshake).
+    /// A button: navigate the browser to `path` to start an OAuth-style
+    /// handshake. Any such provider (Google today) fits this shape.
     Redirect {
         /// The provider's `ZIM_HUB_AUTH` name (`google`).
         id: String,
         label: String,
         path: String,
     },
-    /// An email field POSTed as a form (`email=…`) to `action`.
-    Email {
-        /// The provider's `ZIM_HUB_AUTH` name (`dev-trust`).
-        id: String,
-        label: String,
+    /// Dev-only trust login: no verification — whatever email is POSTed
+    /// (`email=…`) to `action` gets an admin session. Only offered by
+    /// `--features dev-login` hubs on loopback; the SPA renders it with a
+    /// warning.
+    DevTrust {
         action: String,
         /// Pre-fill for the email field.
         #[serde(default)]
         default_email: Option<String>,
-        /// Shown with the option — for ones an operator should think
-        /// twice about.
-        #[serde(default)]
-        warning: Option<String>,
     },
 }
 

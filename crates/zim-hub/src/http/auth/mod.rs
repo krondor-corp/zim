@@ -1,7 +1,7 @@
 //! Multi-user login gate. Login providers (Google OAuth; with the
 //! `dev-login` feature, the [`dev`] trust-mode form) are enabled via
 //! `ZIM_HUB_AUTH`, can run side by side, and all mint sessions through
-//! [`session`]. [`login`] is the provider-neutral entry point.
+//! [`session`]. [`sign_in`] lists them for the SPA's sign-in page.
 //!
 //! Three extractors layered by access level:
 //!
@@ -20,12 +20,12 @@
 #[cfg(feature = "dev-login")]
 pub mod dev;
 pub mod google;
-pub mod login;
 // Both ends of the JWT format (mint + verify) live in `zim_api::hub::jwt`
 // so they can't drift; re-exported here to keep the old import path.
 pub use zim_api::hub::jwt;
 pub mod logout;
 pub mod session;
+pub mod sign_in;
 
 use axum::async_trait;
 use axum::extract::FromRequestParts;
@@ -41,9 +41,9 @@ use crate::config::AuthProvider;
 use crate::database::models::{User, UserPeer};
 use crate::state::AppState;
 
-/// Mode-neutral sign-in entry (see [`login`]). The SPA sends anonymous
-/// visitors here, so it never needs to know which providers are on.
-pub const LOGIN_PATH: &str = "/auth/login";
+/// Where an anonymous HTML client goes to sign in: the SPA root, which
+/// renders the sign-in landing page from [`sign_in`]'s provider list.
+pub const LOGIN_PATH: &str = "/";
 pub const PENDING_PATH: &str = "/auth/pending";
 /// Where to send an authenticated-but-not-onboarded HTML client: the SPA
 /// root, which shows the web-key gate.
@@ -52,7 +52,6 @@ pub const SESSION_COOKIE: &str = "session";
 
 pub fn router(state: AppState) -> Router<AppState> {
     let mut r = Router::new()
-        .route("/login", get(login::handler))
         .route("/logout", post(logout::handler))
         .route("/pending", get(pending_page));
     // Each enabled provider mounts its own routes; disabled ones 404.

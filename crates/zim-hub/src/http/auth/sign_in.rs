@@ -1,8 +1,8 @@
 //! `GET /api/v0/auth/providers` — the sign-in options this hub offers.
 //!
 //! The SPA renders one landing page for anonymous visitors from this
-//! list: a button per redirect-style provider (Google), an email field
-//! per email-style one (dev trust). Each provider's own routes live
+//! list: a button per redirect-style provider (Google), the dev-trust
+//! email form when that's on. Each provider's own routes live
 //! under `/auth/<provider>/`.
 
 use axum::extract::State;
@@ -29,12 +29,9 @@ fn sign_in_options(auth: &AuthConfig) -> Vec<SignInOption> {
                 path: "/auth/google/login".to_string(),
             },
             #[cfg(feature = "dev-login")]
-            AuthProvider::DevTrust => SignInOption::Email {
-                id: provider.name().to_string(),
-                label: "Dev login".to_string(),
+            AuthProvider::DevTrust => SignInOption::DevTrust {
                 action: "/auth/dev/login".to_string(),
                 default_email: auth.admin_emails.first().cloned(),
-                warning: Some("Any email signs in as admin. Dev only.".to_string()),
             },
         })
         .collect()
@@ -79,21 +76,13 @@ mod tests {
     fn dev_hub_offers_both_in_configured_order_with_the_email_prefilled() {
         let options = sign_in_options(&hub(vec![AuthProvider::DevTrust, google()]));
 
-        let SignInOption::Email {
-            id,
-            action,
-            default_email,
-            warning,
-            ..
-        } = &options[0]
-        else {
-            panic!("dev-trust should be an email form: {options:?}");
-        };
-        assert_eq!(id, "dev-trust");
-        assert_eq!(action, "/auth/dev/login");
-        assert_eq!(default_email.as_deref(), Some("alice@example.com"));
-        assert!(warning.is_some(), "dev-trust must warn it trusts anyone");
-
+        assert_eq!(
+            options[0],
+            SignInOption::DevTrust {
+                action: "/auth/dev/login".into(),
+                default_email: Some("alice@example.com".into()),
+            }
+        );
         assert!(matches!(&options[1], SignInOption::Redirect { id, .. } if id == "google"));
     }
 }

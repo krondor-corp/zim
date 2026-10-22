@@ -1,6 +1,4 @@
-//! `/api/v0/auth/*` — device-code OAuth flow for daemons, plus the
-//! public sign-in provider list (`/providers`, see
-//! [`crate::http::auth::sign_in`]).
+//! `/api/v0/auth/*` — device-code OAuth flow for daemons.
 //!
 //! Two daemon-callable public endpoints. The browser-side approval
 //! lives at `/auth/device/*` (see [`crate::http::auth::device`]).
@@ -47,8 +45,6 @@ use crate::state::AppState;
 
 pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
-        // Public: the SPA's sign-in page lists these.
-        .route("/providers", get(crate::http::auth::sign_in::handler))
         .route("/device-code/start", post(device_code_start))
         .route("/device-code/poll", post(device_code_poll))
         // Browser approval — consumed by the SPA `/device` page.

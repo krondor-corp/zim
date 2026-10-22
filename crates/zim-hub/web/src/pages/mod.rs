@@ -8,7 +8,6 @@ pub mod devices;
 pub mod gate;
 pub mod not_found;
 pub mod settings;
-pub mod sign_in;
 pub mod vault;
 pub mod vault_editor;
 pub mod vault_tree;

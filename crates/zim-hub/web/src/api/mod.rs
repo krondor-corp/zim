@@ -15,9 +15,9 @@ use zim_api::{ApiError, ApiRequest, Client, Url};
 
 // One definition per endpoint — server serializes, CLI + SPA deserialize.
 pub use zim_api::hub::{
-    AdminActionRequest, AdminUser, AdminUsers, AdminUsersRequest, AuthProvidersRequest, Device,
-    DevicesRequest, GrantApproveRequest, GrantInfo, GrantInfoRequest, Me, MeRequest,
-    RemoveDeviceRequest, SignInOption, VaultItem, VaultsRequest,
+    AdminActionRequest, AdminUser, AdminUsers, AdminUsersRequest, Device, DevicesRequest,
+    GrantApproveRequest, GrantInfo, GrantInfoRequest, Me, MeRequest, RemoveDeviceRequest,
+    VaultItem, VaultsRequest,
 };
 
 /// One entry as `WasmFs::ls` serializes it.
@@ -52,11 +52,6 @@ pub async fn fetch_me() -> Result<Option<Me>, String> {
         Err(ApiError::HttpStatus(status, _)) if status.as_u16() == 401 => Ok(None),
         Err(e) => Err(e.to_string()),
     }
-}
-
-/// The hub's enabled sign-in options (public — no session needed).
-pub async fn fetch_auth_providers() -> Result<Vec<SignInOption>, String> {
-    Ok(call(AuthProvidersRequest).await?.providers)
 }
 
 pub async fn fetch_devices() -> Result<Vec<Device>, String> {

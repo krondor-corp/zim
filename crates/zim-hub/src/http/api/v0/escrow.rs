@@ -3,8 +3,8 @@
 //! Every verb is gated on the requesting user owning the
 //! `did_fragment`. Convention: every did fragment the hub hosts has
 //! the shape `did:web:<host>:u:<user_uuid>#<device_label>`; the
-//! gate checks the `u:` segment against the signed-in user (or
-//! admin). See [`crate::access::can_access_escrow_did`].
+//! gate checks the `u:` segment against the signed-in user — admins
+//! included, no bypass. See [`crate::access::can_access_escrow_did`].
 //!
 //! Writes are first-write-wins. Phase 3 will add a signed-challenge
 //! check on writes/deletes so only someone currently holding the

@@ -85,9 +85,15 @@ fn banner(config: &Config) {
         config.listen_address
     );
     tracing::info!("  services http, peer (in-process / relay)");
-    tracing::info!("  auth     {}", config.auth.mode_label());
-    if config.auth.google_client().is_none() {
-        tracing::warn!("ZIM_HUB_AUTH=dev-trust: ANY email signs in as admin. Dev only.");
+    let providers: Vec<_> = config.auth.providers.iter().map(|p| p.name()).collect();
+    tracing::info!("  auth     {}", providers.join(", "));
+    for warning in config
+        .auth
+        .providers
+        .iter()
+        .filter_map(|p| p.startup_warning())
+    {
+        tracing::warn!("{warning}");
     }
     tracing::info!("─────────────────────────────────────────");
     tracing::info!("");

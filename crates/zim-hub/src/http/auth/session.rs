@@ -33,17 +33,6 @@ impl Authority {
         }
     }
 
-    fn subject(&self, email: &str) -> String {
-        match self {
-            Authority::Google { sub } => {
-                let _ = email; // only the dev-trust arm derives sub from it
-                sub.clone()
-            }
-            #[cfg(feature = "dev-login")]
-            Authority::DevTrust => format!("dev:{email}"),
-        }
-    }
-
     /// Whether a brand-new user row gets admin + authorized. Google:
     /// the `admin_emails` allow-list bootstraps the first admin. Dev
     /// trust: everyone is admin — no allow-list needed in dev.
@@ -77,7 +66,11 @@ pub async fn mint_session(
     let now = Utc::now();
     let exp = now + Duration::seconds(COOKIE_MAX_AGE_SECS);
     let claims = Claims {
-        sub: authority.subject(email),
+        sub: match &authority {
+            Authority::Google { sub } => sub.clone(),
+            #[cfg(feature = "dev-login")]
+            Authority::DevTrust => format!("dev:{email}"),
+        },
         email: user.email().to_string(),
         name: user.name().to_string(),
         iat: now.timestamp() as usize,
@@ -130,16 +123,16 @@ fn build_cookie(token: &str, secure: bool, max_age_secs: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::AuthMode;
+    use crate::config::{AuthProvider, GoogleOAuth};
 
     fn hub_with_admins(admins: &[&str]) -> AuthConfig {
         AuthConfig {
             host_name: "http://127.0.0.1:17190".into(),
             admin_emails: admins.iter().map(|s| s.to_string()).collect(),
-            mode: AuthMode::Google {
+            providers: vec![AuthProvider::Google(GoogleOAuth {
                 client_id: "id".into(),
                 client_secret: "secret".into(),
-            },
+            })],
             service_secret: "secret".into(),
         }
     }
@@ -153,21 +146,11 @@ mod tests {
         assert!(!google.grants_admin(&hub, "bob@example.com"));
     }
 
-    #[test]
-    fn google_session_subject_is_googles_account_id() {
-        let google = Authority::Google { sub: "123".into() };
-        assert_eq!(google.subject("alice@example.com"), "123");
-    }
-
     #[cfg(feature = "dev-login")]
     #[test]
     fn dev_trust_makes_everyone_admin_without_an_allow_list() {
         let hub = hub_with_admins(&[]);
         assert!(Authority::DevTrust.grants_admin(&hub, "bob@example.com"));
-        assert_eq!(
-            Authority::DevTrust.subject("bob@example.com"),
-            "dev:bob@example.com"
-        );
     }
 
     #[test]

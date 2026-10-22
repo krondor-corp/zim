@@ -2,12 +2,12 @@
 # Optional zim-hub node for the dev environment.
 #
 # Boots `zim-hub` in a tmux window alongside the daemons, with dev
-# defaults. Login is trust mode (`--features dev-login`,
-# ZIM_HUB_AUTH=dev-trust): open the hub, type any email, you're an
-# admin — no Google account or OAuth client needed. Real Google OAuth
-# is opt-in:
+# defaults. Login providers come from ZIM_HUB_AUTH (default
+# `dev-trust`, built with `--features dev-login`): open the hub, type
+# any email, you're an admin — no Google account or OAuth client
+# needed. Add real Google OAuth alongside (or instead):
 #
-#   ZIM_DEV_HUB_AUTH=google GOOGLE_O_AUTH_CLIENT_ID=… GOOGLE_O_AUTH_CLIENT_SECRET=… ./bin/dev hub up
+#   ZIM_HUB_AUTH=dev-trust,google GOOGLE_O_AUTH_CLIENT_ID=… GOOGLE_O_AUTH_CLIENT_SECRET=… ./bin/dev hub up
 #
 # `hub enroll` stands in for `zim login`: it writes the user + daemon
 # device rows directly into the hub DB (via the `zim-hub-devseed` bin),
@@ -96,8 +96,9 @@ ZIM_HUB_S3_ACCESS_KEY='minioadmin' \
 ZIM_HUB_S3_SECRET_KEY='minioadmin' \
 ZIM_HUB_S3_BUCKET='zim-blobs'"
 
-    # Trust-mode login by default; `ZIM_DEV_HUB_AUTH=google` runs the
-    # real OAuth flow with creds from the caller's env. Run under `cargo watch` (not the prebuilt binary) so server/sync edits
+    # Dev-trust login by default; set ZIM_HUB_AUTH (e.g.
+    # `dev-trust,google`) to change the provider list — Google creds come
+    # from the caller's env. Run under `cargo watch` (not the prebuilt binary) so server/sync edits
     # rebuild + restart the hub live, in lockstep with the daemons.
     #
     # No `eval`: the command is parsed once by the tmux pane shell, which
@@ -107,21 +108,9 @@ ZIM_HUB_S3_BUCKET='zim-blobs'"
     # `--bin zim-hub`: the package also ships `zim-hub-devseed`, so the bin
     # must be named explicitly.
     local run_hub="cargo watch $HUB_WATCH_DIRS -x 'run --bin zim-hub --features dev-login'"
-    local launch
-    case "${ZIM_DEV_HUB_AUTH:-dev-trust}" in
-        dev-trust)
-            echo -e "${BLUE}Dev-trust login: any email signs in as admin.${NC}"
-            launch="$env_prefix ZIM_HUB_AUTH=dev-trust $run_hub"
-            ;;
-        google)
-            echo -e "${BLUE}Google OAuth login (creds from GOOGLE_O_AUTH_CLIENT_ID/_SECRET).${NC}"
-            launch="$env_prefix $run_hub"
-            ;;
-        *)
-            echo -e "${RED}ZIM_DEV_HUB_AUTH must be dev-trust or google${NC}"
-            exit 1
-            ;;
-    esac
+    local auth="${ZIM_HUB_AUTH:-dev-trust}"
+    echo -e "${BLUE}Login providers: $auth${NC}"
+    local launch="$env_prefix ZIM_HUB_AUTH='$auth' $run_hub"
 
     tmux new-window -t "$TMUX_SESSION" -n "$HUB_WINDOW" \
         "cd $PROJECT_ROOT && printf '%b\n' '${GREEN}=== zim-hub on :$HUB_PORT ===${NC}' && $launch"

@@ -11,8 +11,8 @@ use http::StatusCode;
 use jsonwebtoken::{DecodingKey, Validation};
 use serde::Deserialize;
 
-use crate::http::auth::login_path;
 use crate::http::auth::session::{mint_session, Authority};
+use crate::http::auth::LOGIN_PATH;
 use crate::state::AppState;
 
 #[derive(Deserialize)]
@@ -39,18 +39,18 @@ pub async fn handler(
     State(state): State<AppState>,
     Query(query): Query<CallbackQuery>,
 ) -> Response {
-    let login = login_path(&state.auth);
-    // Only mounted in Google mode, so the client is always there.
-    let Some((client_id, client_secret)) = state.auth.google_client() else {
+    // Only mounted when Google is an enabled provider.
+    let Some(google) = state.auth.google() else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    let (client_id, client_secret) = (&google.client_id, &google.client_secret);
     let redirect_uri = state.auth.callback_url();
 
     let id_token = match exchange_code(client_id, client_secret, &redirect_uri, &query.code).await {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("token exchange failed: {e}");
-            return Redirect::to(login).into_response();
+            return Redirect::to(LOGIN_PATH).into_response();
         }
     };
 
@@ -58,13 +58,13 @@ pub async fn handler(
         Ok(c) => c,
         Err(e) => {
             tracing::error!("id_token decode failed: {e}");
-            return Redirect::to(login).into_response();
+            return Redirect::to(LOGIN_PATH).into_response();
         }
     };
 
     if !id_claims.email_verified {
         tracing::warn!(email = %id_claims.email, "google reports email_verified=false");
-        return Redirect::to(login).into_response();
+        return Redirect::to(LOGIN_PATH).into_response();
     }
 
     let name = id_claims.name.unwrap_or_default();

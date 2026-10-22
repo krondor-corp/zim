@@ -31,8 +31,8 @@ pub struct AuthConfig {
     pub host_name: String,
     /// Emails auto-promoted to admin on first Google sign-in. Bootstrap
     /// hint only — once a row exists, role changes happen via `/_admin`.
-    /// Dev-trust sign-ins are always admin; there the first entry only
-    /// pre-fills the login form. `ZIM_HUB_ADMIN_EMAILS=a@x,b@y`.
+    /// Irrelevant to dev-trust, where every sign-in is admin.
+    /// `ZIM_HUB_ADMIN_EMAILS=a@x,b@y`.
     pub admin_emails: Vec<String>,
     /// Enabled login providers, in `ZIM_HUB_AUTH` order (the order the
     /// sign-in page lists them). Never empty.

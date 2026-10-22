@@ -20,7 +20,7 @@
 //!
 //! ```text
 //! ZIM_HUB_HOME=data/zim-hub \
-//! ZIM_DEV_SEED_EMAIL=al@krondor.org \
+//! ZIM_DEV_SEED_EMAIL=dev@example.com \
 //!   zim-hub-devseed alice=<pubkey-hex> bob=<pubkey-hex>
 //! ```
 //!
@@ -41,7 +41,7 @@ use zim_hub::Database;
 
 /// Mirror `zim-hub`'s home resolution (see `config.rs` `DEFAULT_HOME`).
 const DEFAULT_HOME: &str = "./data/zim-hub";
-const DEFAULT_EMAIL: &str = "al@krondor.org";
+const DEFAULT_EMAIL: &str = "dev@example.com";
 
 struct Peer {
     label: Option<String>,

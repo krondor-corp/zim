@@ -89,7 +89,7 @@ The hub embeds a peer (`zim::ServiceState`) and serves the web mirror. In dev it
 ./bin/dev hub down     # kill the hub window
 ```
 
-**Login.** The hub's login providers are a list in `ZIM_HUB_AUTH` (unset means `google`). Anonymous visitors get one sign-in page in the SPA that lists every enabled provider (from the public `GET /api/v0/auth/providers`). `hub up` builds with `--features dev-login` and defaults the list to `dev-trust`: open `http://127.0.0.1:17190`, type any email, and you're signed in as an admin. No Google account, OAuth client, or credential store needed. The email field pre-fills `$ZIM_DEV_SEED_EMAIL` (default `al@krondor.org`); type that to land on the account `hub enroll` seeds. Dev-trust is refused unless `HOST_NAME` is loopback, and builds without the feature (release/Docker) refuse to start if it's listed. To exercise real Google OAuth too, list both; the sign-in page then offers both:
+**Login.** The hub's login providers are a list in `ZIM_HUB_AUTH` (unset means `google`). Anonymous visitors get one sign-in page in the SPA that lists every enabled provider (from the public `GET /api/v0/auth/providers`). `hub up` builds with `--features dev-login` and defaults the list to `dev-trust`: open `http://127.0.0.1:17190`, type any email, and you're signed in as an admin. No Google account, OAuth client, or credential store needed. Type `$ZIM_DEV_SEED_EMAIL` (default `dev@example.com`) to land on the account `hub enroll` seeds. Dev-trust is refused unless `HOST_NAME` is loopback, and builds without the feature (release/Docker) refuse to start if it's listed. To exercise real Google OAuth too, list both; the sign-in page then offers both:
 
 ```bash
 ZIM_HUB_AUTH=dev-trust,google GOOGLE_O_AUTH_CLIENT_ID=… GOOGLE_O_AUTH_CLIENT_SECRET=… ./bin/dev hub up
@@ -107,7 +107,7 @@ Every provider mints sessions through the same code (`http/auth/session.rs`); on
 then writes a `hub-session.json` into each node's home and runs `zim hub peers sync` on it, so the daemons' address books federate off the hub roster — the same path a real login would take. It does **not** mint a browser web key — that's a browser-resident keypair you still onboard manually in the web UI (the workspace gates on it). Run the seeder standalone too:
 
 ```bash
-ZIM_HUB_HOME=data/zim-hub ZIM_DEV_SEED_EMAIL=al@krondor.org \
+ZIM_HUB_HOME=data/zim-hub ZIM_DEV_SEED_EMAIL=dev@example.com \
   ./target/debug/zim-hub-devseed alice=<pubkey-hex> bob=<pubkey-hex>
 ```
 

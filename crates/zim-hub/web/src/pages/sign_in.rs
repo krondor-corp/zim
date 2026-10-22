@@ -52,18 +52,14 @@ fn option(o: &SignInOption) -> Html {
                 { label.clone() }
             </a>
         },
-        SignInOption::DevTrust {
-            action,
-            default_email,
-        } => html! {
+        SignInOption::DevTrust { action } => html! {
             <form method="post" action={action.clone()}>
                 <div class="error" style="margin-bottom:0.75rem;">
                     { "Dev trust mode \u{2014} any email signs in as admin." }
                 </div>
                 <div class="field">
                     <label>{ "Email" }</label>
-                    <input type="email" name="email" required=true
-                        value={default_email.clone().unwrap_or_default()} />
+                    <input type="email" name="email" required=true />
                 </div>
                 <button type="submit" class="btn btn-primary" style="width:100%;">{ "Dev login" }</button>
             </form>

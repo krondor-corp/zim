@@ -89,13 +89,13 @@ The hub embeds a peer (`zim::ServiceState`) and serves the web mirror. In dev it
 ./bin/dev hub down     # kill the hub window
 ```
 
-**Login.** `hub up` builds the hub with `--features dev-login` and runs it with `ZIM_HUB_AUTH=dev-trust`: open `http://127.0.0.1:17190`, type any email, and you're signed in as an admin. No Google account, OAuth client, or credential store needed. The form pre-fills `$ZIM_DEV_SEED_EMAIL` (default `al@krondor.org`); type that to land on the account `hub enroll` seeds. Dev-trust is refused unless `HOST_NAME` is loopback, and the route doesn't exist in builds without the feature (release/Docker). To exercise the real Google flow instead:
+**Login.** The hub's login providers are a list in `ZIM_HUB_AUTH` (unset means `google`). `hub up` builds with `--features dev-login` and defaults the list to `dev-trust`: open `http://127.0.0.1:17190`, type any email, and you're signed in as an admin. No Google account, OAuth client, or credential store needed. The form pre-fills `$ZIM_DEV_SEED_EMAIL` (default `al@krondor.org`); type that to land on the account `hub enroll` seeds. Dev-trust is refused unless `HOST_NAME` is loopback, and builds without the feature (release/Docker) refuse to start if it's listed. To exercise real Google OAuth too, list both; `/auth/login` then shows a chooser:
 
 ```bash
-ZIM_DEV_HUB_AUTH=google GOOGLE_O_AUTH_CLIENT_ID=… GOOGLE_O_AUTH_CLIENT_SECRET=… ./bin/dev hub up
+ZIM_HUB_AUTH=dev-trust,google GOOGLE_O_AUTH_CLIENT_ID=… GOOGLE_O_AUTH_CLIENT_SECRET=… ./bin/dev hub up
 ```
 
-Both modes mint sessions through the same code (`http/auth/session.rs`); only who asserts the email differs.
+Every provider mints sessions through the same code (`http/auth/session.rs`); only who asserts the email differs.
 
 **Hub coupling is opt-in.** All hub commands live under `zim hub` (`zim hub login`, `zim hub peers sync`, `zim hub peers ls`). A daemon that only syncs with your own devices over p2p never needs any of them — the base `zim peers add|list|rm|ping` manage the address book directly with no hub involved. The hub is, at this point, mostly device management: it tracks your account's device roster (a `did:web` document at `/u/<user>/did.json`, one verification method per enrolled key), and `zim hub peers sync` folds that roster into the local `peers.toml` so all your devices know each other without manual cross-adds.
 

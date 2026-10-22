@@ -47,7 +47,7 @@ pub fn sign_in() -> Html {
 
 fn option(o: &SignInOption) -> Html {
     match o {
-        SignInOption::Redirect { label, path, .. } => html! {
+        SignInOption::OAuth { label, path, .. } => html! {
             <a class="btn btn-primary" href={path.clone()} style="width:100%;text-align:center;">
                 { label.clone() }
             </a>

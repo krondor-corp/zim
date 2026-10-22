@@ -1,7 +1,7 @@
 //! `GET /api/v0/auth/providers` — the sign-in options this hub offers.
 //!
 //! The SPA renders one landing page for anonymous visitors from this
-//! list: a button per redirect-style provider (Google), the dev-trust
+//! list: a button per OAuth provider (Google), the dev-trust
 //! email form when that's on. Each provider's own routes live
 //! under `/auth/<provider>/`.
 
@@ -23,7 +23,7 @@ fn sign_in_options(auth: &AuthConfig) -> Vec<SignInOption> {
     auth.providers
         .iter()
         .map(|provider| match provider {
-            AuthProvider::Google(_) => SignInOption::Redirect {
+            AuthProvider::Google(_) => SignInOption::OAuth {
                 id: provider.name().to_string(),
                 label: "Sign in with Google".to_string(),
                 path: "/auth/google/login".to_string(),
@@ -62,7 +62,7 @@ mod tests {
         let options = sign_in_options(&hub(vec![google()]));
         assert_eq!(
             options,
-            [SignInOption::Redirect {
+            [SignInOption::OAuth {
                 id: "google".into(),
                 label: "Sign in with Google".into(),
                 path: "/auth/google/login".into(),
@@ -81,6 +81,6 @@ mod tests {
                 action: "/auth/dev/login".into(),
             }
         );
-        assert!(matches!(&options[1], SignInOption::Redirect { id, .. } if id == "google"));
+        assert!(matches!(&options[1], SignInOption::OAuth { id, .. } if id == "google"));
     }
 }

@@ -16,9 +16,11 @@ pub struct AuthProviders {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum SignInOption {
-    /// A button: navigate the browser to `path` to start an OAuth-style
-    /// handshake. Any such provider (Google today) fits this shape.
-    Redirect {
+    /// OAuth/OIDC: a button that sends the browser to `path`, where the
+    /// hub starts the provider's handshake and mints the session on the
+    /// callback. Any such provider (Google today) fits this shape.
+    #[serde(rename = "oauth")]
+    OAuth {
         /// The provider's `ZIM_HUB_AUTH` name (`google`).
         id: String,
         label: String,
@@ -39,5 +41,33 @@ impl ApiRequest for AuthProvidersRequest {
     type Response = AuthProviders;
     fn build_request(self, base: &Url, http: &HttpClient) -> RequestBuilder {
         http.get(base.join("/api/v0/auth/providers").expect("static path"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sign_in_options_are_tagged_by_kind_on_the_wire() {
+        let providers = AuthProviders {
+            providers: vec![
+                SignInOption::DevTrust {
+                    action: "/auth/dev/login".into(),
+                },
+                SignInOption::OAuth {
+                    id: "google".into(),
+                    label: "Sign in with Google".into(),
+                    path: "/auth/google/login".into(),
+                },
+            ],
+        };
+
+        let json = serde_json::to_value(&providers).unwrap();
+        assert_eq!(json["providers"][0]["kind"], "dev-trust");
+        assert_eq!(json["providers"][1]["kind"], "oauth");
+
+        let back: AuthProviders = serde_json::from_value(json).unwrap();
+        assert_eq!(back, providers);
     }
 }

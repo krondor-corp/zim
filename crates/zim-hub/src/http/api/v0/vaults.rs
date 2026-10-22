@@ -2,7 +2,8 @@
 //!
 //! JSON form of the server-rendered workspace index: walk the relay's
 //! vaults, keep the ones whose head-manifest shareholders include one of the
-//! user's peers (admins see all), return id + name. The SPA renders the list.
+//! user's peers, return id + name. The SPA renders the list. Admins get no
+//! bypass: everyone sees only their own vaults.
 
 use axum::extract::State;
 use axum::Json;
@@ -27,9 +28,7 @@ pub async fn handler(
         let Some(meta) = read_manifest_meta(&state, v.id).await else {
             continue;
         };
-        let visible =
-            user.is_admin() || can_access_vault_via_db(&state.db, &user, &meta.shareholders).await;
-        if !visible {
+        if !can_access_vault_via_db(&state.db, &user, &meta.shareholders).await {
             continue;
         }
         vaults.push(VaultItem {

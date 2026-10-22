@@ -37,9 +37,11 @@ hub can deliver code that captures an unlock passphrase or key, so the
 zero-knowledge claim applies to passive storage, not arbitrary malicious code
 delivery.
 
-Hub administrators can access service metadata and bypass normal application
-ownership checks. Operational control of a hub is a privileged role even when
-vault content remains encrypted.
+Hub administrators manage accounts (approving and promoting users) but get no
+bypass of ownership checks: an admin sees only their own vaults and escrowed
+keys, like any other user. Operational control of the hub *machine* is still a
+privileged role, since its operator can read the database and blob store
+directly, even though vault content remains encrypted.
 
 ### DID Hosts
 

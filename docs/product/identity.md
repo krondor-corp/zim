@@ -46,6 +46,11 @@ active session; it is not confined exclusively to WASM memory.
 
 Google authentication establishes the account session used by the hosted
 service. Hub administrators decide which accounts may use that service.
+
+An account is bound to the sign-in method that created it, and to that
+provider's stable account id (Google's `sub`). Accounts are never linked: the
+same email arriving through a different sign-in method, or through a different
+Google account, is refused rather than merged into the existing account.
 Neither Google nor the hub account session replaces vault signatures or sealed
 device grants.
 

@@ -5,7 +5,9 @@ use uuid::Uuid;
 use crate::database::types::DbUuid;
 use crate::database::Database;
 
-/// One Google-authenticated user of the hub.
+/// One user of the hub, bound to the sign-in provider that created it
+/// (`auth_provider`, plus that provider's stable id in `auth_subject`).
+/// Accounts are never linked across providers.
 ///
 /// Roles are a pair of independent boolean flags:
 ///
@@ -26,6 +28,14 @@ pub struct User {
     name: String,
     is_admin: bool,
     is_authorized: bool,
+    /// `ZIM_HUB_AUTH` name of the provider this account signs in with.
+    #[patch(skip)]
+    auth_provider: String,
+    /// That provider's stable account id (Google `sub`); `None` for
+    /// dev-trust, and for Google rows predating this column until their
+    /// next sign-in records it.
+    #[patch(skip)]
+    auth_subject: Option<String>,
     #[patch(skip)]
     created_at: String,
     #[patch(skip)]
@@ -94,6 +104,12 @@ impl User {
     pub fn can_use_app(&self) -> bool {
         self.is_admin || self.is_authorized
     }
+    pub fn auth_provider(&self) -> &str {
+        &self.auth_provider
+    }
+    pub fn auth_subject(&self) -> Option<&str> {
+        self.auth_subject.as_deref()
+    }
     pub fn created_at(&self) -> &str {
         &self.created_at
     }
@@ -106,13 +122,15 @@ impl User {
         name: &str,
         is_admin: bool,
         is_authorized: bool,
+        auth_provider: &str,
+        auth_subject: Option<&str>,
         db: &Database,
     ) -> Result<Self, sqlx::Error> {
         let id = DbUuid::new();
         sqlx::query_as::<_, User>(
             r#"
-            INSERT INTO users (id, email, name, is_admin, is_authorized)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO users (id, email, name, is_admin, is_authorized, auth_provider, auth_subject)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             RETURNING *
             "#,
         )
@@ -121,8 +139,31 @@ impl User {
         .bind(name)
         .bind(is_admin)
         .bind(is_authorized)
+        .bind(auth_provider)
+        .bind(auth_subject)
         .fetch_one(&**db)
         .await
+    }
+
+    /// Record the provider's account id on a row that predates it. Only
+    /// fills an empty slot — never overwrites a recorded subject.
+    pub async fn record_auth_subject(
+        self,
+        subject: &str,
+        db: &Database,
+    ) -> Result<Self, sqlx::Error> {
+        sqlx::query_as::<_, User>(
+            r#"
+            UPDATE users SET auth_subject = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND auth_subject IS NULL
+            RETURNING *
+            "#,
+        )
+        .bind(subject)
+        .bind(self.id)
+        .fetch_optional(&**db)
+        .await
+        .map(|updated| updated.unwrap_or(self))
     }
 
     pub async fn patch(mut self, patch: UserPatch, db: &Database) -> Result<Self, sqlx::Error> {

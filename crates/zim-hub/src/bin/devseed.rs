@@ -100,7 +100,9 @@ async fn run() -> anyhow::Result<()> {
         None => {
             // Name = local-part of the email; purely cosmetic.
             let name = email.split('@').next().unwrap_or(&email);
-            let u = User::create(&email, name, true, true, &db)
+            // Bound to dev-trust: the dev hub's default login. No account
+            // linking, so this account can't be signed into via Google.
+            let u = User::create(&email, name, true, true, "dev-trust", None, &db)
                 .await
                 .context("create user")?;
             println!("user  {email}  (created → admin+authorized)");

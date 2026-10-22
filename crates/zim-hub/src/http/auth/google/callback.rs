@@ -15,8 +15,8 @@ use jsonwebtoken::{DecodingKey, Validation};
 use serde::Deserialize;
 
 use super::state as oauth_state;
+use crate::http::auth::login::LoginError;
 use crate::http::auth::session::{mint_session, Authority};
-use crate::http::auth::{return_to, LOGIN_PATH};
 use crate::state::AppState;
 
 #[derive(Deserialize)]
@@ -56,9 +56,9 @@ pub async fn handler(
 
     let Some(next) = oauth_state::finish(&query.state, &headers) else {
         tracing::warn!("oauth state missing or doesn't match this browser's cookie");
-        return Redirect::to(LOGIN_PATH).into_response();
+        return Redirect::to(&LoginError::Failed.url("/")).into_response();
     };
-    let retry = return_to::login_url(&next);
+    let retry = LoginError::Failed.url(&next);
 
     let id_token = match exchange_code(client_id, client_secret, &redirect_uri, &query.code).await {
         Ok(t) => t,
@@ -91,8 +91,8 @@ pub async fn handler(
             r
         }
         Err(e) => {
-            tracing::error!("google sign-in failed: {e}");
-            (StatusCode::INTERNAL_SERVER_ERROR, "sign-in failed").into_response()
+            tracing::warn!("google sign-in refused: {e}");
+            Redirect::to(&LoginError::from(&e).url(&next)).into_response()
         }
     }
 }

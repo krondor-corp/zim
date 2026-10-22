@@ -13,7 +13,7 @@
 # device rows directly into the hub DB (via the `zim-hub-devseed` bin),
 # so the dev daemons are enrolled without the device-code browser
 # dance. The web user is seeded to $ZIM_DEV_SEED_EMAIL (default
-# al@krondor.org) — type that email at the dev login to land on the
+# dev@example.com) — type that email at the dev login to land on the
 # same account. You still mint the browser web-key manually in the
 # onboarding UI.
 #
@@ -35,7 +35,7 @@ HUB_BIN="$PROJECT_ROOT/target/debug/zim-hub"
 HUB_WATCH_DIRS="-w crates/zim-hub/src -w crates/zim-peer/src -w crates/zim-core/src -w crates/zim-crypto/src -w crates/zim-did/src"
 HUB_WINDOW="hub"
 # Web user the hub seeds + enrolls daemons under. Override with the env var.
-SEED_EMAIL="${ZIM_DEV_SEED_EMAIL:-al@krondor.org}"
+SEED_EMAIL="${ZIM_DEV_SEED_EMAIL:-dev@example.com}"
 
 hub_url() { echo "http://127.0.0.1:$HUB_PORT"; }
 
@@ -83,22 +83,25 @@ hub_up() {
     fi
 
     # Env the hub reads. `ZIM_HUB_HOST` is percent-encoded so did:web
-    # resolves to the URL. Admin email defaults to the seed user: it
-    # pre-fills the dev login form, and in Google mode auto-promotes
-    # that account to admin.
+    # resolves to the URL.
     local env_prefix="\
 ZIM_HUB_LISTEN='127.0.0.1:$HUB_PORT' \
 ZIM_HUB_HOME='$HUB_HOME' \
 ZIM_HUB_HOST='127.0.0.1%3A$HUB_PORT' \
-ZIM_HUB_ADMIN_EMAILS='${ZIM_HUB_ADMIN_EMAILS:-$SEED_EMAIL}' \
 ZIM_HUB_S3_ENDPOINT="http://localhost:${MINIO_API_PORT:-17180}" \
 ZIM_HUB_S3_ACCESS_KEY='minioadmin' \
 ZIM_HUB_S3_SECRET_KEY='minioadmin' \
 ZIM_HUB_S3_BUCKET='zim-blobs'"
+    # Google sign-in settings, forwarded only when the caller set them:
+    # the tmux pane gets the tmux server's env, not ours.
+    local var
+    for var in GOOGLE_O_AUTH_CLIENT_ID GOOGLE_O_AUTH_CLIENT_SECRET ZIM_HUB_ADMIN_EMAILS; do
+        [[ -n "${!var:-}" ]] && env_prefix="$env_prefix $var='${!var}'"
+    done
 
     # Dev-trust login by default; set ZIM_HUB_AUTH (e.g.
-    # `dev-trust,google`) to change the provider list — Google creds come
-    # from the caller's env. Run under `cargo watch` (not the prebuilt binary) so server/sync edits
+    # `dev-trust,google`) to change the provider list. Run under
+    # `cargo watch` (not the prebuilt binary) so server/sync edits
     # rebuild + restart the hub live, in lockstep with the daemons.
     #
     # No `eval`: the command is parsed once by the tmux pane shell, which

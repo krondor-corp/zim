@@ -100,8 +100,8 @@ on macOS, `/dev/fuse` on Linux) and (b) a daemon built with the fuse feature
     account roster lists the daemons (and web key once minted), `✓ in book`.
 12. Browser (manual): open `http://127.0.0.1:17190` — the dev login form
     (no Google account needed) — type the seed email (`$ZIM_DEV_SEED_EMAIL`,
-    default `al@krondor.org`, pre-filled), mint the web key, open the vault
-    tree — seeded vaults should appear.
+    default `dev@example.com`), mint the web key, open the vault tree —
+    seeded vaults should appear.
 13. **web → local**: edit a file in the browser tree, then
     `./bin/dev cli alice vault cat <vault> /<file>` — the hub announces the
     head to shareholder daemons over iroh.

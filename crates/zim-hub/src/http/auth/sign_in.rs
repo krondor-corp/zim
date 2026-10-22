@@ -31,7 +31,6 @@ fn sign_in_options(auth: &AuthConfig) -> Vec<SignInOption> {
             #[cfg(feature = "dev-login")]
             AuthProvider::DevTrust => SignInOption::DevTrust {
                 action: "/auth/dev/login".to_string(),
-                default_email: auth.admin_emails.first().cloned(),
             },
         })
         .collect()
@@ -73,14 +72,13 @@ mod tests {
 
     #[cfg(feature = "dev-login")]
     #[test]
-    fn dev_hub_offers_both_in_configured_order_with_the_email_prefilled() {
+    fn dev_hub_offers_both_in_configured_order() {
         let options = sign_in_options(&hub(vec![AuthProvider::DevTrust, google()]));
 
         assert_eq!(
             options[0],
             SignInOption::DevTrust {
                 action: "/auth/dev/login".into(),
-                default_email: Some("alice@example.com".into()),
             }
         );
         assert!(matches!(&options[1], SignInOption::Redirect { id, .. } if id == "google"));

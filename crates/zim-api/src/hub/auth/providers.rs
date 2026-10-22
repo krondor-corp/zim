@@ -28,12 +28,7 @@ pub enum SignInOption {
     /// (`email=…`) to `action` gets an admin session. Only offered by
     /// `--features dev-login` hubs on loopback; the SPA renders it with a
     /// warning.
-    DevTrust {
-        action: String,
-        /// Pre-fill for the email field.
-        #[serde(default)]
-        default_email: Option<String>,
-    },
+    DevTrust { action: String },
 }
 
 /// **Hub route to mirror:** `GET /api/v0/auth/providers` (public — an

@@ -1,6 +1,10 @@
 //! Mint a session for an email the caller has already authenticated.
-//! Both login paths (Google OAuth, dev trust) end here, so what a
-//! session *is* — user row, claims, cookie — can't drift between them.
+//! Every login provider ends here, so what a session *is* — user row,
+//! claims, cookie — can't drift between them.
+//!
+//! No account linking: an account belongs to the provider that created
+//! it. The same email arriving through another provider is refused, as
+//! is a Google sign-in whose `sub` differs from the one recorded.
 
 use axum::http::header::SET_COOKIE;
 use axum::response::{IntoResponse, Redirect, Response};
@@ -25,11 +29,21 @@ pub enum Authority {
 }
 
 impl Authority {
-    fn label(&self) -> &'static str {
+    /// The provider's `ZIM_HUB_AUTH` name, stored as `users.auth_provider`.
+    fn provider(&self) -> &'static str {
         match self {
             Authority::Google { .. } => "google",
             #[cfg(feature = "dev-login")]
             Authority::DevTrust => "dev-trust",
+        }
+    }
+
+    /// The provider's stable account id, stored as `users.auth_subject`.
+    fn subject(&self) -> Option<&str> {
+        match self {
+            Authority::Google { sub } => Some(sub),
+            #[cfg(feature = "dev-login")]
+            Authority::DevTrust => None,
         }
     }
 
@@ -47,6 +61,17 @@ impl Authority {
 
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
+    #[error("{email} signs in with {provider}, not {attempted}; accounts aren't linked across sign-in methods")]
+    WrongProvider {
+        email: String,
+        provider: String,
+        attempted: &'static str,
+    },
+    #[error("{email} belongs to a different {provider} account")]
+    SubjectMismatch {
+        email: String,
+        provider: &'static str,
+    },
     #[error("user provisioning failed: {0}")]
     User(#[from] sqlx::Error),
     #[error("session token encode failed: {0}")]
@@ -90,27 +115,79 @@ pub async fn mint_session(
     tracing::info!(
         email = user.email(),
         role = %user.role().label(),
-        authority = authority.label(),
+        authority = authority.provider(),
         "user signed in"
     );
 
     Ok(([(SET_COOKIE, cookie)], Redirect::to(next)).into_response())
 }
 
-/// Look up the user by email or insert a fresh row, admin-ness per
-/// [`Authority::grants_admin`]. Existing rows keep their role —
-/// subsequent changes happen through `/_admin`.
+/// Look up the user by email (refusing a cross-provider or
+/// cross-account sign-in) or insert a fresh row bound to this provider,
+/// admin-ness per [`Authority::grants_admin`]. Existing rows keep their
+/// role — subsequent changes happen through `/_admin`.
 async fn find_or_create_user(
     state: &AppState,
     email: &str,
     name: &str,
     authority: &Authority,
-) -> Result<User, sqlx::Error> {
+) -> Result<User, SessionError> {
     if let Some(existing) = User::find_by_email(email, &state.db).await? {
-        return Ok(existing);
+        return match check_identity(
+            existing.auth_provider(),
+            existing.auth_subject(),
+            authority,
+            email,
+        )? {
+            Identity::Known => Ok(existing),
+            Identity::RecordSubject(sub) => {
+                Ok(existing.record_auth_subject(sub, &state.db).await?)
+            }
+        };
     }
     let admin = authority.grants_admin(&state.auth, email);
-    User::create(email, name, admin, admin, &state.db).await
+    Ok(User::create(
+        email,
+        name,
+        admin,
+        admin,
+        authority.provider(),
+        authority.subject(),
+        &state.db,
+    )
+    .await?)
+}
+
+/// What a sign-in for an existing account needs.
+#[derive(Debug, PartialEq)]
+enum Identity<'a> {
+    /// Same provider, same (or no) subject.
+    Known,
+    /// Same provider; the row predates `auth_subject`, so record it.
+    RecordSubject(&'a str),
+}
+
+fn check_identity<'a>(
+    stored_provider: &str,
+    stored_subject: Option<&str>,
+    authority: &'a Authority,
+    email: &str,
+) -> Result<Identity<'a>, SessionError> {
+    if stored_provider != authority.provider() {
+        return Err(SessionError::WrongProvider {
+            email: email.to_string(),
+            provider: stored_provider.to_string(),
+            attempted: authority.provider(),
+        });
+    }
+    match (stored_subject, authority.subject()) {
+        (Some(stored), Some(sub)) if stored != sub => Err(SessionError::SubjectMismatch {
+            email: email.to_string(),
+            provider: authority.provider(),
+        }),
+        (None, Some(sub)) => Ok(Identity::RecordSubject(sub)),
+        _ => Ok(Identity::Known),
+    }
 }
 
 fn build_cookie(token: &str, secure: bool, max_age_secs: i64) -> String {
@@ -151,6 +228,69 @@ mod tests {
     fn dev_trust_makes_everyone_admin_without_an_allow_list() {
         let hub = hub_with_admins(&[]);
         assert!(Authority::DevTrust.grants_admin(&hub, "bob@example.com"));
+    }
+
+    // ── No account linking ────────────────────────────────────────
+
+    #[test]
+    fn alice_signs_back_in_with_her_google_account() {
+        let google = Authority::Google {
+            sub: "alice-sub".into(),
+        };
+        let check = check_identity("google", Some("alice-sub"), &google, "alice@example.com");
+        assert_eq!(check.unwrap(), Identity::Known);
+    }
+
+    #[test]
+    fn a_pre_migration_google_row_records_its_sub_on_next_sign_in() {
+        let google = Authority::Google {
+            sub: "alice-sub".into(),
+        };
+        let check = check_identity("google", None, &google, "alice@example.com");
+        assert_eq!(check.unwrap(), Identity::RecordSubject("alice-sub"));
+    }
+
+    #[test]
+    fn a_different_google_account_with_alices_email_is_refused() {
+        // e.g. the address was reassigned to someone else's Google account.
+        let mallory = Authority::Google {
+            sub: "mallory-sub".into(),
+        };
+        let err = check_identity("google", Some("alice-sub"), &mallory, "alice@example.com");
+        assert!(matches!(err, Err(SessionError::SubjectMismatch { .. })));
+    }
+
+    #[test]
+    fn an_account_from_another_provider_is_never_linked() {
+        let google = Authority::Google {
+            sub: "alice-sub".into(),
+        };
+        let err = check_identity("dev-trust", None, &google, "alice@example.com");
+        assert!(matches!(
+            err,
+            Err(SessionError::WrongProvider {
+                attempted: "google",
+                ..
+            })
+        ));
+    }
+
+    #[cfg(feature = "dev-login")]
+    #[test]
+    fn dev_trust_cannot_sign_into_a_google_account() {
+        let err = check_identity(
+            "google",
+            Some("alice-sub"),
+            &Authority::DevTrust,
+            "alice@example.com",
+        );
+        assert!(matches!(
+            err,
+            Err(SessionError::WrongProvider {
+                attempted: "dev-trust",
+                ..
+            })
+        ));
     }
 
     #[test]

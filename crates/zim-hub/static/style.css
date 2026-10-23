@@ -955,6 +955,16 @@ a.app-header__crumb:hover {
     color: hsl(var(--foreground));
     background: hsl(var(--muted));
 }
+/* Form-backed items (Sign out is a POST): look like the link items. */
+button.app-menu__item {
+    width: 100%;
+    background: none;
+    border: 0;
+    font: inherit;
+    font-size: 0.8rem;
+    text-align: left;
+    cursor: pointer;
+}
 
 .editor-layout {
     display: flex;

@@ -20,7 +20,7 @@ use crate::api::{fetch_devices, fetch_me, fetch_vaults, Device, FsEntry, VaultIt
 use crate::pages::vault_editor::{EditorPane, OpenFile};
 use crate::pages::vault_tree::{build_rows, CtxMenu, CtxTarget, TreeNode, TreePane};
 use crate::components::dialog::{ConfirmDialog, PromptDialog};
-use crate::layouts::HeaderMenu;
+use crate::layouts::{HeaderMenu, SignOutItem};
 use crate::routes::Route;
 use crate::util::{jserr, origin};
 
@@ -815,7 +815,7 @@ pub fn vault_tree(props: &Props) -> Html {
             <header class="app-header">
                 <HeaderMenu trigger={html! { "\u{2630}" }}>
                     <Link<Route> to={Route::Settings} classes="app-menu__item">{ "Settings" }</Link<Route>>
-                    <a href="/auth/logout" class="app-menu__item">{ "Sign out" }</a>
+                    <SignOutItem />
                 </HeaderMenu>
                 <div class="app-header__slot app-header__slot--left">{ crumbs }</div>
                 <div class="app-header__slot app-header__slot--right">

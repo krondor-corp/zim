@@ -5,10 +5,12 @@
 //! resource?" The answers live here so handlers stay one line.
 //!
 //! - [`can_access_vault`] — owner iff one of the user's registered
-//!   peers is a shareholder on the vault's head manifest. Admin
-//!   bypasses.
+//!   peers is a shareholder on the vault's head manifest.
 //! - [`can_access_escrow_did`] — owner iff the DID fragment's
 //!   `u:<user_uuid>` segment matches the requesting user.
+//!
+//! No admin bypass: admins manage accounts (approve, promote), not
+//! other users' data. An admin sees exactly their own vaults and escrow.
 
 use zim_core::blobs::BlobStore;
 use zim_core::fs::Manifest;
@@ -30,9 +32,6 @@ use crate::state::AppState;
 /// without decrypting anything. Lookup errors fall through to
 /// `false` — the caller surfaces 404 to avoid leaking existence.
 pub async fn can_access_vault(state: &AppState, user: &User, vault_id: VaultId) -> bool {
-    if user.is_admin() {
-        return true;
-    }
     let shareholders = match read_manifest_shareholders(state, vault_id).await {
         Some(v) => v,
         None => return false,
@@ -78,19 +77,17 @@ pub async fn read_manifest_meta(state: &AppState, vault_id: VaultId) -> Option<M
     })
 }
 
-/// True iff the DID fragment belongs to the user. Admin bypasses.
+/// True iff the DID fragment belongs to the user.
 ///
 /// Convention: every browser-side DID the hub hosts has the shape
 /// `did:web:<hub_host>:u:<user_uuid>#<device_label>`. The middle
 /// `u:<user_uuid>` segment is the authorization marker.
 pub fn can_access_escrow_did(user: &User, did_fragment: &str) -> bool {
-    if user.is_admin() {
-        return true;
-    }
-    let Some(u_segment) = extract_user_segment(did_fragment) else {
-        return false;
-    };
-    u_segment == user.id().to_string()
+    did_belongs_to(user.id(), did_fragment)
+}
+
+fn did_belongs_to(user_id: uuid::Uuid, did_fragment: &str) -> bool {
+    extract_user_segment(did_fragment) == Some(user_id.to_string().as_str())
 }
 
 /// Variant for callers that already know the shareholder list and
@@ -100,9 +97,6 @@ pub async fn can_access_vault_via_db(
     user: &User,
     shareholders: &[PublicKey],
 ) -> bool {
-    if user.is_admin() {
-        return true;
-    }
     for pk in shareholders {
         match UserPeer::user_owns_pubkey(user.id(), pk, db).await {
             Ok(true) => return true,
@@ -149,6 +143,56 @@ mod tests {
             extract_user_segment("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK")
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn admin_bob_cannot_see_alices_vault() {
+        use crate::database::models::PeerKind;
+        use zim_crypto::PrivateKey;
+
+        let path = std::env::temp_dir().join(format!("zim-hub-access-{}.db", uuid::Uuid::new_v4()));
+        let url = url::Url::parse(&format!("sqlite://{}", path.display())).unwrap();
+        let db = Database::connect(&url).await.unwrap();
+
+        // Alice owns a vault: her web key is a shareholder.
+        let alice = User::create(
+            "alice@example.com",
+            "alice",
+            false,
+            true,
+            "dev-trust",
+            None,
+            &db,
+        )
+        .await
+        .unwrap();
+        let alices_key = PrivateKey::generate().public();
+        UserPeer::create(alice.id(), &alices_key, None, PeerKind::Web, &db)
+            .await
+            .unwrap();
+
+        // Bob is an admin of the hub.
+        let bob = User::create("bob@example.com", "bob", true, true, "dev-trust", None, &db)
+            .await
+            .unwrap();
+
+        assert!(can_access_vault_via_db(&db, &alice, &[alices_key]).await);
+        assert!(!can_access_vault_via_db(&db, &bob, &[alices_key]).await);
+
+        drop(db);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
+    fn alice_reaches_only_her_own_escrow() {
+        let alice = uuid::Uuid::parse_str("11111111-1111-4111-a111-111111111111").unwrap();
+        let bob = uuid::Uuid::parse_str("22222222-2222-4222-a222-222222222222").unwrap();
+        let alices_key = "did:web:hub.example.com:u:11111111-1111-4111-a111-111111111111#web";
+        assert!(did_belongs_to(alice, alices_key));
+        // Bob — admin or not; there is no bypass — can't reach it.
+        assert!(!did_belongs_to(bob, alices_key));
     }
 
     #[test]

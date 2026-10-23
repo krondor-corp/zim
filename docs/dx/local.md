@@ -89,7 +89,13 @@ The hub embeds a peer (`zim::ServiceState`) and serves the web mirror. In dev it
 ./bin/dev hub down     # kill the hub window
 ```
 
-**OAuth.** `hub up` resolves real Google OAuth via `confit` when it's installed, so the web view is usable; without `confit` it boots with dummy creds (web login disabled, daemon↔hub sync still works — that path is pure iroh). The admin email defaults to `$ZIM_DEV_SEED_EMAIL` (default `al@krondor.org`).
+**Login.** The hub's login providers are a list in `ZIM_HUB_AUTH` (unset means `google`). Sign-in is separate from the wasm app: the hub only serves the app to signed-in, approved users and sends everyone else to the server-rendered `/auth/login` (or `/auth/pending`), a chooser with one button per enabled provider (even if there's only one) that returns you to the page you asked for (`?next=`, carried through Google's round trip in the OAuth `state` param). `hub up` builds with `--features dev-login` and defaults the list to `dev-trust`: open `http://127.0.0.1:17190`, type any email, and you're signed in as an admin. No Google account, OAuth client, or credential store needed. Type `$ZIM_DEV_SEED_EMAIL` (default `dev@example.com`) to land on the account `hub enroll` seeds. Accounts are bound to the provider that created them and never linked, so the seeded (dev-trust) account can't be signed into through Google, and an email first used with Google can't be signed into through dev-trust. Browser page loads on any other hostname (e.g. `localhost:17190`) are redirected to `HOST_NAME` (`127.0.0.1:17190`): the hub's `did:web` identity is fixed at startup and the browser builds DIDs from the address bar, so the two must agree. Dev-trust is refused unless `HOST_NAME` is loopback, and builds without the feature (release/Docker) refuse to start if it's listed. To exercise real Google OAuth too, list both; the sign-in page then offers both:
+
+```bash
+ZIM_HUB_AUTH=dev-trust,google GOOGLE_O_AUTH_CLIENT_ID=… GOOGLE_O_AUTH_CLIENT_SECRET=… ./bin/dev hub up
+```
+
+Every provider mints sessions through the same code (`http/auth/session.rs`); only who asserts the email differs.
 
 **Hub coupling is opt-in.** All hub commands live under `zim hub` (`zim hub login`, `zim hub peers sync`, `zim hub peers ls`). A daemon that only syncs with your own devices over p2p never needs any of them — the base `zim peers add|list|rm|ping` manage the address book directly with no hub involved. The hub is, at this point, mostly device management: it tracks your account's device roster (a `did:web` document at `/u/<user>/did.json`, one verification method per enrolled key), and `zim hub peers sync` folds that roster into the local `peers.toml` so all your devices know each other without manual cross-adds.
 
@@ -101,7 +107,7 @@ The hub embeds a peer (`zim::ServiceState`) and serves the web mirror. In dev it
 then writes a `hub-session.json` into each node's home and runs `zim hub peers sync` on it, so the daemons' address books federate off the hub roster — the same path a real login would take. It does **not** mint a browser web key — that's a browser-resident keypair you still onboard manually in the web UI (the workspace gates on it). Run the seeder standalone too:
 
 ```bash
-ZIM_HUB_HOME=data/zim-hub ZIM_DEV_SEED_EMAIL=al@krondor.org \
+ZIM_HUB_HOME=data/zim-hub ZIM_DEV_SEED_EMAIL=dev@example.com \
   ./target/debug/zim-hub-devseed alice=<pubkey-hex> bob=<pubkey-hex>
 ```
 

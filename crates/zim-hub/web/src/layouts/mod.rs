@@ -6,6 +6,20 @@ use yew_router::prelude::*;
 
 use crate::routes::Route;
 
+/// "Sign out" as a header-menu item. Logout is POST-only (a GET link
+/// would make it CSRF-trivial), so this is a one-button form. The click
+/// doesn't bubble: the menu's close-on-click would re-render and could
+/// drop the form before the browser submits it.
+#[function_component(SignOutItem)]
+pub fn sign_out_item() -> Html {
+    let keep_open = Callback::from(|e: MouseEvent| e.stop_propagation());
+    html! {
+        <form method="post" action="/auth/logout" style="margin:0;">
+            <button type="submit" class="app-menu__item" onclick={keep_open}>{ "Sign out" }</button>
+        </form>
+    }
+}
+
 /// Centered, chrome-light shell for pre-app states: loading and the
 /// web-key gate.
 #[derive(Properties, PartialEq)]
@@ -98,7 +112,7 @@ pub fn pack_chrome(props: &PackChromeProps) -> Html {
                 <HeaderMenu trigger={html! { "\u{2630}" }}>
                     <Link<Route> to={Route::Workspace} classes="app-menu__item">{ "Open a vault" }</Link<Route>>
                     <Link<Route> to={Route::Settings} classes="app-menu__item">{ "Settings" }</Link<Route>>
-                    <a href="/auth/logout" class="app-menu__item">{ "Sign out" }</a>
+                    <SignOutItem />
                 </HeaderMenu>
                 <div class="app-header__slot app-header__slot--left">
                     <span class="app-header__crumb app-header__crumb--current">{ props.crumb.clone() }</span>

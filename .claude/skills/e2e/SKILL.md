@@ -90,17 +90,18 @@ on macOS, `/dev/fuse` on Linux) and (b) a daemon built with the fuse feature
 - FUSE available but a fixture fails → **IS a failure**
 - The report must state whether FUSE fixtures ran or were skipped
 
-## Track B — full stack: web↔local sync (needs docker or podman + confit)
+## Track B — full stack: web↔local sync (needs docker or podman)
 
 10. One-shot bring-up: `ZIM_DEV_FUSE=1 ./bin/dev --hub`
-    (daemons → hub up [minio + real OAuth via confit] → seed/fixtures →
+    (daemons → hub up [minio + dev-trust login] → seed/fixtures →
     `hub enroll`). Step-by-step equivalent: `run -b`, `hub up`, `seed`,
     `hub enroll`.
 11. Confirm enrollment settled: `./bin/dev cli alice hub peers ls` — the
     account roster lists the daemons (and web key once minted), `✓ in book`.
-12. Browser (manual): open `http://127.0.0.1:17190`, sign in as the seed user
-    (`$ZIM_DEV_SEED_EMAIL`, default `al@krondor.org`), mint the web key, open
-    the vault tree — seeded vaults should appear.
+12. Browser (manual): open `http://127.0.0.1:17190` — the dev login form
+    (no Google account needed) — type the seed email (`$ZIM_DEV_SEED_EMAIL`,
+    default `dev@example.com`), mint the web key, open the vault tree —
+    seeded vaults should appear.
 13. **web → local**: edit a file in the browser tree, then
     `./bin/dev cli alice vault cat <vault> /<file>` — the hub announces the
     head to shareholder daemons over iroh.

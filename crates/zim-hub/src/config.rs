@@ -17,6 +17,9 @@
 //! | `SERVICE_SECRET`                 | HS256 session signing key  |
 //! | `HOST_NAME`                      | public base URL            |
 //!
+//! `ZIM_HUB_AUTH` lists the enabled login providers (unset → `google`);
+//! see [`auth`] for the providers and their rules.
+//!
 //! Zim-specific knobs keep the `ZIM_HUB_` prefix so multi-process
 //! deployments don't collide on listen address / data dir:
 //! `ZIM_HUB_LISTEN`, `ZIM_HUB_HOME`, `ZIM_HUB_LOG`,
@@ -48,6 +51,10 @@ use std::path::{Path, PathBuf};
 
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+
+mod auth;
+
+pub use auth::{AuthConfig, AuthProvider, GoogleOAuth};
 
 // Dev port convention: all zim dev services live in the 17xxx band;
 // the hub owns 1719x (see bin/dev_/nodes.toml for the band map).
@@ -112,29 +119,6 @@ impl S3Config {
     }
 }
 
-/// Auth configuration. Always required — the hub never serves
-/// unauthenticated traffic to its workspace UI / API.
-#[derive(Debug, Clone)]
-pub struct AuthConfig {
-    /// Public URL the hub is reachable at — `HOST_NAME` env, or
-    /// `ZIM_HUB_BASE_URL`, or `http://<listen_address>` as fallback.
-    /// Used to build the OAuth callback URL (`<host_name>/auth/google/callback`).
-    pub host_name: String,
-    /// Emails auto-promoted to admin on first sign-in. Bootstrap
-    /// hint only — once a row exists, role changes happen via
-    /// `/_admin`. Comma-separated in `ZIM_HUB_ADMIN_EMAILS=a@x,b@y`.
-    pub admin_emails: Vec<String>,
-    /// `GOOGLE_O_AUTH_CLIENT_ID` env (generic convention) or
-    /// `ZIM_HUB_GOOGLE_CLIENT_ID` (zim legacy).
-    pub google_o_auth_client_id: String,
-    /// Same resolution for the secret.
-    pub google_o_auth_client_secret: String,
-    /// HS256 signing key for the session cookie. `SERVICE_SECRET`
-    /// (generic convention) or `ZIM_HUB_SESSION_SECRET`. Auto-
-    /// generated + persisted to `hub-config.toml` if missing.
-    pub service_secret: String,
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("invalid ZIM_HUB_LISTEN: {0}")]
@@ -158,6 +142,20 @@ pub enum ConfigError {
          `<host_name>/auth/google/callback`."
     )]
     AuthMissing,
+    #[error(
+        "unknown ZIM_HUB_AUTH provider `{name}` (known: google; dev-trust needs a \
+         `--features dev-login` build)"
+    )]
+    UnknownAuthProvider { name: String },
+    #[error("ZIM_HUB_AUTH lists no providers")]
+    NoAuthProviders,
+    #[error(
+        "ZIM_HUB_AUTH={provider} is only honoured when HOST_NAME is loopback; got {host_name}"
+    )]
+    LoopbackOnlyProvider {
+        provider: &'static str,
+        host_name: String,
+    },
 }
 
 /// `hub-config.toml` on-disk shape. Field names match the
@@ -212,84 +210,6 @@ impl Config {
     /// `did:web:<host>` — the hub's canonical identity URL.
     pub fn did(&self) -> String {
         format!("did:web:{}", self.host)
-    }
-}
-
-impl AuthConfig {
-    fn resolve(data_dir: &Path, listen_address: SocketAddr) -> Result<Self, ConfigError> {
-        let config_path = data_dir.join(CONFIG_FILE);
-        let mut file = read_file_config(&config_path)?;
-
-        // `HOST_NAME` matches generic. `ZIM_HUB_BASE_URL` was the
-        // earlier zim-hub name; accept both for one release.
-        let host_name = env_first(&["HOST_NAME", "ZIM_HUB_BASE_URL"])
-            .or_else(|| file.host_name.clone())
-            .unwrap_or_else(|| format!("http://{listen_address}"));
-
-        let admin_emails: Vec<String> = match env::var("ZIM_HUB_ADMIN_EMAILS") {
-            Ok(s) => s
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect(),
-            Err(_) => file.admin_emails.clone().unwrap_or_default(),
-        };
-
-        let google_o_auth_client_id =
-            env_first(&["GOOGLE_O_AUTH_CLIENT_ID", "ZIM_HUB_GOOGLE_CLIENT_ID"])
-                .or_else(|| file.google_o_auth_client_id.clone());
-        let google_o_auth_client_secret = env_first(&[
-            "GOOGLE_O_AUTH_CLIENT_SECRET",
-            "ZIM_HUB_GOOGLE_CLIENT_SECRET",
-        ])
-        .or_else(|| file.google_o_auth_client_secret.clone());
-
-        let (Some(google_o_auth_client_id), Some(google_o_auth_client_secret)) =
-            (google_o_auth_client_id, google_o_auth_client_secret)
-        else {
-            return Err(ConfigError::AuthMissing);
-        };
-
-        let service_secret = match env_first(&["SERVICE_SECRET", "ZIM_HUB_SESSION_SECRET"])
-            .or_else(|| file.service_secret.clone())
-        {
-            Some(s) if !s.is_empty() => s,
-            _ => {
-                let generated = generate_secret();
-                tracing::info!(
-                    "no SERVICE_SECRET configured — generating one and persisting \
-                     to {config_path}",
-                    config_path = config_path.display()
-                );
-                file.service_secret = Some(generated.clone());
-                write_file_config(&config_path, &file)?;
-                generated
-            }
-        };
-
-        Ok(Self {
-            host_name,
-            admin_emails,
-            google_o_auth_client_id,
-            google_o_auth_client_secret,
-            service_secret,
-        })
-    }
-
-    /// `{host_name}/auth/google/callback` — the redirect URI Google
-    /// posts back to and that must match the OAuth client config.
-    pub fn callback_url(&self) -> String {
-        format!(
-            "{}/auth/google/callback",
-            self.host_name.trim_end_matches('/')
-        )
-    }
-
-    /// True when `email` should bootstrap as admin on first sign-in.
-    /// Used by the callback handler; subsequent admin appointments
-    /// happen via `/_admin`.
-    pub fn is_bootstrap_admin(&self, email: &str) -> bool {
-        self.admin_emails.iter().any(|e| e == email)
     }
 }
 

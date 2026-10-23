@@ -50,7 +50,7 @@ up: ## The whole dev stack: daemons + hub + minio + fixtures + enroll
 	./bin/dev --hub
 
 .PHONY: hub
-hub: ## Start the hub in the dev tmux session (minio + OAuth via confit)
+hub: ## Start the hub in the dev tmux session (minio + dev-trust login: any email is admin)
 	./bin/dev hub up
 
 .PHONY: check

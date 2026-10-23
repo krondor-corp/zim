@@ -8,6 +8,10 @@
 //! hub's HTTP API (bearer JWT, verified against `user_peers`) as that
 //! user — exactly as if they'd been approved through the browser.
 //!
+//! `ZIM_DEV_SEED_EMAIL` must match the email you sign into the web UI
+//! with — in dev that's whatever you type at the dev-trust login form
+//! (`ZIM_HUB_AUTH=dev-trust`), no Google account involved.
+//!
 //! It does NOT mint a web key — that's a browser-resident keypair the
 //! user still onboards manually (the workspace UI gates on it). This
 //! only stands in for the daemon enrollments.
@@ -16,7 +20,7 @@
 //!
 //! ```text
 //! ZIM_HUB_HOME=data/zim-hub \
-//! ZIM_DEV_SEED_EMAIL=al@krondor.org \
+//! ZIM_DEV_SEED_EMAIL=dev@example.com \
 //!   zim-hub-devseed alice=<pubkey-hex> bob=<pubkey-hex>
 //! ```
 //!
@@ -37,7 +41,7 @@ use zim_hub::Database;
 
 /// Mirror `zim-hub`'s home resolution (see `config.rs` `DEFAULT_HOME`).
 const DEFAULT_HOME: &str = "./data/zim-hub";
-const DEFAULT_EMAIL: &str = "al@krondor.org";
+const DEFAULT_EMAIL: &str = "dev@example.com";
 
 struct Peer {
     label: Option<String>,
@@ -96,7 +100,9 @@ async fn run() -> anyhow::Result<()> {
         None => {
             // Name = local-part of the email; purely cosmetic.
             let name = email.split('@').next().unwrap_or(&email);
-            let u = User::create(&email, name, true, true, &db)
+            // Bound to dev-trust: the dev hub's default login. No account
+            // linking, so this account can't be signed into via Google.
+            let u = User::create(&email, name, true, true, "dev-trust", None, &db)
                 .await
                 .context("create user")?;
             println!("user  {email}  (created → admin+authorized)");

@@ -1,16 +1,22 @@
 //! Serves the Yew SPA (`web/dist`, embedded) at the site root `/`.
 //!
 //! Asset paths (the hashed `.js`/`.wasm` Trunk emits) resolve to embedded
-//! files; any other path falls through to `index.html` so the client router
-//! handles it. The SPA owns auth bootstrap (fetches `/api/v0/me`, redirects
-//! to login on 401) and the web-key gate. Mounted as the hub's top-level
-//! fallback, *after* `/api`, `/auth`, `/static`, … — so only unmatched paths
-//! (`/`, `/v/:id`, `/settings`, deep links) reach it.
+//! files, public; any other path falls through to `index.html` so the
+//! client router handles it — but only for a signed-in, approved user.
+//! Auth stays out of the wasm app: anonymous visitors are sent to the
+//! server-rendered `/auth/login` (returning here via `next`), pending ones
+//! to `/auth/pending`. The app owns the web-key gate and everything after.
+//! Mounted as the hub's top-level fallback, *after* `/api`, `/auth`,
+//! `/static`, … — so only unmatched paths (`/`, `/v/:id`, `/settings`,
+//! deep links) reach it.
 
 use axum::extract::OriginalUri;
-use axum::http::{header, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::http::{header, StatusCode, Uri};
+use axum::response::{IntoResponse, Redirect, Response};
 use rust_embed::RustEmbed;
+
+use crate::database::models::User;
+use crate::http::auth::{return_to, OptionalUser, PENDING_PATH};
 
 #[derive(RustEmbed)]
 #[folder = "web/dist/"]
@@ -31,33 +37,45 @@ fn index() -> Response {
     }
 }
 
-fn asset(path: &str) -> Response {
-    match Spa::get(path) {
-        Some(file) => {
-            let mime = mime_guess::from_path(path).first_or_octet_stream();
-            (
-                [(header::CONTENT_TYPE, mime.as_ref())],
-                file.data.into_owned(),
-            )
-                .into_response()
+/// `index.html` for users who may use the app; everyone else to the
+/// right `/auth/*` page.
+fn gated_index(user: Option<User>, uri: &Uri) -> Response {
+    match user {
+        None => {
+            let here = uri.path_and_query().map(|p| p.as_str()).unwrap_or("/");
+            Redirect::to(&return_to::login_url(here)).into_response()
         }
-        // Unknown path → the SPA's client router handles it.
-        None => index(),
+        Some(u) if !u.can_use_app() => Redirect::to(PENDING_PATH).into_response(),
+        Some(_) => index(),
     }
 }
 
-/// `GET /` → the SPA shell.
-pub async fn root() -> Response {
-    index()
+fn asset(path: &str) -> Option<Response> {
+    Spa::get(path).map(|file| {
+        let mime = mime_guess::from_path(path).first_or_octet_stream();
+        (
+            [(header::CONTENT_TYPE, mime.as_ref())],
+            file.data.into_owned(),
+        )
+            .into_response()
+    })
 }
 
-/// Top-level fallback: serve the embedded asset if it exists, else the SPA
-/// shell so the client router can take over (deep links, client routes).
-pub async fn fallback(OriginalUri(uri): OriginalUri) -> Response {
+/// `GET /` → the SPA shell (gated).
+pub async fn root(OptionalUser(user): OptionalUser, OriginalUri(uri): OriginalUri) -> Response {
+    gated_index(user, &uri)
+}
+
+/// Top-level fallback: serve the embedded asset if it exists, else the
+/// (gated) SPA shell so the client router can take over (deep links,
+/// client routes).
+pub async fn fallback(OptionalUser(user): OptionalUser, OriginalUri(uri): OriginalUri) -> Response {
     let path = uri.path().trim_start_matches('/');
-    if path.is_empty() {
-        index()
-    } else {
-        asset(path)
+    // `index.html` is the app itself, not a public asset.
+    if !path.is_empty() && path != "index.html" {
+        if let Some(file) = asset(path) {
+            return file;
+        }
     }
+    gated_index(user, &uri)
 }

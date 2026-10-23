@@ -1,5 +1,6 @@
 pub mod api;
 pub mod auth;
+pub mod canonical_host;
 pub mod health;
 pub mod html;
 pub mod spa;
@@ -55,6 +56,10 @@ pub fn build_router(state: AppState) -> Router {
         // as the fallback so the routes above win.
         .route("/", get(spa::root))
         .fallback(spa::fallback)
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            canonical_host::redirect,
+        ))
         .with_state(state)
         .layer(SetResponseHeaderLayer::if_not_present(
             axum::http::header::CONTENT_SECURITY_POLICY,

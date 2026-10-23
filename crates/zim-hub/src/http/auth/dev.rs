@@ -36,7 +36,7 @@ fn form_page(next: &str) -> String {
         "Dev login",
         &format!(
             r#"<form method="post" action="/auth/dev/login">
-          <div class="error" style="margin-bottom:0.75rem;">Dev trust mode — any email signs in as admin.</div>
+          <div class="error" style="margin-bottom:0.75rem;">⚠ Development only — if you see this in production, something is wrong. Fix immediately.</div>
           <input type="hidden" name="next" value="{next_attr}">
           <div class="field">
             <label for="email">Email</label>

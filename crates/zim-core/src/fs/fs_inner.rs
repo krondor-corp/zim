@@ -201,6 +201,23 @@ impl_backing_from!(
     ShareError,
 );
 
+impl FsError {
+    /// The hash of a blob the backing store doesn't have, when that is
+    /// what this error is. Lets callers tell "the tree points at a blob
+    /// that hasn't arrived yet" (a mirror still catching up) apart from
+    /// real failures, wherever in the backing chain the miss surfaced.
+    pub fn missing_blob(&self) -> Option<Hash> {
+        let FsError::Backing(e) = self else {
+            return None;
+        };
+        e.chain()
+            .find_map(|cause| match cause.downcast_ref::<BlobError>() {
+                Some(BlobError::NotFound(hash)) => Some(*hash),
+                _ => None,
+            })
+    }
+}
+
 impl<B: BlobStore> Fs<B> {
     /// Snapshot of the current [`FsInner`]. Acquires the inner mutex
     /// briefly to clone; callers get an owned copy and don't hold the

@@ -160,6 +160,40 @@ async fn cat_returns_the_bytes_we_added() {
 }
 
 #[tokio::test]
+async fn cat_names_the_blob_a_lagging_mirror_has_not_received_yet() {
+    // Alice's tree points at a file whose ciphertext never reached this
+    // store — the shape a hub is in between mirroring a new manifest and
+    // pulling its blobs. Reading it must say *which* blob is missing, so
+    // a UI can show "syncing" instead of an empty file.
+    let (fs, _owner) = setup().await;
+    let path = AbsPath::new("/note.md").unwrap();
+    fs.add(&path, Cursor::new(b"this is my cool note"))
+        .await
+        .unwrap();
+    let Some(super::entry::Entry::File { link, .. }) = fs.get_entry_at_path(&path).await.unwrap()
+    else {
+        panic!("note.md should be a file");
+    };
+
+    // -- the blob goes missing from the backing store --
+    fs.blobs().inner().0.lock().unwrap().remove(&link.hash());
+
+    let err = fs.cat(&path).await.unwrap_err();
+    assert_eq!(err.missing_blob(), Some(link.hash()));
+}
+
+#[tokio::test]
+async fn cat_of_a_path_that_does_not_exist_is_not_a_missing_blob() {
+    let (fs, _owner) = setup().await;
+
+    let err = fs
+        .cat(&AbsPath::new("/nope.md").unwrap())
+        .await
+        .unwrap_err();
+    assert_eq!(err.missing_blob(), None);
+}
+
+#[tokio::test]
 async fn rm_removes_the_file() {
     let (fs, _owner) = setup().await;
     let path = AbsPath::new("/doomed.txt").unwrap();

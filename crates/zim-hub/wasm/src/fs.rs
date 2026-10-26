@@ -13,7 +13,7 @@ use std::str::FromStr;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use serde::Serialize;
 use url::Url;
 use wasm_bindgen::prelude::*;
@@ -25,6 +25,10 @@ use zim_core::vault::{Vault, VaultId};
 
 use crate::api::{self, GetBlob, GetHead, GetLog, PostHead, PutBlob};
 use crate::SESSION_KEY;
+
+/// `Error.name` of a [`WasmFs::cat`] failure whose blob the hub doesn't
+/// have yet.
+pub const BLOB_PENDING: &str = "BlobPending";
 
 fn blob_err(e: String) -> BlobError {
     BlobError::Store(anyhow::anyhow!(e))
@@ -52,9 +56,11 @@ impl HubBlobStore {
 #[async_trait]
 impl BlobStore for HubBlobStore {
     async fn get(&self, hash: &Hash) -> Result<Bytes, BlobError> {
-        api::call(&self.base, &self.client, GetBlob(*hash))
-            .await
-            .map_err(|_| BlobError::NotFound(*hash))
+        match api::try_call(&self.base, &self.client, GetBlob(*hash)).await {
+            Ok(bytes) => Ok(bytes),
+            Err(e) if e.status == Some(StatusCode::NOT_FOUND) => Err(BlobError::NotFound(*hash)),
+            Err(e) => Err(blob_err(e.message)),
+        }
     }
 
     async fn put(&self, data: Vec<u8>) -> Result<Hash, BlobError> {
@@ -76,9 +82,11 @@ impl BlobStore for HubBlobStore {
     }
 
     async fn stat(&self, hash: &Hash) -> Result<bool, BlobError> {
-        Ok(api::call(&self.base, &self.client, GetBlob(*hash))
-            .await
-            .is_ok())
+        match self.get(hash).await {
+            Ok(_) => Ok(true),
+            Err(BlobError::NotFound(_)) => Ok(false),
+            Err(e) => Err(e),
+        }
     }
 }
 
@@ -398,15 +406,20 @@ impl WasmFs {
         serde_json::to_string(&views).map_err(|e| JsError::new(&format!("json: {e}")))
     }
 
-    /// Read and decrypt a file's plaintext bytes.
-    pub async fn cat(&self, path: String) -> Result<Vec<u8>, JsError> {
+    /// Read and decrypt a file's plaintext bytes. When the tree points at
+    /// a blob the hub hasn't mirrored yet (another device just wrote it),
+    /// the error's `name` is [`BLOB_PENDING`] so the UI can show "syncing"
+    /// and retry, rather than treat the file as empty or broken.
+    pub async fn cat(&self, path: String) -> Result<Vec<u8>, JsValue> {
         let abs = zim_core::fs::AbsPath::new(&path)
             .ok_or_else(|| JsError::new(&format!("invalid path: {path}")))?;
-        self.vault
-            .fs()
-            .cat(&abs)
-            .await
-            .map_err(|e| JsError::new(&format!("cat: {e}")))
+        self.vault.fs().cat(&abs).await.map_err(|e| {
+            let err = js_sys::Error::new(&format!("cat: {e}"));
+            if e.missing_blob().is_some() {
+                err.set_name(BLOB_PENDING);
+            }
+            err.into()
+        })
     }
 
     pub async fn add_file(&self, path: String, plaintext: Vec<u8>) -> Result<(), JsError> {

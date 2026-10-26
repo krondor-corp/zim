@@ -142,7 +142,7 @@ pub use api::{HubClient, LocalKey};
 #[cfg(target_arch = "wasm32")]
 mod fs;
 #[cfg(target_arch = "wasm32")]
-pub use fs::WasmFs;
+pub use fs::{WasmFs, BLOB_PENDING};
 
 // ---------------------------------------------------------------------------
 // Device model / JWT auth (T-017 / T-017b)

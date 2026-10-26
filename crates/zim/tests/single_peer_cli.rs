@@ -225,3 +225,39 @@ fn single_peer_round_trip() {
         "ls after rm: {ls_after_rm}"
     );
 }
+
+/// The DIDs a vault is sealed to, from `zim vault shares list` JSON.
+fn share_dids(home: &TempDir, vault: &str) -> Vec<String> {
+    let (out, _) = run(home, &["vault", "shares", "list", vault]);
+    let json: serde_json::Value = serde_json::from_str(out.trim()).expect("shares json");
+    json["shares"]
+        .as_array()
+        .unwrap_or_else(|| panic!("shares: {out}"))
+        .iter()
+        .map(|s| s["peer"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn an_unpaired_daemon_seals_new_vaults_to_itself_only() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let port = 17192;
+    write_config(&home, port);
+    let _daemon = spawn_daemon(&home, port);
+    wait_for_port(port, Duration::from_secs(10));
+
+    // Alice's daemon trusts her laptop, but has never paired with a hub —
+    // there's no account roster to seal to, and trusted contacts aren't
+    // a standing grant.
+    let laptop = "did:key:z6MkhRyfTs7rjRgee1sfHKbTRHYMPnFwufPsTyQZTrZF9GB9";
+    run(&home, &["peers", "add", "laptop", laptop, "--trust"]);
+
+    let (create, _) = run(&home, &["vault", "create", "notes"]);
+    let created: serde_json::Value = serde_json::from_str(create.trim()).expect("create json");
+    assert_eq!(created["devices"], 0, "create: {create}");
+    assert_eq!(share_dids(&home, "notes").len(), 1);
+
+    // `--private` is accepted either way.
+    run(&home, &["vault", "create", "diary", "--private"]);
+    assert_eq!(share_dids(&home, "diary").len(), 1);
+}

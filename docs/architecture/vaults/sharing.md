@@ -29,6 +29,27 @@ Removing a share rotates the vault secret on the next save and excludes that
 recipient from future versions. It cannot revoke plaintext or historical
 secrets the recipient already obtained.
 
+## Genesis Shares
+
+A new vault can be sealed to several recipients in its genesis manifest
+(`Vault::init_with_shares`), each with its own reach. That keeps the vault a
+single height-0 head instead of a genesis plus an immediate share save, which a
+hub would have to verify as a chain advance.
+
+Both create paths seal to the whole account roster:
+
+- **Browser** — resolves the user's `did:web` document to every enrolled key;
+  the browser owner share is reached via the hub.
+- **Daemon** — when `hub-session.json` exists, reads the hub's device roster
+  (`GET /api/v0/devices`, the same call `zim hub peers sync` makes). Daemon
+  devices are direct shares; `web` devices are reached via the hub's key. A
+  roster lookup failure fails the create rather than silently sealing to the
+  owner only. An unpaired daemon, or `zim vault create --private`, seals to the
+  daemon alone.
+
+The daemon announces the genesis head to each device it sealed in, so browser
+keys see the vault through the hub without a separate share step.
+
 ## DID Expansion
 
 The daemon resolves a supplied DID outside the peer protocol. A `did:web`
@@ -49,6 +70,7 @@ HTTP read authorization at the hub checks whether one of the authenticated
 user's registered keys is a shareholder in the current manifest.
 
 Trusted-contact records still exist, but automatic trusted-contact sharing is
-not wired. Adding a recipient remains an explicit operation; the deferred
+not wired — genesis shares come from the hub's account roster, not the address
+book. Adding a recipient remains an explicit operation; the deferred
 consent model is tracked in the
 [roadmap](../../product/roadmap/trusted-contact-auto-share.md).

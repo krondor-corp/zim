@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use struct_patch::Patch;
 use uuid::Uuid;
 
-use crate::database::types::DbUuid;
+use crate::database::types::{DbAuthProvider, DbUuid};
 use crate::database::Database;
 
 /// One user of the hub, bound to the sign-in provider that created it
@@ -28,9 +28,9 @@ pub struct User {
     name: String,
     is_admin: bool,
     is_authorized: bool,
-    /// `ZIM_HUB_AUTH` name of the provider this account signs in with.
+    /// The provider this account signs in with.
     #[patch(skip)]
-    auth_provider: String,
+    auth_provider: DbAuthProvider,
     /// That provider's stable account id (Google `sub`); `None` for
     /// dev-trust, and for Google rows predating this column until their
     /// next sign-in records it.
@@ -104,8 +104,8 @@ impl User {
     pub fn can_use_app(&self) -> bool {
         self.is_admin || self.is_authorized
     }
-    pub fn auth_provider(&self) -> &str {
-        &self.auth_provider
+    pub fn auth_provider(&self) -> DbAuthProvider {
+        self.auth_provider
     }
     pub fn auth_subject(&self) -> Option<&str> {
         self.auth_subject.as_deref()
@@ -122,7 +122,7 @@ impl User {
         name: &str,
         is_admin: bool,
         is_authorized: bool,
-        auth_provider: &str,
+        auth_provider: DbAuthProvider,
         auth_subject: Option<&str>,
         db: &Database,
     ) -> Result<Self, sqlx::Error> {

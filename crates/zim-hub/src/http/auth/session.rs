@@ -13,6 +13,7 @@ use jsonwebtoken::{encode, EncodingKey, Header};
 
 use crate::config::AuthConfig;
 use crate::database::models::User;
+use crate::database::types::DbAuthProvider;
 use crate::http::auth::{Claims, SESSION_COOKIE};
 use crate::state::AppState;
 
@@ -29,12 +30,12 @@ pub enum Authority {
 }
 
 impl Authority {
-    /// The provider's `ZIM_HUB_AUTH` name, stored as `users.auth_provider`.
-    fn provider(&self) -> &'static str {
+    /// The provider, stored as `users.auth_provider`.
+    fn provider(&self) -> DbAuthProvider {
         match self {
-            Authority::Google { .. } => "google",
+            Authority::Google { .. } => DbAuthProvider::Google,
             #[cfg(feature = "dev-login")]
-            Authority::DevTrust => "dev-trust",
+            Authority::DevTrust => DbAuthProvider::DevTrust,
         }
     }
 
@@ -64,13 +65,13 @@ pub enum SessionError {
     #[error("{email} signs in with {provider}, not {attempted}; accounts aren't linked across sign-in methods")]
     WrongProvider {
         email: String,
-        provider: String,
-        attempted: &'static str,
+        provider: DbAuthProvider,
+        attempted: DbAuthProvider,
     },
     #[error("{email} belongs to a different {provider} account")]
     SubjectMismatch {
         email: String,
-        provider: &'static str,
+        provider: DbAuthProvider,
     },
     #[error("user provisioning failed: {0}")]
     User(#[from] sqlx::Error),
@@ -115,7 +116,7 @@ pub async fn mint_session(
     tracing::info!(
         email = user.email(),
         role = %user.role().label(),
-        authority = authority.provider(),
+        authority = %authority.provider(),
         "user signed in"
     );
 
@@ -168,7 +169,7 @@ enum Identity<'a> {
 }
 
 fn check_identity<'a>(
-    stored_provider: &str,
+    stored_provider: DbAuthProvider,
     stored_subject: Option<&str>,
     authority: &'a Authority,
     email: &str,
@@ -176,7 +177,7 @@ fn check_identity<'a>(
     if stored_provider != authority.provider() {
         return Err(SessionError::WrongProvider {
             email: email.to_string(),
-            provider: stored_provider.to_string(),
+            provider: stored_provider,
             attempted: authority.provider(),
         });
     }
@@ -225,7 +226,12 @@ mod tests {
         let google = Authority::Google {
             sub: "alice-sub".into(),
         };
-        let check = check_identity("google", Some("alice-sub"), &google, "alice@example.com");
+        let check = check_identity(
+            DbAuthProvider::Google,
+            Some("alice-sub"),
+            &google,
+            "alice@example.com",
+        );
         assert_eq!(check.unwrap(), Identity::Known);
     }
 
@@ -234,7 +240,7 @@ mod tests {
         let google = Authority::Google {
             sub: "alice-sub".into(),
         };
-        let check = check_identity("google", None, &google, "alice@example.com");
+        let check = check_identity(DbAuthProvider::Google, None, &google, "alice@example.com");
         assert_eq!(check.unwrap(), Identity::RecordSubject("alice-sub"));
     }
 
@@ -244,7 +250,12 @@ mod tests {
         let mallory = Authority::Google {
             sub: "mallory-sub".into(),
         };
-        let err = check_identity("google", Some("alice-sub"), &mallory, "alice@example.com");
+        let err = check_identity(
+            DbAuthProvider::Google,
+            Some("alice-sub"),
+            &mallory,
+            "alice@example.com",
+        );
         assert!(matches!(err, Err(SessionError::SubjectMismatch { .. })));
     }
 
@@ -253,11 +264,11 @@ mod tests {
         let google = Authority::Google {
             sub: "alice-sub".into(),
         };
-        let err = check_identity("dev-trust", None, &google, "alice@example.com");
+        let err = check_identity(DbAuthProvider::DevTrust, None, &google, "alice@example.com");
         assert!(matches!(
             err,
             Err(SessionError::WrongProvider {
-                attempted: "google",
+                attempted: DbAuthProvider::Google,
                 ..
             })
         ));
@@ -267,7 +278,7 @@ mod tests {
     #[test]
     fn dev_trust_cannot_sign_into_a_google_account() {
         let err = check_identity(
-            "google",
+            DbAuthProvider::Google,
             Some("alice-sub"),
             &Authority::DevTrust,
             "alice@example.com",
@@ -275,7 +286,7 @@ mod tests {
         assert!(matches!(
             err,
             Err(SessionError::WrongProvider {
-                attempted: "dev-trust",
+                attempted: DbAuthProvider::DevTrust,
                 ..
             })
         ));

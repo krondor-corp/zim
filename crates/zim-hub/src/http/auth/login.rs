@@ -11,6 +11,7 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
 use crate::config::AuthProvider;
+use crate::database::types::DbAuthProvider;
 use crate::http::auth::session::SessionError;
 use crate::http::auth::{return_to, OptionalUser};
 use crate::state::AppState;
@@ -43,15 +44,14 @@ pub async fn handler(
 }
 
 /// Why the visitor is back at the chooser. Carried as a fixed code plus
-/// provider names; only known values map to text, so nothing from the
-/// URL is ever echoed into the page.
+/// provider names that must parse as a [`DbAuthProvider`], so nothing
+/// from the URL is ever echoed into the page.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LoginError {
     /// The email's account belongs to another provider (no linking).
-    /// Both are provider names (`google`, `dev-trust`).
     WrongProvider {
-        used: &'static str,
-        tried: &'static str,
+        used: DbAuthProvider,
+        tried: DbAuthProvider,
     },
     /// The email belongs to a different Google account (`sub` mismatch).
     AccountMismatch,
@@ -59,30 +59,12 @@ pub enum LoginError {
     Failed,
 }
 
-/// Provider names (`ZIM_HUB_AUTH` / `users.auth_provider`) and how the
-/// error copy refers to them.
-const PROVIDER_LABELS: [(&str, &str); 2] = [("google", "Google"), ("dev-trust", "Dev login")];
-
-fn known_provider(name: &str) -> Option<&'static str> {
-    PROVIDER_LABELS
-        .iter()
-        .find(|(n, _)| *n == name)
-        .map(|(n, _)| *n)
-}
-
-fn provider_label(name: &str) -> &'static str {
-    PROVIDER_LABELS
-        .iter()
-        .find(|(n, _)| *n == name)
-        .map_or("another method", |(_, label)| *label)
-}
-
 impl LoginError {
     fn from_query(code: &str, used: Option<&str>, tried: Option<&str>) -> Self {
         match code {
             "wrong-provider" => match (
-                used.and_then(known_provider),
-                tried.and_then(known_provider),
+                used.and_then(|p| p.parse().ok()),
+                tried.and_then(|p| p.parse().ok()),
             ) {
                 (Some(used), Some(tried)) => LoginError::WrongProvider { used, tried },
                 _ => LoginError::Failed,
@@ -96,8 +78,8 @@ impl LoginError {
         match self {
             LoginError::WrongProvider { used, tried } => format!(
                 "You signed up with {}. Use that — you can't sign in with {}.",
-                provider_label(used),
-                provider_label(tried),
+                used.label(),
+                tried.label(),
             ),
             LoginError::AccountMismatch => {
                 "This email belongs to a different Google account.".to_string()
@@ -131,12 +113,9 @@ impl From<&SessionError> for LoginError {
                 provider,
                 attempted,
                 ..
-            } => match known_provider(provider) {
-                Some(used) => LoginError::WrongProvider {
-                    used,
-                    tried: attempted,
-                },
-                None => LoginError::Failed,
+            } => LoginError::WrongProvider {
+                used: *provider,
+                tried: *attempted,
             },
             SessionError::SubjectMismatch { .. } => LoginError::AccountMismatch,
             SessionError::User(_) | SessionError::Token(_) => LoginError::Failed,
@@ -224,8 +203,8 @@ mod tests {
     }
 
     const DEV_INTO_GOOGLE: LoginError = LoginError::WrongProvider {
-        used: "google",
-        tried: "dev-trust",
+        used: DbAuthProvider::Google,
+        tried: DbAuthProvider::DevTrust,
     };
 
     #[test]

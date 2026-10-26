@@ -147,42 +147,16 @@ mod tests {
 
     #[tokio::test]
     async fn admin_bob_cannot_see_alices_vault() {
-        use crate::database::models::PeerKind;
-        use zim_crypto::PrivateKey;
+        use crate::test_fixtures::{admin_bob, alice, enroll_web_key};
 
-        let path = std::env::temp_dir().join(format!("zim-hub-access-{}.db", uuid::Uuid::new_v4()));
-        let url = url::Url::parse(&format!("sqlite://{}", path.display())).unwrap();
-        let db = Database::connect(&url).await.unwrap();
+        let db = Database::in_memory().await;
+        let alice = alice(&db).await;
+        let bob = admin_bob(&db).await;
+        // Alice's vault: her web key is the shareholder.
+        let shareholders = [enroll_web_key(&db, &alice).await];
 
-        // Alice owns a vault: her web key is a shareholder.
-        let alice = User::create(
-            "alice@example.com",
-            "alice",
-            false,
-            true,
-            "dev-trust",
-            None,
-            &db,
-        )
-        .await
-        .unwrap();
-        let alices_key = PrivateKey::generate().public();
-        UserPeer::create(alice.id(), &alices_key, None, PeerKind::Web, &db)
-            .await
-            .unwrap();
-
-        // Bob is an admin of the hub.
-        let bob = User::create("bob@example.com", "bob", true, true, "dev-trust", None, &db)
-            .await
-            .unwrap();
-
-        assert!(can_access_vault_via_db(&db, &alice, &[alices_key]).await);
-        assert!(!can_access_vault_via_db(&db, &bob, &[alices_key]).await);
-
-        drop(db);
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
+        assert!(can_access_vault_via_db(&db, &alice, &shareholders).await);
+        assert!(!can_access_vault_via_db(&db, &bob, &shareholders).await);
     }
 
     #[test]

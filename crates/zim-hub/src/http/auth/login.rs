@@ -205,14 +205,7 @@ pub(super) fn shell(heading: &str, body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::GoogleOAuth;
-
-    fn google() -> AuthProvider {
-        AuthProvider::Google(GoogleOAuth {
-            client_id: "id".into(),
-            client_secret: "secret".into(),
-        })
-    }
+    use crate::test_fixtures::google;
 
     #[test]
     fn a_single_provider_still_gets_a_chooser() {

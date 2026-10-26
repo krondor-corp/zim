@@ -147,11 +147,11 @@ mod tests {
 
     #[tokio::test]
     async fn admin_bob_cannot_see_alices_vault() {
-        use crate::test_fixtures::{admin_bob, alice, enroll_web_key};
+        use crate::test_fixtures::{enroll_web_key, user};
 
         let db = Database::in_memory().await;
-        let alice = alice(&db).await;
-        let bob = admin_bob(&db).await;
+        let alice = user(&db, "alice").await;
+        let bob = user(&db, "bob").admin().await;
         // Alice's vault: her web key is the shareholder.
         let shareholders = [enroll_web_key(&db, &alice).await];
 

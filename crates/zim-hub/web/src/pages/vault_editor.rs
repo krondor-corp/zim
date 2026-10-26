@@ -15,6 +15,10 @@ pub struct OpenFile {
     pub url: String,
     /// Decoded text for textual files.
     pub text: Option<String>,
+    /// Unique per load. The textarea is uncontrolled (its value is set
+    /// once, at mount), so it's keyed on this: every (re)load remounts it
+    /// with the freshly read text instead of keeping the old DOM value.
+    pub rev: u32,
 }
 
 #[derive(Properties, PartialEq)]
@@ -51,7 +55,7 @@ pub fn editor_pane(props: &EditorProps) -> Html {
             {
                 if editable {
                     html! {
-                        <textarea class="editor-textarea--doc" key={file.path.clone()}
+                        <textarea class="editor-textarea--doc" key={format!("{}#{}", file.path, file.rev)}
                             defaultvalue={file.text.clone().unwrap_or_default()}
                             {oninput} spellcheck="false" placeholder="Write\u{2026}" />
                     }

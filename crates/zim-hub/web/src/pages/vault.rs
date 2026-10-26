@@ -8,21 +8,22 @@
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use serde::Deserialize;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::HtmlInputElement;
 use yew::prelude::*;
 use yew_router::prelude::*;
-use zim_wasm::WasmFs;
+use zim_wasm::{WasmFs, BLOB_PENDING};
 
 use crate::api::{fetch_devices, fetch_me, fetch_vaults, Device, FsEntry, VaultItem};
-use crate::pages::vault_editor::{EditorPane, OpenFile};
-use crate::pages::vault_tree::{build_rows, CtxMenu, CtxTarget, TreeNode, TreePane};
 use crate::components::dialog::{ConfirmDialog, PromptDialog};
 use crate::layouts::{HeaderMenu, SignOutItem};
+use crate::pages::vault_editor::{EditorPane, OpenFile};
+use crate::pages::vault_tree::{build_rows, CtxMenu, CtxTarget, TreeNode, TreePane};
 use crate::routes::Route;
-use crate::util::{jserr, origin};
+use crate::util::{jserr, origin, sleep};
 
 type FsHandle = Rc<RefCell<Option<WasmFs>>>;
 
@@ -148,19 +149,36 @@ async fn ls(fs: &FsHandle, path: String) -> Result<Vec<FsEntry>, String> {
     serde_json::from_str::<Vec<FsEntry>>(&json).map_err(|e| e.to_string())
 }
 
-async fn cat(fs: &FsHandle, path: String) -> Result<Vec<u8>, String> {
-    let guard = fs.borrow();
-    let f = guard.as_ref().ok_or("vault not open")?;
-    f.cat(path).await.map_err(|e| jserr(e.into()))
+/// Why [`load_file`] came back without a file.
+enum LoadError {
+    /// The tree names a blob the hub hasn't mirrored yet — another
+    /// device just wrote it. Retry shortly; don't show an empty file.
+    Pending,
+    Failed(String),
 }
 
-/// Sync the open vault to the hub's head if another device advanced it.
-/// Best-effort: a failed refresh (offline, transient) keeps the current
-/// view rather than breaking navigation.
-async fn refresh(fs: &FsHandle) {
+async fn cat(fs: &FsHandle, path: String) -> Result<Vec<u8>, LoadError> {
+    let guard = fs.borrow();
+    let f = guard
+        .as_ref()
+        .ok_or_else(|| LoadError::Failed("vault not open".into()))?;
+    f.cat(path).await.map_err(|e| {
+        if String::from(js_sys::Error::from(e.clone()).name()) == BLOB_PENDING {
+            LoadError::Pending
+        } else {
+            LoadError::Failed(jserr(e))
+        }
+    })
+}
+
+/// Sync the open vault to the hub's head if another device advanced it;
+/// `true` when the tree changed. Best-effort: a failed refresh (offline,
+/// transient) keeps the current view rather than breaking navigation.
+async fn refresh(fs: &FsHandle) -> bool {
     let mut guard = fs.borrow_mut();
-    if let Some(f) = guard.as_mut() {
-        let _ = f.refresh().await;
+    match guard.as_mut() {
+        Some(f) => f.refresh().await.unwrap_or(false),
+        None => false,
     }
 }
 
@@ -220,12 +238,18 @@ async fn mv_and_save(fs: &FsHandle, from: String, to: String) -> Result<(), Stri
     .await
 }
 
+/// How long a file whose blob is still syncing to the hub is retried
+/// before giving up: `SYNC_RETRIES` attempts, `SYNC_RETRY_MS` apart.
+const SYNC_RETRIES: u32 = 30;
+const SYNC_RETRY_MS: i32 = 2_000;
+
 /// Load `path` into an [`OpenFile`] (decrypt, object-URL, decode text).
-async fn load_file(fs: &FsHandle, path: String) -> Result<OpenFile, String> {
+async fn load_file(fs: &FsHandle, path: String) -> Result<OpenFile, LoadError> {
+    static LOADS: AtomicU32 = AtomicU32::new(0);
     let bytes = cat(fs, path.clone()).await?;
     let name = path.rsplit('/').next().unwrap_or_default();
     let mime = guess_mime(name);
-    let url = object_url(&bytes, &mime)?;
+    let url = object_url(&bytes, &mime).map_err(LoadError::Failed)?;
     let text = if is_textual(&mime) && bytes.len() < 2_000_000 {
         String::from_utf8(bytes).ok()
     } else {
@@ -236,9 +260,9 @@ async fn load_file(fs: &FsHandle, path: String) -> Result<OpenFile, String> {
         mime,
         url,
         text,
+        rev: LOADS.fetch_add(1, Ordering::Relaxed),
     })
 }
-
 
 /// Join `dir` + `name` into a vault path.
 fn joined(dir: &str, name: &str) -> String {
@@ -255,6 +279,12 @@ pub fn vault_tree(props: &Props) -> Html {
     let expanded = use_state(BTreeSet::<String>::new);
     let rows = use_state(|| None::<Vec<TreeNode>>);
     let open_file = use_state(|| None::<OpenFile>);
+    // A file whose latest blob hasn't reached the hub yet; shown as
+    // "syncing" (never as an editable empty file) while `on_open` retries.
+    let syncing = use_state(|| None::<String>);
+    // Bumped by every open; an in-flight load or syncing retry holding an
+    // older ticket drops its result instead of clobbering a newer open.
+    let open_seq = use_mut_ref(|| 0u32);
     let error = use_state(String::new);
     let status = use_state(String::new);
     // The in-flight edit: Some(text) once the open file's content has
@@ -320,6 +350,8 @@ pub fn vault_tree(props: &Props) -> Html {
         let expanded = expanded.clone();
         let rows = rows.clone();
         let open_file = open_file.clone();
+        let syncing = syncing.clone();
+        let open_seq = open_seq.clone();
         let vault_id = props.vault_id.clone();
         use_effect_with(vault_id.clone(), move |_| {
             let fs = fs.clone();
@@ -333,6 +365,8 @@ pub fn vault_tree(props: &Props) -> Html {
             expanded.set(BTreeSet::new());
             rows.set(None);
             open_file.set(None);
+            syncing.set(None);
+            *open_seq.borrow_mut() += 1;
             crate::pages::workspace::remember_vault(&vault_id);
             yew::platform::spawn_local(async move {
                 match open(&fs, vault_id).await {
@@ -387,31 +421,79 @@ pub fn vault_tree(props: &Props) -> Html {
         })
     };
 
+    // Open reads the hub's *current* head (another device may have
+    // written since the last rebuild). A blob the hub is still mirroring
+    // shows "syncing" and is retried; any failure clears the pane, so a
+    // stale copy is never left up to be edited and saved over the remote
+    // write.
     let on_open = {
         let fs = fs.clone();
         let open_file = open_file.clone();
+        let syncing = syncing.clone();
+        let open_seq = open_seq.clone();
         let error = error.clone();
+        let rebuild = rebuild.clone();
         Callback::from(move |path: String| {
+            let ticket = {
+                let mut seq = open_seq.borrow_mut();
+                *seq += 1;
+                *seq
+            };
             let fs = fs.clone();
             let open_file = open_file.clone();
+            let syncing = syncing.clone();
+            let open_seq = open_seq.clone();
             let error = error.clone();
+            let rebuild = rebuild.clone();
             yew::platform::spawn_local(async move {
-                match load_file(&fs, path).await {
-                    Ok(f) => {
-                        error.set(String::new());
-                        open_file.set(Some(f));
+                let current = || *open_seq.borrow() == ticket;
+                for attempt in 0..SYNC_RETRIES {
+                    if attempt > 0 {
+                        sleep(SYNC_RETRY_MS).await;
                     }
-                    Err(e) => error.set(e),
+                    if !current() {
+                        return;
+                    }
+                    if refresh(&fs).await {
+                        rebuild.emit(());
+                    }
+                    let loaded = load_file(&fs, path.clone()).await;
+                    if !current() {
+                        return;
+                    }
+                    error.set(String::new());
+                    match loaded {
+                        Ok(f) => {
+                            syncing.set(None);
+                            open_file.set(Some(f));
+                            return;
+                        }
+                        Err(LoadError::Pending) => {
+                            open_file.set(None);
+                            syncing.set(Some(path.clone()));
+                        }
+                        Err(LoadError::Failed(e)) => {
+                            open_file.set(None);
+                            syncing.set(None);
+                            error.set(e);
+                            return;
+                        }
+                    }
                 }
+                syncing.set(None);
+                error.set(format!(
+                    "{path} hasn't reached the hub yet \u{2014} open it again in a moment"
+                ));
             });
         })
     };
-    // Switching files abandons the draft.
+    // A fresh load (another file, or a re-open) abandons the draft: the
+    // editor remounts with the loaded text.
     {
         let draft = draft.clone();
         let status = status.clone();
-        let path_now = (*open_file).as_ref().map(|f| f.path.clone());
-        use_effect_with(path_now, move |_| {
+        let loaded_now = (*open_file).as_ref().map(|f| (f.path.clone(), f.rev));
+        use_effect_with(loaded_now, move |_| {
             draft.set(None);
             status.set(String::new());
             || ()
@@ -472,6 +554,8 @@ pub fn vault_tree(props: &Props) -> Html {
     let new_note_in = {
         let fs = fs.clone();
         let open_file = open_file.clone();
+        let syncing = syncing.clone();
+        let open_seq = open_seq.clone();
         let error = error.clone();
         let status = status.clone();
         let rebuild = rebuild.clone();
@@ -482,6 +566,8 @@ pub fn vault_tree(props: &Props) -> Html {
             let fs = fs.clone();
             let path = joined(&dir, &name);
             let open_file = open_file.clone();
+            let syncing = syncing.clone();
+            let open_seq = open_seq.clone();
             let error = error.clone();
             let status = status.clone();
             let rebuild = rebuild.clone();
@@ -491,6 +577,8 @@ pub fn vault_tree(props: &Props) -> Html {
                     Ok(()) => {
                         status.set(String::new());
                         if let Ok(f) = load_file(&fs, path).await {
+                            *open_seq.borrow_mut() += 1;
+                            syncing.set(None);
                             open_file.set(Some(f));
                         }
                         rebuild.emit(());
@@ -745,7 +833,10 @@ pub fn vault_tree(props: &Props) -> Html {
         Some(m) if !m.name.is_empty() => m.name.clone(),
         _ => short_id(&props.vault_id),
     };
-    let active = (*open_file).as_ref().map(|f| f.path.clone());
+    let active = (*open_file)
+        .as_ref()
+        .map(|f| f.path.clone())
+        .or_else(|| (*syncing).clone());
 
     // Breadcrumb: [vault switcher] / file / path / segments
     let crumbs = {
@@ -872,10 +963,17 @@ pub fn vault_tree(props: &Props) -> Html {
                                 Some(f) => html! {
                                     <EditorPane file={f.clone()} on_change={on_change.clone()} />
                                 },
-                                None => html! {
-                                    <div class="doc-empty">
-                                        { "Select a file, or right-click the tree for more." }
-                                    </div>
+                                None => match &*syncing {
+                                    Some(path) => html! {
+                                        <div class="doc-empty">
+                                            { format!("Syncing {path}\u{2026} its latest version is still on its way to the hub.") }
+                                        </div>
+                                    },
+                                    None => html! {
+                                        <div class="doc-empty">
+                                            { "Select a file, or right-click the tree for more." }
+                                        </div>
+                                    },
                                 },
                             }
                         }

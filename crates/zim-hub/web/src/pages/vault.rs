@@ -454,10 +454,17 @@ pub fn vault_tree(props: &Props) -> Html {
                     if !current() {
                         return;
                     }
-                    if refresh(&fs).await {
+                    // Another action holds the handle across an await; a
+                    // borrow now would panic. Try again next tick.
+                    if fs.try_borrow_mut().is_err() {
+                        continue;
+                    }
+                    let changed = refresh(&fs).await;
+                    let loaded = load_file(&fs, path.clone()).await;
+                    // Rebuild only once our borrow is released.
+                    if changed {
                         rebuild.emit(());
                     }
-                    let loaded = load_file(&fs, path.clone()).await;
                     if !current() {
                         return;
                     }

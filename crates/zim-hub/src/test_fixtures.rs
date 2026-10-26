@@ -26,34 +26,52 @@ pub fn auth_config(admin_emails: &[&str]) -> AuthConfig {
     }
 }
 
-/// Alice: an approved, non-admin user.
-pub async fn alice(db: &Database) -> User {
-    User::create(
-        "alice@example.com",
-        "alice",
-        false,
-        true,
-        "google",
-        Some("alice-sub"),
+/// A user to create: `user(&db, "alice").await` is an approved,
+/// non-admin Google user `alice@example.com`; chain switches to change
+/// that (`user(&db, "bob").admin().await`). Awaiting it inserts the row.
+pub fn user<'a>(db: &'a Database, name: &'a str) -> UserFixture<'a> {
+    UserFixture {
         db,
-    )
-    .await
-    .expect("create alice")
+        name,
+        admin: false,
+    }
 }
 
-/// Bob: the hub's admin.
-pub async fn admin_bob(db: &Database) -> User {
-    User::create(
-        "bob@example.com",
-        "bob",
-        true,
-        true,
-        "google",
-        Some("bob-sub"),
-        db,
-    )
-    .await
-    .expect("create bob")
+pub struct UserFixture<'a> {
+    db: &'a Database,
+    name: &'a str,
+    admin: bool,
+}
+
+impl UserFixture<'_> {
+    /// Make them a hub admin.
+    pub fn admin(mut self) -> Self {
+        self.admin = true;
+        self
+    }
+}
+
+impl<'a> std::future::IntoFuture for UserFixture<'a> {
+    type Output = User;
+    type IntoFuture = std::pin::Pin<Box<dyn std::future::Future<Output = User> + Send + 'a>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(async move {
+            let email = format!("{}@example.com", self.name);
+            let sub = format!("{}-sub", self.name);
+            User::create(
+                &email,
+                self.name,
+                self.admin,
+                true,
+                "google",
+                Some(&sub),
+                self.db,
+            )
+            .await
+            .expect("create fixture user")
+        })
+    }
 }
 
 /// Enroll a fresh browser web key for `user`; returns its public key

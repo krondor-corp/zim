@@ -200,23 +200,11 @@ fn build_cookie(token: &str, secure: bool, max_age_secs: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{AuthProvider, GoogleOAuth};
-
-    fn hub_with_admins(admins: &[&str]) -> AuthConfig {
-        AuthConfig {
-            host_name: "http://127.0.0.1:17190".into(),
-            admin_emails: admins.iter().map(|s| s.to_string()).collect(),
-            providers: vec![AuthProvider::Google(GoogleOAuth {
-                client_id: "id".into(),
-                client_secret: "secret".into(),
-            })],
-            service_secret: "secret".into(),
-        }
-    }
+    use crate::test_fixtures::auth_config;
 
     #[test]
     fn google_sign_in_promotes_only_allow_listed_emails() {
-        let hub = hub_with_admins(&["alice@example.com"]);
+        let hub = auth_config(&["alice@example.com"]);
         let google = Authority::Google { sub: "123".into() };
 
         assert!(google.grants_admin(&hub, "alice@example.com"));
@@ -226,7 +214,7 @@ mod tests {
     #[cfg(feature = "dev-login")]
     #[test]
     fn dev_trust_makes_everyone_admin_without_an_allow_list() {
-        let hub = hub_with_admins(&[]);
+        let hub = auth_config(&[]);
         assert!(Authority::DevTrust.grants_admin(&hub, "bob@example.com"));
     }
 

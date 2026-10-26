@@ -26,6 +26,14 @@ impl Database {
         sqlite::migrate(&pool).await?;
         Ok(Self(pool))
     }
+
+    /// A fresh, migrated in-memory database for tests.
+    #[cfg(test)]
+    pub async fn in_memory() -> Self {
+        let pool = sqlite::connect_in_memory().await.expect("in-memory db");
+        sqlite::migrate(&pool).await.expect("migrate in-memory db");
+        Self(pool)
+    }
 }
 
 impl Deref for Database {

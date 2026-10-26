@@ -6,6 +6,8 @@ pub mod errors;
 pub mod http;
 pub mod peer;
 pub mod state;
+#[cfg(test)]
+mod test_fixtures;
 
 pub use config::Config;
 pub use database::Database;

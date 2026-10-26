@@ -32,6 +32,22 @@ pub async fn connect(url: &Url) -> Result<SqlitePool, DatabaseSetupError> {
         .map_err(DatabaseSetupError::Unavailable)
 }
 
+/// A private in-memory database for tests. Exactly one connection that
+/// never idles out or expires: each SQLite in-memory connection is its
+/// own database, so a second one (or a recycled one) would see an empty,
+/// unmigrated schema.
+#[cfg(test)]
+pub async fn connect_in_memory() -> Result<SqlitePool, DatabaseSetupError> {
+    SqlitePoolOptions::new()
+        .min_connections(1)
+        .max_connections(1)
+        .idle_timeout(None)
+        .max_lifetime(None)
+        .connect_with(SqliteConnectOptions::new().in_memory(true))
+        .await
+        .map_err(DatabaseSetupError::Unavailable)
+}
+
 pub async fn migrate(pool: &SqlitePool) -> Result<(), DatabaseSetupError> {
     MIGRATOR
         .run(pool)

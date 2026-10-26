@@ -17,6 +17,8 @@ use std::env;
 use std::net::SocketAddr;
 use std::path::Path;
 
+use crate::database::types::DbAuthProvider;
+
 use super::{
     env_first, generate_secret, read_file_config, write_file_config, ConfigError, CONFIG_FILE,
 };
@@ -64,12 +66,13 @@ pub struct GoogleOAuth {
 }
 
 impl AuthProvider {
-    /// The provider's `ZIM_HUB_AUTH` token.
-    pub fn name(&self) -> &'static str {
+    /// Which provider this is — also its `ZIM_HUB_AUTH` token and the
+    /// `users.auth_provider` value for accounts it creates.
+    pub fn kind(&self) -> DbAuthProvider {
         match self {
-            AuthProvider::Google(_) => "google",
+            AuthProvider::Google(_) => DbAuthProvider::Google,
             #[cfg(feature = "dev-login")]
-            AuthProvider::DevTrust => "dev-trust",
+            AuthProvider::DevTrust => DbAuthProvider::DevTrust,
         }
     }
 
@@ -199,12 +202,23 @@ fn resolve_providers(
     google_client_secret: Option<String>,
 ) -> Result<Vec<AuthProvider>, ConfigError> {
     let mut providers: Vec<AuthProvider> = Vec::new();
-    for name in spec.unwrap_or("google").split(',').map(str::trim) {
-        if name.is_empty() || providers.iter().any(|p| p.name() == name) {
+    for name in spec
+        .unwrap_or(DbAuthProvider::Google.as_str())
+        .split(',')
+        .map(str::trim)
+    {
+        if name.is_empty() {
             continue;
         }
-        let provider = match name {
-            "google" => {
+        let unknown = || ConfigError::UnknownAuthProvider {
+            name: name.to_string(),
+        };
+        let kind: DbAuthProvider = name.parse().map_err(|_| unknown())?;
+        if providers.iter().any(|p| p.kind() == kind) {
+            continue;
+        }
+        let provider = match kind {
+            DbAuthProvider::Google => {
                 let (Some(client_id), Some(client_secret)) =
                     (google_client_id.clone(), google_client_secret.clone())
                 else {
@@ -216,16 +230,14 @@ fn resolve_providers(
                 })
             }
             #[cfg(feature = "dev-login")]
-            "dev-trust" => AuthProvider::DevTrust,
-            other => {
-                return Err(ConfigError::UnknownAuthProvider {
-                    name: other.to_string(),
-                })
-            }
+            DbAuthProvider::DevTrust => AuthProvider::DevTrust,
+            // Not compiled into this build.
+            #[cfg(not(feature = "dev-login"))]
+            DbAuthProvider::DevTrust => return Err(unknown()),
         };
         if provider.is_loopback_only() && !is_loopback(host_name) {
             return Err(ConfigError::LoopbackOnlyProvider {
-                provider: provider.name(),
+                provider: provider.kind(),
                 host_name: host_name.to_string(),
             });
         }
@@ -259,8 +271,8 @@ mod tests {
         (Some("client-id".into()), Some("client-secret".into()))
     }
 
-    fn names(providers: &[AuthProvider]) -> Vec<&'static str> {
-        providers.iter().map(AuthProvider::name).collect()
+    fn kinds(providers: &[AuthProvider]) -> Vec<DbAuthProvider> {
+        providers.iter().map(AuthProvider::kind).collect()
     }
 
     // ── Google: the default, in every build ────────────────────────
@@ -269,7 +281,7 @@ mod tests {
     fn production_hub_with_google_creds_offers_google() {
         let (id, secret) = creds();
         let providers = resolve_providers(None, PUBLIC, id, secret).unwrap();
-        assert_eq!(names(&providers), ["google"]);
+        assert_eq!(kinds(&providers), [DbAuthProvider::Google]);
     }
 
     #[test]
@@ -295,7 +307,7 @@ mod tests {
     fn repeated_providers_collapse_to_one() {
         let (id, secret) = creds();
         let providers = resolve_providers(Some("google, google"), PUBLIC, id, secret).unwrap();
-        assert_eq!(names(&providers), ["google"]);
+        assert_eq!(kinds(&providers), [DbAuthProvider::Google]);
     }
 
     // ── Default (release) build: dev-trust does not exist ──────────
@@ -327,7 +339,7 @@ mod tests {
     fn dev_on_loopback_signs_in_without_google_creds() {
         for host in [LOOPBACK, "http://localhost:17190", "http://[::1]:17190"] {
             let providers = resolve_providers(Some("dev-trust"), host, None, None).unwrap();
-            assert_eq!(names(&providers), ["dev-trust"], "{host}");
+            assert_eq!(kinds(&providers), [DbAuthProvider::DevTrust], "{host}");
         }
     }
 
@@ -339,7 +351,7 @@ mod tests {
         assert!(matches!(
             err,
             ConfigError::LoopbackOnlyProvider {
-                provider: "dev-trust",
+                provider: DbAuthProvider::DevTrust,
                 ..
             }
         ));
@@ -350,7 +362,10 @@ mod tests {
     fn dev_hub_can_offer_dev_trust_and_google_side_by_side() {
         let (id, secret) = creds();
         let providers = resolve_providers(Some("dev-trust,google"), LOOPBACK, id, secret).unwrap();
-        assert_eq!(names(&providers), ["dev-trust", "google"]);
+        assert_eq!(
+            kinds(&providers),
+            [DbAuthProvider::DevTrust, DbAuthProvider::Google]
+        );
     }
 
     #[cfg(feature = "dev-login")]

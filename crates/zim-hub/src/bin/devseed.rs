@@ -37,6 +37,7 @@ use std::path::PathBuf;
 use anyhow::{anyhow, Context};
 use zim_crypto::PublicKey;
 use zim_hub::database::models::{PeerKind, User, UserPeer};
+use zim_hub::database::types::DbAuthProvider;
 use zim_hub::Database;
 
 /// Mirror `zim-hub`'s home resolution (see `config.rs` `DEFAULT_HOME`).
@@ -102,9 +103,17 @@ async fn run() -> anyhow::Result<()> {
             let name = email.split('@').next().unwrap_or(&email);
             // Bound to dev-trust: the dev hub's default login. No account
             // linking, so this account can't be signed into via Google.
-            let u = User::create(&email, name, true, true, "dev-trust", None, &db)
-                .await
-                .context("create user")?;
+            let u = User::create(
+                &email,
+                name,
+                true,
+                true,
+                DbAuthProvider::DevTrust,
+                None,
+                &db,
+            )
+            .await
+            .context("create user")?;
             println!("user  {email}  (created → admin+authorized)");
             u
         }

@@ -85,7 +85,12 @@ fn banner(config: &Config) {
         config.listen_address
     );
     tracing::info!("  services http, peer (in-process / relay)");
-    let providers: Vec<_> = config.auth.providers.iter().map(|p| p.name()).collect();
+    let providers: Vec<_> = config
+        .auth
+        .providers
+        .iter()
+        .map(|p| p.kind().as_str())
+        .collect();
     tracing::info!("  auth     {}", providers.join(", "));
     for warning in config
         .auth

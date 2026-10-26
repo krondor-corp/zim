@@ -6,6 +6,7 @@ use zim_crypto::{PrivateKey, PublicKey};
 
 use crate::config::{AuthConfig, AuthProvider, GoogleOAuth};
 use crate::database::models::{PeerKind, User, UserPeer};
+use crate::database::types::DbAuthProvider;
 use crate::Database;
 
 /// The Google provider with placeholder credentials.
@@ -64,7 +65,7 @@ impl<'a> std::future::IntoFuture for UserFixture<'a> {
                 self.name,
                 self.admin,
                 true,
-                "google",
+                DbAuthProvider::Google,
                 Some(&sub),
                 self.db,
             )

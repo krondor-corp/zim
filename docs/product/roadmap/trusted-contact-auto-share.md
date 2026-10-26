@@ -42,5 +42,6 @@ Make minting explicit and event-shaped rather than sweep-shaped:
   (minting as explicit act).
 
 Until then: new devices get existing vaults via explicit
-`zim vault <v> shares add <did>`; vaults created in the browser still
-seal to the whole account roster at creation time.
+`zim vault <v> shares add <did>`; new vaults — created in the browser, or
+by a daemon paired with a hub — seal to the whole account roster at
+creation time (read from the hub, not the address book).

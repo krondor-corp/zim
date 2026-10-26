@@ -21,7 +21,8 @@ use clap::Subcommand;
 use zim_crypto::PrivateKey;
 
 use crate::cli::op::Op;
-use crate::context::{paths, ContextError};
+use crate::context::hub_session::HubSessionReadError;
+use crate::context::{paths, ContextError, HubSession};
 
 pub use login::Login;
 
@@ -88,8 +89,8 @@ pub enum HubSessionError {
     NoSession,
     #[error("identity: {0}")]
     Identity(String),
-    #[error("json: {0}")]
-    Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Session(#[from] HubSessionReadError),
     #[error(transparent)]
     Api(#[from] zim_api::ApiError),
 }
@@ -99,12 +100,7 @@ pub enum HubSessionError {
 /// when the daemon hasn't logged in — the signal to run `zim hub login`.
 pub fn load_hub_client() -> Result<zim_api::hub::HubClient, HubSessionError> {
     let home = paths::home_dir(None)?;
-    let session_path = paths::hub_session_file(&home);
-    if !session_path.exists() {
-        return Err(HubSessionError::NoSession);
-    }
-    let session: login::HubSession =
-        serde_json::from_str(&std::fs::read_to_string(&session_path)?)?;
+    let session = HubSession::load(&home)?.ok_or(HubSessionError::NoSession)?;
     let id_hex = std::fs::read_to_string(paths::identity_file(&home))?;
     let secret = PrivateKey::from_hex(id_hex.trim())
         .map_err(|e| HubSessionError::Identity(e.to_string()))?;

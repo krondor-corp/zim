@@ -15,12 +15,18 @@ use crate::daemon::api::v0::vault::create::CreateRequest;
 #[derive(Args, Debug, Clone)]
 pub struct Create {
     pub name: String,
+    /// Keep the vault on this device only. A daemon paired with a hub
+    /// otherwise seals new vaults to every device on your account.
+    #[arg(long)]
+    pub private: bool,
 }
 
 #[derive(Debug, serde::Serialize)]
 pub struct CreateOutput {
     pub vault_id: VaultId,
     pub name: String,
+    /// Your other devices the vault was sealed to at genesis.
+    pub devices: usize,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -46,11 +52,13 @@ impl Op for Create {
             .client
             .call(CreateRequest {
                 name: self.name.clone(),
+                private: self.private,
             })
             .await?;
         Ok(CreateOutput {
             vault_id: r.vault_id,
             name: r.name,
+            devices: r.devices,
         })
     }
 }
@@ -62,6 +70,19 @@ impl fmt::Display for CreateOutput {
             "{} ({})",
             ui::success("created", &self.name),
             ui::dim(self.vault_id.to_string())
-        )
+        )?;
+        if self.devices > 0 {
+            let noun = if self.devices == 1 {
+                "device"
+            } else {
+                "devices"
+            };
+            write!(
+                f,
+                "\n  shared with {} of your other {noun}",
+                ui::num(self.devices.to_string())
+            )?;
+        }
+        Ok(())
     }
 }

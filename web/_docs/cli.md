@@ -22,7 +22,8 @@ A vault is an encrypted, versioned folder. Commands are verb-first —
 `zim vault <op> <vault> …`, where `<vault>` is a name or id.
 
 ```bash
-zim vault create notes                    # create a vault
+zim vault create notes                    # create a vault (shared with your devices if paired with a hub)
+zim vault create diary --private          # create a vault on this device only
 zim vault list                            # list vaults this device holds
 zim vault head notes                      # current version + height
 

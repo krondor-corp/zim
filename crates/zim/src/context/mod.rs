@@ -16,9 +16,11 @@ use std::path::{Path, PathBuf};
 use url::Url;
 
 pub mod config;
+pub mod hub_session;
 pub mod paths;
 
 pub use config::AppConfig;
+pub use hub_session::HubSession;
 
 use crate::daemon::api::client::{ApiClient, ApiError};
 

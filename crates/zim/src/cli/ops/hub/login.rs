@@ -22,12 +22,12 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use clap::Args;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use zim_crypto::PrivateKey;
 
 use crate::cli::op::Op;
 use crate::cli::ui;
-use crate::context::{paths, ContextError};
+use crate::context::{paths, ContextError, HubSession};
 
 /// Default `--hub` target. Debug builds point at the local dev hub
 /// (`./bin/dev hub` serves `127.0.0.1:17190`); release points at the
@@ -66,17 +66,6 @@ pub struct Login {
     /// matches the hub's grant TTL.
     #[arg(long, default_value_t = 600)]
     pub timeout_secs: u64,
-}
-
-/// What we persist at `$ZIM_HOME/hub-session.json`. The daemon
-/// reads it on startup to know which hub it's paired with. There's
-/// no secret material here — `identity.key` is the only thing the
-/// daemon can sign with, and JWTs are minted on the fly.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HubSession {
-    pub hub_url: String,
-    pub enrolled_pubkey: String,
-    pub enrolled_at: String,
 }
 
 #[derive(Debug, serde::Serialize)]

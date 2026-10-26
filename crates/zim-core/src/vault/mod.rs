@@ -90,13 +90,17 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
     /// try to dial a browser owner directly and fail — the announce must
     /// target the hub, which mirrors the new head for the browser to read.
     ///
+    /// Each entry in `shares` carries its own reachability the same way:
+    /// `(key, None)` for a directly dialed device, `(key, Some(host))` for
+    /// one reached through its hub.
+    ///
     /// The vault's [`VaultId`] is *derived* — the blake3 hash of the
     /// genesis blob just written. Read it back via [`Self::id`].
     pub async fn init_with_shares(
         name: String,
         owner: &PrivateKey,
         owner_via: Option<Did>,
-        shares: &[PublicKey],
+        shares: &[(PublicKey, Option<Did>)],
         blobs: B,
         log: L,
     ) -> Result<Self, VaultError<L::Error>> {
@@ -119,11 +123,11 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
                 Share::seal(&root_ratchet, &owner_pubkey, 0, owner_via)?,
             );
         }
-        for pk in shares {
+        for (pk, via) in shares {
             if *pk == owner_pubkey {
                 continue;
             }
-            manifest.add_share(*pk, Share::seal(&root_ratchet, pk, 0, None)?);
+            manifest.add_share(*pk, Share::seal(&root_ratchet, pk, 0, via.clone())?);
         }
 
         // Snapshot the metadata pack so the genesis manifest is

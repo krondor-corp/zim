@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use async_trait::async_trait;
 use bytes::Bytes;
 use zim_crypto::PrivateKey;
+use zim_did::Did;
 
 use crate::blobs::{BlobError, BlobStore};
 use crate::fs::{AbsPath, ShareError};
@@ -268,6 +269,50 @@ async fn vault_id_is_genesis_blob_hash() {
         vault.id(),
         VaultId::from_genesis_link(vault.manifest_link())
     );
+}
+
+#[tokio::test]
+async fn genesis_seals_to_every_device_with_its_own_reach() {
+    let blobs = MemBlobs::default();
+    let log = MemLog::default();
+    let alice_daemon = PrivateKey::generate();
+    let alice_laptop = PrivateKey::generate();
+    let alice_browser = PrivateKey::generate();
+    let hub = Did::from_key(&PrivateKey::generate().public());
+
+    // Alice's daemon creates a vault for her whole account: the laptop is
+    // dialed directly, the browser is reached through the hub.
+    let vault = Vault::init_with_shares(
+        "notes".to_string(),
+        &alice_daemon,
+        None,
+        &[
+            (alice_laptop.public(), None),
+            (alice_browser.public(), Some(hub.clone())),
+        ],
+        blobs.clone(),
+        log.clone(),
+    )
+    .await
+    .expect("init");
+
+    // Still a single genesis head — nothing for a hub to verify.
+    assert_eq!(vault.manifest().height(), 0);
+
+    // Each device's share keeps the route it was sealed with.
+    let shares = vault.manifest().shares();
+    let laptop = shares.get(&alice_laptop.public()).expect("laptop share");
+    assert_eq!(laptop.via(), None);
+    let browser = shares.get(&alice_browser.public()).expect("browser share");
+    assert_eq!(browser.via(), Some(&hub));
+
+    // And both devices can open it from genesis.
+    let id = vault.id();
+    for device in [&alice_laptop, &alice_browser] {
+        Vault::open(id, blobs.clone(), log.clone(), device)
+            .await
+            .expect("device opens the vault");
+    }
 }
 
 #[tokio::test]

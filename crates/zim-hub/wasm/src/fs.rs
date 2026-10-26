@@ -269,12 +269,15 @@ impl WasmFs {
             .await
             .map_err(|e| JsError::new(&format!("resolve hub key: {e}")))?;
         let owner_via = Some(zim_did::Did::from_key(&hub_key));
+        // The did.json doesn't say which keys are daemons vs browsers, so
+        // every device is sealed as directly dialed.
+        let shares: Vec<_> = keys.into_iter().map(|k| (k, None)).collect();
 
         let vault = Vault::init_with_shares(
             name,
             &pk,
             owner_via,
-            &keys,
+            &shares,
             HubBlobStore::new(base.clone()),
             HubVaultLog::new(base),
         )

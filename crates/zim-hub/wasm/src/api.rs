@@ -4,7 +4,7 @@
 //! body) in `build_request` and decodes its own response. [`call`] applies
 //! auth, runs the exchange (reqwest's wasm client is `fetch`-backed and
 //! `!Send`, so inside a `SendWrapper` to keep the outer future `Send`), maps
-//! non-2xx to `Err`, and decodes. Both the [`crate::fs`] vault stores and the
+//! non-2xx to `Err`, and decodes ([`try_call`] keeps the status). Both the [`crate::fs`] vault stores and the
 //! JS-facing [`HubClient`] dispatch through `call`, so routing + auth + error
 //! handling live in exactly one place.
 //!
@@ -17,7 +17,7 @@
 use base64::engine::general_purpose::{STANDARD as B64, URL_SAFE_NO_PAD};
 use base64::Engine;
 use bytes::Bytes;
-use reqwest::{Client, RequestBuilder};
+use reqwest::{Client, RequestBuilder, StatusCode};
 use serde::{Deserialize, Serialize};
 use url::Url;
 use wasm_bindgen::prelude::*;
@@ -80,11 +80,29 @@ pub(crate) trait HubRequest {
     fn decode(bytes: Bytes) -> Result<Self::Response, String>;
 }
 
-pub(crate) async fn call<R: HubRequest>(
+/// A failed [`try_call`]: the HTTP status when the hub answered non-2xx
+/// (`None` for transport/auth/decode failures), plus a readable message.
+pub(crate) struct CallError {
+    pub status: Option<StatusCode>,
+    pub message: String,
+}
+
+impl From<String> for CallError {
+    fn from(message: String) -> Self {
+        Self {
+            status: None,
+            message,
+        }
+    }
+}
+
+/// [`call`] with the failure's HTTP status kept, for callers that branch
+/// on it (a 404 blob is "not mirrored yet", not a broken hub).
+pub(crate) async fn try_call<R: HubRequest>(
     base: &Url,
     client: &Client,
     req: R,
-) -> Result<R::Response, String> {
+) -> Result<R::Response, CallError> {
     let builder = req.build_request(base, client);
     let builder = match R::AUTH {
         Auth::Bearer => builder.bearer_auth(mint_jwt(base)?),
@@ -97,14 +115,22 @@ pub(crate) async fn call<R: HubRequest>(
         if status.is_success() {
             Ok(bytes)
         } else {
-            Err(format!(
-                "HTTP {status}: {}",
-                String::from_utf8_lossy(&bytes)
-            ))
+            Err(CallError {
+                status: Some(status),
+                message: format!("HTTP {status}: {}", String::from_utf8_lossy(&bytes)),
+            })
         }
     })
     .await?;
-    R::decode(bytes)
+    Ok(R::decode(bytes)?)
+}
+
+pub(crate) async fn call<R: HubRequest>(
+    base: &Url,
+    client: &Client,
+    req: R,
+) -> Result<R::Response, String> {
+    try_call(base, client, req).await.map_err(|e| e.message)
 }
 
 /// `base` joined with an absolute hub path. Panics only on a malformed base,

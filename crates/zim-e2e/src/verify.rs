@@ -237,7 +237,21 @@ pub fn fuse_cross_node(harness: &Harness, deadline: Duration) -> Result<()> {
     )?;
     heads_converge(a, b, bin, "demo", deadline)?;
 
+    // Write, then stop the mount inside the commit debounce window: the
+    // stop must commit the staged write, and nothing may land after it
+    // (a late commit on the orphaned handle would fork the head).
+    std::fs::write(mp.join("before-stop.md"), "staged at stop")?;
     b.cli(bin, &["mount", "stop", "demo"], None)?;
+    let committed = b.cli(bin, &["vault", "cat", "demo", "/before-stop.md"], None)?;
+    if committed.trim_end() != "staged at stop" {
+        return Err(anyhow!("mount stop dropped the staged write"));
+    }
+    let head_at_stop = head(b, bin, "demo");
+    std::thread::sleep(Duration::from_secs(1));
+    if head(b, bin, "demo") != head_at_stop {
+        return Err(anyhow!("a commit landed after mount stop returned"));
+    }
+    println!("  ✓ {}'s mount stop commits staged writes", b.nick);
     Ok(())
 }
 

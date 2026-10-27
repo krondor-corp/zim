@@ -121,6 +121,19 @@ fn force_unmount_stale(path: &Path) {
     let _ = path;
 }
 
+/// Commit a mount's staged work, then drop it (dropping the session
+/// unmounts). Without the commit, the debounce timer would still fire a
+/// quiet window later on this now-orphaned handle — after HTTP writes have
+/// stopped routing through it, so a write in between chains off the same
+/// parent and forks the head. On shutdown the timer would instead die with
+/// the runtime, losing the work.
+async fn unmount(mountpoint: &Path, mount: LiveMount) {
+    if let Err(e) = mount.pending.flush().await {
+        tracing::warn!("commit {} before unmount: {e}", mountpoint.display());
+    }
+    drop(mount);
+}
+
 impl MountManager {
     pub fn new(peer: DaemonPeer, rt: Handle, home: &Path) -> Self {
         Self {
@@ -269,33 +282,30 @@ impl MountManager {
         self.start(record).await
     }
 
-    /// Unmount a live mount (keeps its registration).
     /// Unmount every live mount (registrations kept). Called on daemon
     /// shutdown so mounts spin down with the process instead of lingering
     /// as dead volumes; `start_auto` on the next boot brings the `--auto`
     /// ones back.
-    ///
-    /// Staged mount work is committed first: its debounce timer would
-    /// otherwise die with the runtime.
     pub async fn stop_all(&self) {
         let drained: Vec<_> = self.live.lock().unwrap().drain().collect();
         for (mountpoint, mount) in drained {
-            if let Err(e) = mount.pending.flush().await {
-                tracing::warn!("commit {} before unmount: {e}", mountpoint.display());
-            }
-            // Dropping the LiveMount drops its BackgroundSession → unmount.
             tracing::info!("unmounting {} (daemon shutdown)", mountpoint.display());
+            unmount(&mountpoint, mount).await;
         }
     }
 
-    pub fn stop(&self, mountpoint: &Path) -> anyhow::Result<()> {
-        match self.live.lock().unwrap().remove(mountpoint) {
-            Some(_) => Ok(()), // drop unmounts
+    /// Unmount a live mount (keeps its registration).
+    pub async fn stop(&self, mountpoint: &Path) -> anyhow::Result<()> {
+        let mount = self.live.lock().unwrap().remove(mountpoint);
+        match mount {
+            Some(mount) => {
+                unmount(mountpoint, mount).await;
+                Ok(())
+            }
             None => anyhow::bail!("not mounted: {}", mountpoint.display()),
         }
     }
 
-    /// Unmount (if live) and drop the registration.
     /// Update a registration's `auto_mount` / `read_only` flags in
     /// place. `read_only` changes on a live mount trigger a remount
     /// (the FUSE session is created with the flag baked in).
@@ -321,7 +331,7 @@ impl MountManager {
         self.store.upsert(record.clone())?;
         let was_live = self.live.lock().unwrap().contains_key(mountpoint);
         if ro_changed && was_live {
-            self.stop(mountpoint)?;
+            self.stop(mountpoint).await?;
             self.start(record.clone()).await?;
         }
         Ok(MountStatus {
@@ -333,8 +343,12 @@ impl MountManager {
         })
     }
 
-    pub fn remove(&self, mountpoint: &Path) -> anyhow::Result<bool> {
-        self.live.lock().unwrap().remove(mountpoint);
+    /// Unmount (if live) and drop the registration.
+    pub async fn remove(&self, mountpoint: &Path) -> anyhow::Result<bool> {
+        let mount = self.live.lock().unwrap().remove(mountpoint);
+        if let Some(mount) = mount {
+            unmount(mountpoint, mount).await;
+        }
         Ok(self.store.remove(mountpoint)?)
     }
 

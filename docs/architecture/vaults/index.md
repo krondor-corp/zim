@@ -34,7 +34,9 @@ see them) and run steps 5–6 once the mount has been quiet for ~500 ms (capped
 at 5 s), so an editor's multi-syscall atomic save — probe file, backup rename,
 empty create, write, unlink — becomes one version rather than a burst of
 announced intermediate states. The mount manager commits staged work before
-it reloads the handle to a remote head or unmounts, and an HTTP write routed
+it reloads the handle to a remote head or unmounts (`mount stop`, `mount
+remove`, daemon shutdown) — otherwise the debounce timer would commit later on
+an orphaned handle and fork the head — and an HTTP write routed
 through a mounted handle sweeps it into its own save.
 
 ## Reading Order

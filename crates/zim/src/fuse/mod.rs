@@ -9,6 +9,10 @@
 //! single in-process writer advances the chain linearly instead of racing
 //! concurrent opens into a silent fork.
 //!
+//! Mutations are *staged* on that handle and committed by [`PendingCommit`]
+//! once the mount goes quiet, so an editor's multi-syscall atomic save
+//! (rename → create → write → flush → unlink) is one version, not five.
+//!
 //! Reconciliation with *external* writers (the daemon's own HTTP API, or a
 //! remote sync advancing the head) is [`crate::mount::MountManager`]'s job;
 //! this module is the filesystem mechanism. It stays deliberately
@@ -18,10 +22,12 @@
 pub mod inode_table;
 
 mod cache;
+mod commit;
 mod fuse_fs;
 
 pub use cache::{
     CacheStats, CachedAttr, CachedContent, CachedDirEntry, FileCache, FileCacheConfig,
 };
+pub use commit::{OnCommit, PendingCommit};
 pub use fuse_fs::{spawn_mount, FuseFs};
 pub use fuser::BackgroundSession;

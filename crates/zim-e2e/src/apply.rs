@@ -3,12 +3,18 @@
 //! user takes, so a green apply is an end-to-end exercise of the
 //! stack, not a simulation of one.
 
+use std::io::Write;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 
 use crate::fixtures::Fixture;
 use crate::harness::Harness;
+
+/// How long a `requires = "fuse"` vault read waits for the mount's write
+/// to commit — mounts coalesce a write burst into one commit once quiet.
+const FUSE_COMMIT_DEADLINE: Duration = Duration::from_secs(5);
 
 /// Compare file-ish content the way shells do: trailing-newline
 /// differences are not disagreements.
@@ -109,10 +115,26 @@ fn apply_one(harness: &Harness, fixture: &Fixture, default_nick: &str) -> Result
             path,
             content,
             node,
-            requires: _,
+            requires,
         } => {
             let node = harness.node(&nick(node))?;
-            let actual = node.cli(bin, &["vault", "cat", vault, path], None)?;
+            let read = || node.cli(bin, &["vault", "cat", vault, path], None);
+            // Settled = readable and (if given) holding the expected content.
+            // Before a mount's write commits, the path may not exist yet.
+            let settled = |r: &Result<String>| match (r, content) {
+                (Ok(actual), Some(expected)) => content_eq(actual, expected),
+                (Ok(_), None) => true,
+                (Err(_), _) => false,
+            };
+            let mut result = read();
+            if requires.as_deref() == Some("fuse") {
+                let start = Instant::now();
+                while !settled(&result) && start.elapsed() < FUSE_COMMIT_DEADLINE {
+                    std::thread::sleep(Duration::from_millis(250));
+                    result = read();
+                }
+            }
+            let actual = result?;
             if let Some(expected) = content {
                 if !content_eq(&actual, expected) {
                     return Err(anyhow!(
@@ -182,6 +204,36 @@ fn apply_one(harness: &Harness, fixture: &Fixture, default_nick: &str) -> Result
             std::fs::write(&full, content)
                 .map_err(|e| anyhow!("fuse_write {}: {e}", full.display()))?;
             println!("  fuse_write {path}: ok");
+        }
+        Fixture::FuseAtomicSave {
+            mount_point: mp,
+            path,
+            content,
+        } => {
+            let target = mount_point(harness, mp).join(path);
+            let dir = target
+                .parent()
+                .ok_or_else(|| anyhow!("fuse_atomic_save {path}: no parent dir"))?;
+            let backup = target.with_file_name(format!(
+                "{}~",
+                target.file_name().unwrap_or_default().to_string_lossy()
+            ));
+            let probe = dir.join("4913");
+            let step =
+                |what: &str, e: std::io::Error| anyhow!("fuse_atomic_save {path}: {what}: {e}");
+            std::fs::write(&probe, b"").map_err(|e| step("probe", e))?;
+            std::fs::remove_file(&probe).map_err(|e| step("probe cleanup", e))?;
+            if target.exists() {
+                std::fs::rename(&target, &backup).map_err(|e| step("backup rename", e))?;
+            }
+            let mut f = std::fs::File::create(&target).map_err(|e| step("create", e))?;
+            f.write_all(content.as_bytes())
+                .map_err(|e| step("write", e))?;
+            drop(f);
+            if backup.exists() {
+                std::fs::remove_file(&backup).map_err(|e| step("backup cleanup", e))?;
+            }
+            println!("  fuse_atomic_save {path}: ok");
         }
         Fixture::FuseMv {
             mount_point: mp,

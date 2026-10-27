@@ -17,6 +17,8 @@
 #   fuse_ls      - List a directory on a FUSE mount
 #   fuse_read    - Read a file on a FUSE mount (optionally verify content)
 #   fuse_write   - Write a file on a FUSE mount
+#   fuse_atomic_save - Save a file on a FUSE mount the way vim's :w does
+#                  (probe file, backup rename, create + write, cleanup)
 #   fuse_mv      - Move/rename a file within a FUSE mount
 #   fuse_mv_in   - Move a file from outside into a FUSE mount
 #   fuse_mv_out  - Move a file from a FUSE mount to outside
@@ -190,6 +192,29 @@ type = "fuse_read"
 mount_point = "mnt-demo"
 path = ".fuse-test-renamed.txt"
 content = "overwritten"
+
+# --- Editor atomic save (vim's :w) — a burst of probe/rename/create/write/
+# unlink that the mount coalesces into one commit. The vault must hold the
+# full saved content, never the intermediate empty create. ---
+[[fixture]]
+type = "fuse_atomic_save"
+mount_point = "mnt-demo"
+path = ".fuse-test-renamed.txt"
+content = "saved like vim"
+
+[[fixture]]
+type = "fuse_read"
+mount_point = "mnt-demo"
+path = ".fuse-test-renamed.txt"
+content = "saved like vim"
+
+[[fixture]]
+type = "vault_read"
+vault = "demo"
+path = "/.fuse-test-renamed.txt"
+content = "saved like vim"
+node = "alice"
+requires = "fuse"
 
 # Clean up.
 [[fixture]]

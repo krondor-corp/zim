@@ -29,6 +29,13 @@ decrypted working tree, blob storage, and a history index.
 
 Ordinary HTTP operations reopen the canonical head per request. A FUSE mount
 retains an `Arc<RwLock<Vault<...>>>` so mounted writes share one writer.
+Mounted writes apply step 4 in memory immediately (reads through the mount
+see them) and run steps 5–6 once the mount has been quiet for ~500 ms (capped
+at 5 s), so an editor's multi-syscall atomic save — probe file, backup rename,
+empty create, write, unlink — becomes one version rather than a burst of
+announced intermediate states. The mount manager commits staged work before
+it reloads the handle to a remote head or unmounts, and an HTTP write routed
+through a mounted handle sweeps it into its own save.
 
 ## Reading Order
 

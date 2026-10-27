@@ -85,6 +85,14 @@ pub enum Fixture {
         path: String,
         content: String,
     },
+    /// Save `path` the way vim's `:w` does — writability probe, backup
+    /// rename, fresh create + write, backup cleanup — a multi-syscall
+    /// burst a single `fuse_write` never exercises.
+    FuseAtomicSave {
+        mount_point: String,
+        path: String,
+        content: String,
+    },
     FuseMv {
         mount_point: String,
         from: String,
@@ -120,6 +128,7 @@ impl Fixture {
                 | Fixture::FuseLs { .. }
                 | Fixture::FuseRead { .. }
                 | Fixture::FuseWrite { .. }
+                | Fixture::FuseAtomicSave { .. }
                 | Fixture::FuseMv { .. }
                 | Fixture::FuseMvIn { .. }
                 | Fixture::FuseMvOut { .. }

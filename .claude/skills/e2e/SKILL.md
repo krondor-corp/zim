@@ -87,8 +87,11 @@ declarative fixture types in `fixtures.toml`:
 - `mount` / `mount_verify` / `unmount` — lifecycle
 - `fuse_ls`, `fuse_read`, `fuse_write`, `fuse_mv`, `fuse_mv_in`,
   `fuse_mv_out`, `fuse_rm` — filesystem ops through the mountpoint
+- `fuse_atomic_save` — vim-style `:w` burst (probe file, backup rename,
+  create + write, cleanup) that must land as the full content
 - `vault_read` — cross-checks a FUSE write landed in the encrypted vault
-  (API↔FUSE coherence)
+  (API↔FUSE coherence). With `requires = "fuse"` it retries for a few
+  seconds: mounts commit a write burst once quiet, not per syscall
 
 **Availability needs both** (a) the platform lib (`/Library/Filesystems/macfuse.fs`
 on macOS, `/dev/fuse` on Linux) and (b) a daemon built with the fuse feature

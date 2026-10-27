@@ -178,11 +178,25 @@ fixture_mv() { # vault from to node
     fi
 }
 
-fixture_vault_read() { # vault path content node
-    local vault="$1" path="$2" expected="$3" node="$4"
+fixture_vault_read() { # vault path content node requires
+    local vault="$1" path="$2" expected="$3" node="$4" requires="$5"
     echo -e "${BLUE}vault_read: $vault:$path (on $node)${NC}"
-    local actual
-    if ! actual="$(fix_cli "$node" vault cat "$vault" "$path" 2>/dev/null)"; then
+    local actual ok=false tries=0
+    # Mounts commit a write burst once quiet — give a FUSE write time to land
+    # (until then the path may not exist yet, or hold older content).
+    local max_tries=1
+    [[ "$requires" == "fuse" ]] && max_tries=20
+    while [[ $tries -lt $max_tries ]]; do
+        if actual="$(fix_cli "$node" vault cat "$vault" "$path" 2>/dev/null)"; then
+            ok=true
+            [[ -z "$expected" || "$actual" == "$(printf '%b' "$expected")" ]] && break
+        else
+            ok=false
+        fi
+        tries=$((tries + 1))
+        [[ $tries -lt $max_tries ]] && sleep 0.25
+    done
+    if ! $ok; then
         echo -e "  ${RED}FAILED: could not read${NC}"
         return 1
     fi
@@ -286,6 +300,25 @@ fixture_fuse_write() { # mount_point path content
         echo -e "  ${GREEN}OK${NC}"
     else
         echo -e "  ${RED}FAILED: could not write $mp/$2${NC}"
+        return 1
+    fi
+}
+
+fixture_fuse_atomic_save() { # mount_point path content
+    # vim's `:w`: writability probe, backup rename, create + write, cleanup.
+    local mp target
+    mp="$(fix_mount_point "$1")"
+    target="$mp/$2"
+    echo -e "${BLUE}fuse_atomic_save: $2${NC}"
+    if : > "$(dirname "$target")/4913" 2>/dev/null \
+        && rm "$(dirname "$target")/4913" \
+        && { [[ ! -e "$target" ]] || mv "$target" "$target~"; } \
+        && printf '%b' "$3" > "$target" \
+        && rm -f "$target~"; then
+        sync
+        echo -e "  ${GREEN}OK${NC}"
+    else
+        echo -e "  ${RED}FAILED: could not atomic-save $target${NC}"
         return 1
     fi
 }
@@ -441,13 +474,14 @@ fixtures_apply() {
             dir)          fixture_dir "$vault" "$path" "$node" || errors=$((errors + 1)) ;;
             share)        fixture_share "$vault" "$peer" "$node" || errors=$((errors + 1)) ;;
             mv)           fixture_mv "$vault" "$from" "$to" "$node" || errors=$((errors + 1)) ;;
-            vault_read)   fixture_vault_read "$vault" "$path" "$content" "$node" || errors=$((errors + 1)) ;;
+            vault_read)   fixture_vault_read "$vault" "$path" "$content" "$node" "$requires" || errors=$((errors + 1)) ;;
             mount)        fixture_mount "$vault" "$mount_point" "$node" || errors=$((errors + 1)) ;;
             mount_verify) fixture_mount_verify "$mount_point" || errors=$((errors + 1)) ;;
             unmount)      fixture_unmount "$vault" "$node" || errors=$((errors + 1)) ;;
             fuse_ls)      fixture_fuse_ls "$mount_point" "$path" || errors=$((errors + 1)) ;;
             fuse_read)    fixture_fuse_read "$mount_point" "$path" "$content" || errors=$((errors + 1)) ;;
             fuse_write)   fixture_fuse_write "$mount_point" "$path" "$content" || errors=$((errors + 1)) ;;
+            fuse_atomic_save) fixture_fuse_atomic_save "$mount_point" "$path" "$content" || errors=$((errors + 1)) ;;
             fuse_mv)      fixture_fuse_mv "$mount_point" "$from" "$to" || errors=$((errors + 1)) ;;
             fuse_mv_in)   fixture_fuse_mv_in "$mount_point" "$path" "$content" || errors=$((errors + 1)) ;;
             fuse_mv_out)  fixture_fuse_mv_out "$mount_point" "$path" || errors=$((errors + 1)) ;;

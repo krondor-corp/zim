@@ -265,7 +265,10 @@ impl MountManager {
         Ok(())
     }
 
-    /// Persist a new mount registration and start it.
+    /// Persist a new mount registration and start it. Refuses a mountpoint
+    /// that's already registered: re-adding must not silently reset its
+    /// flags. If the mount fails to start, the registration is dropped again
+    /// so a failed `add` leaves nothing behind.
     pub async fn add(
         &self,
         vault_id: VaultId,
@@ -279,8 +282,20 @@ impl MountManager {
             auto_mount,
             read_only,
         };
-        self.store.upsert(record.clone())?;
-        self.start(record).await
+        if !self.store.insert(record.clone())? {
+            let path = record.mountpoint.display();
+            anyhow::bail!(
+                "a mount is already registered at {path}: use `zim mount start {path}` \
+                 to re-mount it, `zim mount set {path}` to edit it, or \
+                 `zim mount remove {path}` then `zim mount add` to replace it"
+            );
+        }
+        let mountpoint = record.mountpoint.clone();
+        if let Err(e) = self.start(record).await {
+            self.store.remove(&mountpoint)?;
+            return Err(e);
+        }
+        Ok(())
     }
 
     /// Re-mount an existing registration with its persisted flags. Errors if
@@ -288,9 +303,7 @@ impl MountManager {
     pub async fn start_registered(&self, mountpoint: &Path) -> anyhow::Result<MountStatus> {
         let record = self
             .store
-            .load()
-            .into_iter()
-            .find(|r| r.mountpoint == mountpoint)
+            .get(mountpoint)
             .ok_or_else(|| anyhow::anyhow!("no mount registered at {}", mountpoint.display()))?;
         self.start(record.clone()).await?;
         Ok(MountStatus {
@@ -345,9 +358,7 @@ impl MountManager {
     ) -> anyhow::Result<MountStatus> {
         let mut record = self
             .store
-            .load()
-            .into_iter()
-            .find(|r| r.mountpoint == mountpoint)
+            .get(mountpoint)
             .ok_or_else(|| anyhow::anyhow!("no mount registered at {}", mountpoint.display()))?;
         if let Some(auto) = auto_mount {
             record.auto_mount = auto;

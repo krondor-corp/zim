@@ -221,7 +221,9 @@ fixture_mount() { # vault mount_point node
     mp="$(fix_mount_point "$2")"
     echo -e "${BLUE}mount: $vault at $mp (on $node)${NC}"
     mkdir -p "$mp" 2>/dev/null || true
-    if fix_cli "$node" mount add "$vault" "$mp" >/dev/null 2>&1; then
+    # A re-run finds the registration from last time: start it instead.
+    if fix_cli "$node" mount add "$vault" "$mp" >/dev/null 2>&1 \
+        || fix_cli "$node" mount start "$mp" >/dev/null 2>&1; then
         sleep 1
         echo -e "  ${GREEN}mounted${NC}"
     else

@@ -50,6 +50,23 @@ impl MountStore {
         std::fs::write(&self.path, json)
     }
 
+    /// The record registered at `mountpoint`, if any.
+    pub fn get(&self, mountpoint: &Path) -> Option<MountRecord> {
+        self.load().into_iter().find(|r| r.mountpoint == mountpoint)
+    }
+
+    /// Register a new record. Returns `false` (and writes nothing) if its
+    /// mountpoint is already taken — replacing goes through `remove` first.
+    pub fn insert(&self, record: MountRecord) -> io::Result<bool> {
+        let mut all = self.load();
+        if all.iter().any(|r| r.mountpoint == record.mountpoint) {
+            return Ok(false);
+        }
+        all.push(record);
+        self.save_all(&all)?;
+        Ok(true)
+    }
+
     /// Insert or replace the record for its mountpoint.
     pub fn upsert(&self, record: MountRecord) -> io::Result<()> {
         let mut all = self.load();
@@ -66,5 +83,63 @@ impl MountStore {
         let removed = all.len() != before;
         self.save_all(&all)?;
         Ok(removed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zim_core::linked_data::Hash;
+
+    fn vault(seed: u8) -> VaultId {
+        VaultId::from_hash(Hash::new(&[seed; 32]))
+    }
+
+    fn record(vault_id: VaultId, mountpoint: &str, auto_mount: bool) -> MountRecord {
+        MountRecord {
+            vault_id,
+            mountpoint: PathBuf::from(mountpoint),
+            auto_mount,
+            read_only: false,
+        }
+    }
+
+    #[test]
+    fn alice_cannot_register_a_second_mount_over_her_notes() {
+        let home = tempfile::tempdir().unwrap();
+        let store = MountStore::new(home.path());
+        let notes = vault(1);
+        let photos = vault(2);
+
+        // Alice mounts her notes with auto-mount on.
+        assert!(store.insert(record(notes, "/mnt/notes", true)).unwrap());
+
+        // Re-adding the same path — even with another vault — is refused...
+        assert!(!store.insert(record(notes, "/mnt/notes", false)).unwrap());
+        assert!(!store.insert(record(photos, "/mnt/notes", false)).unwrap());
+
+        // ...and the original registration (flags included) is untouched.
+        let kept = store.get(Path::new("/mnt/notes")).unwrap();
+        assert_eq!(kept.vault_id, notes);
+        assert!(kept.auto_mount);
+        assert_eq!(store.load().len(), 1);
+    }
+
+    #[test]
+    fn alice_replaces_a_mount_by_removing_then_adding() {
+        let home = tempfile::tempdir().unwrap();
+        let store = MountStore::new(home.path());
+        let notes = vault(1);
+        let photos = vault(2);
+        store.insert(record(notes, "/mnt/shared", false)).unwrap();
+
+        // Remove frees the path for a fresh registration.
+        assert!(store.remove(Path::new("/mnt/shared")).unwrap());
+        assert!(store.insert(record(photos, "/mnt/shared", false)).unwrap());
+
+        assert_eq!(
+            store.get(Path::new("/mnt/shared")).unwrap().vault_id,
+            photos
+        );
     }
 }

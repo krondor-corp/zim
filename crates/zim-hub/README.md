@@ -26,7 +26,7 @@ Phase 2 onward (sync verification, DID hosting, escrow service, browse + history
 make hub
 ```
 
-Starts the hub on `http://localhost:17190` in the dev tmux session (window `hub`), with `cargo watch` over the hub + shared sync crates. `./bin/dev hub up` is the same thing; `cargo run -p zim-hub` runs it bare in the foreground (build the SPA first: `make build-web`).
+Starts the hub in this worktree's dev tmux session (window `hub`) on its confit port: `http://127.0.0.1:17190` on `main`, `17191`–`17199` in other worktrees (`./bin/dev ports`), with `cargo watch` over the hub + shared sync crates. `./bin/dev hub up` is the same thing; `cargo run -p zim-hub` runs it bare in the foreground (build the SPA first: `make build-web`).
 
 Defaults:
 - `ZIM_HUB_LISTEN=127.0.0.1:17190` — HTTP bind address

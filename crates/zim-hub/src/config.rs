@@ -57,7 +57,7 @@ mod auth;
 pub use auth::{AuthConfig, AuthProvider, GoogleOAuth};
 
 // Dev port convention: all zim dev services live in the 17xxx band;
-// the hub owns 1719x (see bin/dev_/nodes.toml for the band map).
+// the hub owns 1719x (see confit.toml for the band map).
 const DEFAULT_LISTEN: &str = "127.0.0.1:17190";
 const DEFAULT_HOME: &str = "./data/zim-hub";
 const CONFIG_FILE: &str = "hub-config.toml";

@@ -10,7 +10,7 @@ install: ## Install dependencies
 	@bundle install
 
 # Dev port convention: all zim dev services live in the 17xxx band
-# (see bin/dev_/nodes.toml). The site owns 1720x, livereload 1721x —
+# (see confit.toml). The site owns 1720x, livereload 1721x —
 # separate bands so parallel worktrees can take +N slots in each
 # without cross-colliding.
 SITE_PORT ?= 17200

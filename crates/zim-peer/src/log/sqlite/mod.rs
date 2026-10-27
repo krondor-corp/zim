@@ -50,7 +50,10 @@ impl VaultLog for SqliteVaultLog {
                     "invalid hash in log: {s}"
                 )))
             })?;
-            links.push(Link::new(zim_core::linked_data::LD_RAW_CODEC, hash));
+            // Log entries are always manifests, which are CBOR blobs: rebuild
+            // the link with the codec `put_cbor` minted, so a head read back
+            // equals the `manifest_link` that was appended.
+            links.push(Link::new(zim_core::linked_data::LD_CBOR_CODEC, hash));
         }
         Ok(links)
     }
@@ -120,5 +123,24 @@ mod tests {
 
         let vaults = log.list_vaults().await.unwrap();
         assert!(vaults.contains(&id));
+    }
+
+    #[tokio::test]
+    async fn alices_saved_manifest_link_is_the_head_she_reads_back() {
+        let blobs = crate::BlobsProvider::memory().await.unwrap();
+        let log = SqliteVaultLog::in_memory().unwrap();
+        let alice = zim_crypto::PrivateKey::generate();
+
+        // Alice creates a vault: the genesis link round-trips unchanged.
+        let mut vault = crate::Vault::init("notes".into(), &alice, blobs, log)
+            .await
+            .unwrap();
+        assert_eq!(vault.head().await.unwrap().link, *vault.manifest_link());
+
+        // She saves locally; the log's head is exactly her new manifest link,
+        // so a refresh (or a mount's reconcile poll) sees nothing to reload.
+        vault.save().await.unwrap();
+        assert_eq!(vault.head().await.unwrap().link, *vault.manifest_link());
+        assert!(!vault.refresh().await.unwrap());
     }
 }

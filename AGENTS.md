@@ -4,6 +4,8 @@ zim: end-to-end encrypted, peer-to-peer storage built on iroh-blobs with ChaCha2
 
 ## Quick Reference
 
+Required tools: cargo, [confit](https://confit.krondor.org) >= 0.5 (dev ports; `curl -fsSL https://raw.githubusercontent.com/krondor-corp/confit/main/install.sh | bash`), tmux + cargo-watch (dev env), trunk (hub SPA).
+
 ```bash
 cargo build                  # Build all crates
 cargo test                   # Run all tests
@@ -12,6 +14,7 @@ cargo fmt                    # Format code
 cargo fmt -- --check         # Check formatting
 make hub                     # Start the hub in the dev tmux session (hot reload)
 make dev                     # Start 2-node dev environment in tmux
+./bin/dev ports              # This worktree's dev ports/tmux session (per-worktree via confit)
 make e2e                     # One-shot e2e: clean start, fixtures, sync checks
 cargo run --bin zim -- --help # Run the CLI
 ```

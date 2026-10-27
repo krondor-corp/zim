@@ -15,11 +15,20 @@ set -o nounset
 
 # Get project root (parent of bin directory)
 PROJECT_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
+
+# confit is a required dev tool (like cargo): it owns the dev port map
+# (confit.toml `[ports]`) and the styled log lines below.
+if ! command -v confit &>/dev/null; then
+    printf 'confit not installed (required, like cargo). Install:\n' >&2
+    printf '  curl -fsSL https://raw.githubusercontent.com/krondor-corp/confit/main/install.sh | bash\n' >&2
+    exit 1
+fi
+
 # Styled output helpers; the ERRORS tally drives exit codes for
 # multi-step commands.
-log()  { printf '\033[34mℹ\033[0m %s\n' "$*"; }
-ok()   { printf '\033[32m✓\033[0m %s\n' "$*"; }
-err()  { printf '\033[31m✗\033[0m %s\n' "$*" >&2; }
+log()  { confit log "$*"; }
+ok()   { confit log --ok "$*"; }
+err()  { confit log --err "$*"; }
 ERRORS=0
 print_header() { log "=== $1 ==="; }
 check_result() {
@@ -37,12 +46,13 @@ print_summary() {
 PROJECT_NAME="zim"
 MINIO_CONTAINER_NAME="${PROJECT_NAME}-minio"
 MINIO_VOLUME_NAME="${PROJECT_NAME}-minio-data"
-# Dev ports follow the project convention (see bin/dev_/nodes.toml):
-# everything lives in the 17xxx range so nothing collides with common
-# services (minio's native 9000 is ClickHouse's port, for one).
-# Daemons sit at 1717x, infra at 1718x, the hub at 1719x. Override via env if needed.
-MINIO_API_PORT=${MINIO_API_PORT:-17180}
-MINIO_CONSOLE_PORT=${MINIO_CONSOLE_PORT:-17181}
+# Ports are confit.toml's `ports.infra.*`: the same on every branch, so
+# every worktree shares this one container (each hub gets its own
+# bucket — see `bucket`). They live in the project's 171xx band so
+# nothing collides with common services (minio's native 9000 is
+# ClickHouse's port, for one). Band map: bin/dev_/nodes.toml.
+MINIO_API_PORT=${MINIO_API_PORT:-$(cd "$PROJECT_ROOT" && confit resolve ports.infra.minio_api)}
+MINIO_CONSOLE_PORT=${MINIO_CONSOLE_PORT:-$(cd "$PROJECT_ROOT" && confit resolve ports.infra.minio_console)}
 MINIO_ROOT_USER=minioadmin
 MINIO_ROOT_PASSWORD=minioadmin
 # Fully-qualified so podman doesn't prompt for a registry.
@@ -119,11 +129,10 @@ function up {
     # Check if container exists (running or stopped)
     if $CONTAINER_RUNTIME ps -a --format '{{.Names}}' | grep -q "^${MINIO_CONTAINER_NAME}$"; then
         # A container created before a port change keeps its old
-        # bindings forever — recreate it (the data volume survives).
-        local bound_port
-        bound_port=$($CONTAINER_RUNTIME inspect --format '{{(index (index .HostConfig.PortBindings "9000/tcp") 0).HostPort}}' $MINIO_CONTAINER_NAME 2>/dev/null || true)
-        if [[ -n "$bound_port" && "$bound_port" != "$MINIO_API_PORT" ]]; then
-            log "Container bound to :$bound_port but standard is :$MINIO_API_PORT — recreating (volume kept)..."
+        # bind address forever — recreate it (the data volume survives).
+        if ! $CONTAINER_RUNTIME inspect --format '{{range .Config.Env}}{{println .}}{{end}}' $MINIO_CONTAINER_NAME 2>/dev/null \
+            | grep -qx "RUSTFS_ADDRESS=:${MINIO_API_PORT}"; then
+            log "Container doesn't listen on :$MINIO_API_PORT — recreating (volume kept)..."
             $CONTAINER_RUNTIME rm -f $MINIO_CONTAINER_NAME >/dev/null
         # Container exists - check if it's running
         elif $CONTAINER_RUNTIME ps --format '{{.Names}}' | grep -q "^${MINIO_CONTAINER_NAME}$"; then
@@ -211,30 +220,43 @@ function s3 {
         "$@" "http://localhost:${MINIO_API_PORT}${path}"
 }
 
-# Ensure the zim-blobs bucket exists
+# Ensure a bucket exists (default: zim-blobs).
 function ensure_bucket {
-    echo "Ensuring bucket '${MINIO_BUCKET_NAME}' exists..."
+    local bucket="${1:-$MINIO_BUCKET_NAME}"
+    echo "Ensuring bucket '${bucket}' exists..."
     local code
-    code=$(s3 HEAD "/${MINIO_BUCKET_NAME}")
+    code=$(s3 HEAD "/${bucket}")
     if [[ "$code" == "200" ]]; then
-        ok "Bucket '${MINIO_BUCKET_NAME}' already exists."
+        ok "Bucket '${bucket}' already exists."
         return 0
     fi
-    code=$(s3 PUT "/${MINIO_BUCKET_NAME}")
+    code=$(s3 PUT "/${bucket}")
     if [[ "$code" == "200" ]]; then
-        ok "Created bucket '${MINIO_BUCKET_NAME}'."
+        ok "Created bucket '${bucket}'."
     else
-        err "Could not create bucket '${MINIO_BUCKET_NAME}' (HTTP $code)."
+        err "Could not create bucket '${bucket}' (HTTP $code)."
         exit 1
     fi
 }
 
-# List the objects in the dev bucket (what the hub has mirrored).
+# Create a bucket in the running store. `./bin/dev hub up` uses this
+# for its per-worktree bucket (zim-blobs-<branch slug>).
+function bucket {
+    if [[ -z "${1:-}" ]]; then
+        err "usage: $0 bucket <name>"
+        exit 1
+    fi
+    check_runtime
+    ensure_bucket "$1"
+}
+
+# List the objects in a bucket (default zim-blobs): what a hub has mirrored.
 function ls {
     check_runtime
+    local bucket="${1:-$MINIO_BUCKET_NAME}"
     curl -s --aws-sigv4 "aws:amz:us-east-1:s3" \
         --user "$MINIO_ROOT_USER:$MINIO_ROOT_PASSWORD" \
-        "http://localhost:${MINIO_API_PORT}/${MINIO_BUCKET_NAME}?list-type=2" \
+        "http://localhost:${MINIO_API_PORT}/${bucket}?list-type=2" \
         | grep -oE '<Key>[^<]+</Key>' | sed -E 's#</?Key>##g'
 }
 
@@ -260,16 +282,21 @@ function start_minio_container {
     fi
     $CONTAINER_RUNTIME volume create $MINIO_VOLUME_NAME || true
 
-    # OS-optimized container settings
+    # The server binds the dev ports itself (not its native 9000/9001):
+    # Linux runs with `--network host`, where `--publish` is ignored, so
+    # a remap would leave it on 9000. Publishing port-to-port keeps
+    # bridge networking (macOS) working the same way.
     $CONTAINER_RUNTIME run \
         --name $MINIO_CONTAINER_NAME \
         $NETWORK_FLAGS \
-        --publish $MINIO_API_PORT:9000 \
-        --publish $MINIO_CONSOLE_PORT:9001 \
+        --publish $MINIO_API_PORT:$MINIO_API_PORT \
+        --publish $MINIO_CONSOLE_PORT:$MINIO_CONSOLE_PORT \
         --volume $MINIO_VOLUME_NAME:/data \
+        --env RUSTFS_ADDRESS=:$MINIO_API_PORT \
+        --env RUSTFS_CONSOLE_ADDRESS=:$MINIO_CONSOLE_PORT \
         --env RUSTFS_ACCESS_KEY=$MINIO_ROOT_USER \
         --env RUSTFS_SECRET_KEY=$MINIO_ROOT_PASSWORD \
-        --health-cmd="curl -f http://localhost:9000/health || exit 1" \
+        --health-cmd="curl -f http://localhost:$MINIO_API_PORT/health || exit 1" \
         --health-interval=5s \
         --health-timeout=5s \
         --health-retries=5 \
@@ -367,7 +394,9 @@ function help {
     echo "  endpoint           - Print the S3 API endpoint URL"
     echo "  console            - Open the web console in a browser"
     echo "  status             - Check container status and connection"
-    echo "  ls                 - List objects in the ${MINIO_BUCKET_NAME} bucket"
+    echo "  bucket <name>      - Create a bucket (hub up: one per worktree)"
+    echo "  ls [bucket]        - List objects in a bucket (default ${MINIO_BUCKET_NAME};"
+    echo "                       a worktree's hub uses the one in ./bin/dev ports)"
     echo "  help               - Show this help message"
     echo ""
     echo "Runtime: podman preferred, docker otherwise; force with ZIM_CONTAINER_RUNTIME."
@@ -384,7 +413,7 @@ CMD=${1:-help}
 shift || true  # Shift to remove command from arguments
 
 case "$CMD" in
-up | down | endpoint | console | status | ls | help)
+up | down | endpoint | console | status | bucket | ls | help)
     $CMD "$@"
     ;;
 *)

@@ -3,19 +3,21 @@
 # Each section name IS the peer's nick — used as `alice ...` /
 # `bob ...` after `eval "$(./bin/dev shell)"`, as the tmux pane
 # label, and as the data directory under `$DATA_DIR/<nick>/`.
-# Ports are in the 17xxx range so they don't collide with anything
-# common. ALL dev services live in this band:
-#   1717x  daemons — default 17171, dev nodes from 17172
-#   1718x  infra   — minio API 17180, minio console 17181
-#   1719x  hub     — 17190
-#   1720x  site       — web/ Jekyll 17200
-#   1721x  livereload — site livereload 17210
-#   1722x  e2e        — zim-e2e harness daemons (17220+i; hermetic, own data/e2e/)
-# Ports are fixed today: only one worktree can run the dev env at a
-# time. Per-worktree port slots are planned in KRO-238.
+#
+# Ports are NOT set here: each node's daemon port comes from its
+# `ports.services.<nick>` lane in confit.toml (exported as
+# ZIM_DEV_<NICK>_PORT by `[env.dev]`). Adding a node = a section here
+# + a lane and env var there. Band map (17100 + offset/lane):
+#   1711x  alice   — 17110 on main, 17111..17119 for worktree slots 1-9
+#   1712x  bob     — 17120 on main, 17121..17129
+#   1718x  infra   — minio API 17180, console 17181 (shared by every worktree)
+#   1719x  hub     — 17190 on main, 17191..17199
+# Outside the band (one at a time, not per worktree): the web/ site on
+# 17200, its livereload on 17210.
+# Slot +N belongs to worktree N (base repo on `main` = +0); see
+# `./bin/dev ports`. The standalone daemon default is 17171 (outside
+# the lanes). `make e2e` picks free ports at boot.
 
 [alice]
-api_port = 17172
 
 [bob]
-api_port = 17173

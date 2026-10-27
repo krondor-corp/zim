@@ -17,8 +17,11 @@ help: ## Show this help message
 	@echo '  dev            Spawn 2 daemons in tmux for local sync testing.'
 	@echo '                 Subcommands pass through: `make dev hub up`,'
 	@echo '                 `make dev status`; flags via ARGS="-b --fuse".'
+	@echo '                 Ports + tmux session are per worktree (needs confit):'
+	@echo '                 `make dev ports` shows this one'"'"'s.'
 	@echo '  e2e            Hermetic e2e verdict (zim-e2e crate): daemons on'
-	@echo '                 1722x, fixtures, sync convergence. Exit code = result.'
+	@echo '                 free ports, fixtures, sync convergence. Exit code ='
+	@echo '                 result. Safe to run in several worktrees at once.'
 	@echo ''
 	@echo 'Build / test:'
 	@echo '  build          cargo build --workspace'
@@ -41,7 +44,7 @@ dev: ## Start the local dev environment (2 daemons in tmux)
 	./bin/dev $(DEV_ARGS) $(ARGS)
 
 .PHONY: e2e
-e2e: ## One-shot hermetic e2e run (zim-e2e crate; own ports, own data)
+e2e: ## One-shot hermetic e2e run (zim-e2e crate; free ports, own data)
 	cargo build -p zim-cli --features hub,fuse
 	cargo run -q -p zim-e2e
 
@@ -50,7 +53,7 @@ up: ## The whole dev stack: daemons + hub + minio + fixtures + enroll
 	./bin/dev --hub
 
 .PHONY: hub
-hub: ## Start the hub in the dev tmux session (minio + dev-trust login: any email is admin)
+hub: ## Start the hub in this worktree's dev tmux session (minio + dev-trust login: any email is admin)
 	./bin/dev hub up
 
 .PHONY: check

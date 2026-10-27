@@ -217,8 +217,8 @@ node = "alice"
 #   /index.md
 #
 # Node visibility:
-#   - alice (API :17172): owns demo + notes
-#   - bob   (API :17173): sees demo via its share after sync (seconds to
+#   - alice: owns demo + notes
+#   - bob:   sees demo via its share after sync (seconds to
 #     ~a minute; the reconcile sweep retries announces)
 #
 # FUSE (if available):

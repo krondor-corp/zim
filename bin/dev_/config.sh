@@ -1,52 +1,26 @@
 #!/bin/bash
-# TOML config parsing for the dev environment.
-
-# Read a value from nodes.toml.
-# Usage: toml_get <section> <key>
-toml_get() {
-    local section="$1"
-    local key="$2"
-    local in_section=false
-
-    while IFS= read -r line; do
-        # Skip comments.
-        [[ "$line" =~ ^[[:space:]]*# ]] && continue
-
-        # Section header.
-        if [[ "$line" =~ ^\[([a-zA-Z0-9_]+)\]$ ]]; then
-            if [[ "${BASH_REMATCH[1]}" == "$section" ]]; then
-                in_section=true
-            else
-                in_section=false
-            fi
-            continue
-        fi
-
-        # key = value in current section.
-        if $in_section && [[ "$line" =~ ^${key}[[:space:]]*=[[:space:]]*(.+)$ ]]; then
-            local value="${BASH_REMATCH[1]}"
-            # Strip inline comments.
-            value="${value%%#*}"
-            # Trim trailing whitespace.
-            value="${value%"${value##*[![:space:]]}"}"
-            # Strip surrounding quotes.
-            value="${value%\"}"
-            value="${value#\"}"
-            echo "$value"
-            return 0
-        fi
-    done < "$CONFIG_FILE"
-
-    return 1
-}
+# Node config for the dev environment: names from nodes.toml, ports
+# from this worktree's confit env (see ports.sh).
 
 # Every section name in nodes.toml is a peer nick. Sorted + dedup'd.
 get_node_names() {
     grep -E '^\[[a-zA-Z0-9_]+\]$' "$CONFIG_FILE" | tr -d '[]' | sort -u
 }
 
-# Convenience accessors.
-get_api_port() { toml_get "$1" api_port; }
+# A node's daemon API port: `ZIM_DEV_<NICK>_PORT`, which confit.toml's
+# `[env.dev]` maps from the node's `ports.services.<nick>` lane. Fails
+# for a nick that isn't in nodes.toml, so callers can use it to
+# validate one.
+get_api_port() {
+    get_node_names | grep -qx "$1" || return 1
+    local var
+    var="ZIM_DEV_$(echo "$1" | tr '[:lower:]' '[:upper:]')_PORT"
+    if [[ -z "${!var:-}" ]]; then
+        echo -e "${RED}no port for node '$1': add a ports.services.$1 lane and $var to confit.toml${NC}" >&2
+        return 1
+    fi
+    echo "${!var}"
+}
 
 # Data dir for a node. The nick == the section name == the directory.
 get_data_dir() {

@@ -4,7 +4,9 @@
 #
 # Spawns multiple `zim daemon` instances in tmux, each with its own
 # $ZIM_HOME and port, so you can drive a multi-peer setup from one
-# terminal.
+# terminal. Ports, the tmux session, and the hub's bucket are per
+# worktree (confit.toml `[ports]`), so several worktrees can each run
+# their own dev env at once. Requires confit.
 #
 # Usage:
 #   ./bin/dev                  Start all daemons in tmux (attaches)
@@ -13,6 +15,7 @@
 #   ./bin/dev kill             Kill the tmux session
 #   ./bin/dev kill --force     Kill + also free any ports left dangling
 #   ./bin/dev status           Show which daemons are up
+#   ./bin/dev ports            Show this worktree's ports + names
 #   ./bin/dev cli <nick> ...   Run `zim` against a specific node's daemon
 #   ./bin/dev logs <nick>      Dump that node's tmux pane
 #   ./bin/dev help
@@ -32,6 +35,7 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 source "$DEV_DIR/config.sh"
+source "$DEV_DIR/ports.sh"
 source "$DEV_DIR/nodes.sh"
 source "$DEV_DIR/hub.sh"
 source "$DEV_DIR/seed.sh"
@@ -52,6 +56,8 @@ Commands:
   clean                   Remove all data under $DATA_DIR
   kill [-f|--force]       Kill the tmux session; -f also frees ports
   status                  Show which daemons are up
+  ports                   Show this worktree's slot, ports, tmux session,
+                          and minio bucket (from confit.toml [ports])
   attach | a              Attach to the tmux session (detach: Ctrl-b d)
   cli <nick> <args...>    Run \`zim\` against a node's daemon
   shell                   Emit \`alice\`/\`bob\`/... shell functions
@@ -85,6 +91,7 @@ Examples:
   bob vault list
 
 Node config: $CONFIG_FILE
+Ports:       $PROJECT_ROOT/confit.toml (this worktree: slot $ZIM_DEV_SLOT, session $TMUX_SESSION)
 EOF
 }
 
@@ -94,6 +101,7 @@ case "${1:-run}" in
     clean)          cmd_clean ;;
     kill)           shift; cmd_kill "$@" ;;
     status)         cmd_status ;;
+    ports)          cmd_ports ;;
     attach|a)       cmd_attach ;;
     cli)            shift; cmd_cli "$@" ;;
     shell)          cmd_shell ;;

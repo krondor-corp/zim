@@ -5,8 +5,12 @@ Quick-start for contributors and AI agents.
 ## Prerequisites
 
 - Rust toolchain (stable)
+- [confit](https://confit.krondor.org) >= 0.5 (dev port map; `bin/dev` and `bin/minio` require it):
+  `curl -fsSL https://raw.githubusercontent.com/krondor-corp/confit/main/install.sh | bash`
 - SQLite 3
-- tmux (for multi-node dev)
+- tmux, cargo-watch (for multi-node dev)
+- trunk (`cargo install trunk`, for the hub's web SPA)
+- docker or podman (for the hub's S3 blob store)
 
 ## Build & Verify
 
@@ -34,6 +38,9 @@ make hub
 
 # 2-node dev environment (tmux)
 make dev
+
+# This worktree's dev ports (each worktree gets its own; see local.md)
+./bin/dev ports
 ```
 
 ## Project Layout

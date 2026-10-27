@@ -8,15 +8,36 @@ This file covers contributor-specific multi-peer dev tooling that doesn't belong
 
 `bin/dev` spins up a multi-node P2P network in tmux so you can exercise sync, sharing, mounting, and the hub locally. It builds the workspace's debug binary once (`cargo build -p zim` → `target/debug/zim`) and runs that same binary for every peer — **not** `cargo run`, and **not** an installed `~/.cargo/bin/zim`. Peers are isolated purely by `ZIM_HOME`.
 
-Nodes are defined in `bin/dev_/nodes.toml`. The section name is the peer's nick (`alice`, `bob`), its data dir (`data/<nick>/`), its tmux pane label, and the name of the generated shell function. Default daemon port is `17171`; dev ports start at `17172`.
+Nodes are defined in `bin/dev_/nodes.toml`. The section name is the peer's nick (`alice`, `bob`), its data dir (`data/<nick>/`), its tmux pane label, and the name of the generated shell function. Ports are not set there; they come from confit (next section).
 
 ```toml
 [alice]
-api_port = 17172
 
 [bob]
-api_port = 17173
 ```
+
+### Ports and several worktrees at once
+
+`bin/dev` needs [confit](https://confit.krondor.org) (a required tool, like cargo; `bin/dev` exits with the install one-liner if it's missing). At startup it resolves `[env.dev]` from `confit.toml`, which gives this worktree its own ports and names, so several jig worktrees (plus `main`) can each run `./bin/dev --hub` at the same time:
+
+| Resource | Source | `main` (slot 0) | worktree in slot N |
+| -- | -- | -- | -- |
+| daemon ports | `ports.services.<nick>` lane | alice 17110, bob 17120 | 17110+N, 17120+N |
+| hub port | `ports.services.hub` | 17190 | 17190+N |
+| tmux session | `ports.slug` | `zim-dev` | `zim-dev-<slug>` |
+| minio bucket | `ports.slug` | `zim-blobs` | `zim-blobs-<slug>` (capped at 63 chars) |
+| minio ports | `ports.infra.*` | 17180 / 17181 | same: one container for everyone |
+
+confit hands out slots per clone: `main` always gets 0, any other branch the lowest free 1–9. The ledger lives at `<git-common-dir>/confit/ports.toml`, so every worktree sees it, and entries for removed worktrees drop off on the next resolve. That caps you at 9 non-`main` worktrees running at once. `./bin/dev ports` prints this worktree's slot, ports, tmux session, hub URL, and bucket; `confit validate` checks the layout (lanes 10 apart, no duplicate ports, nothing already bound on this host).
+
+What each worktree keeps to itself:
+
+- **Daemons and hub** bind their own ports. `./bin/dev kill --force` only frees *this* worktree's listening ports, so it never touches another worktree's processes.
+- **Data** is already per worktree (`data/` lives in the checkout), so identities and hub DBs never mix.
+- **Buckets.** `hub up` creates the worktree's bucket (`./bin/minio bucket <name>`) and points the hub at it. Each hub keeps its own blob index and may delete objects, so hubs never share a bucket.
+- **Browser sessions.** A loopback hub names its session cookie `session-<port>` (production keeps `session`). Browsers scope cookies by host and ignore the port, so with one shared name, signing into one worktree's hub would log you out of another's.
+
+To add a node: add a `[<nick>]` section to `nodes.toml`, plus a `ports.services.<nick>` lane and a `ZIM_DEV_<NICK>_PORT` entry under `[env.dev]` in `confit.toml`. iroh endpoints already bind random ports and need no setup. `make e2e` doesn't use confit: it picks free ports at boot.
 
 ### Commands
 
@@ -27,18 +48,19 @@ api_port = 17173
 ./bin/dev run --hub             # full stack: daemons + hub + fixtures + enroll
 ./bin/dev --hub                 # shorthand for `run --hub`
 ./bin/dev status                # which daemons answer /_status/livez
+./bin/dev ports                 # this worktree's slot, ports, tmux session, bucket
 ./bin/dev cli <nick> <args...>  # run `zim` against one node (sets its ZIM_HOME)
 ./bin/dev shell                 # emit `alice`/`bob` shell functions (see below)
 ./bin/dev logs <nick>           # dump that node's tmux pane
 ./bin/dev seed                  # create vaults + cross-shares (daemon-only)
 ./bin/dev hub [up|enroll|did|down]
 ./bin/dev clean                 # rm -rf each node's data dir
-./bin/dev kill [-f|--force]     # kill the tmux session; -f also frees ports
+./bin/dev kill [-f|--force]     # kill the tmux session; -f also frees this worktree's ports
 ```
 
 `make dev` is just `./bin/dev`, and subcommand words pass straight through: `make dev hub up`, `make dev status`, `make dev cli alice vault list`. Flags need the `ARGS` form (`make dev run ARGS="-b --fuse"`) because make claims leading dashes for itself; the "overriding commands" warning on colliding words (clean, hub, e2e) is expected and harmless.
 
-`make e2e` runs the `zim-e2e` crate: a hermetic one-shot verdict — it spawns its own daemons on the 1722x band with fresh homes under `data/e2e/` (the interactive dev env on 1717x is untouched), wires peers with direct NodeAddrs (`/api/v0/peers/{addr,introduce}`, no DHT), applies `bin/dev_/fixtures.toml` through the real CLI, and polls cross-node convergence to a deadline (`--deadline`, default 60s). `--keep` leaves the throwaway env running; `--skip-fuse` forces the FUSE block off. Exit code is the verdict. The harness is a crate (not a script) so the hub repo can reuse it against released `zim-cli` binaries after the split.
+`make e2e` runs the `zim-e2e` crate: a hermetic one-shot verdict — it spawns its own daemons on free ports picked at boot (bind `127.0.0.1:0`, read the port, release it), with fresh homes under `data/e2e/`, so it never touches the interactive dev env and runs in several worktrees at once, wires peers with direct NodeAddrs (`/api/v0/peers/{addr,introduce}`, no DHT), applies `bin/dev_/fixtures.toml` through the real CLI, and polls cross-node convergence to a deadline (`--deadline`, default 60s). `--keep` leaves the throwaway env running; `--skip-fuse` forces the FUSE block off. Exit code is the verdict. The harness is a crate (not a script) so the hub repo can reuse it against released `zim-cli` binaries after the split.
 
 ### Per-peer shells
 
@@ -52,7 +74,7 @@ bob vault cat demo /readme.md
 
 ### Tmux layout
 
-The `zim-dev` session has:
+The session (`zim-dev` on `main`, `zim-dev-<slug>` in other worktrees; see `./bin/dev ports`) has:
 
 - **Window 0 `nodes`** — one **pane per node**, each running `zim daemon run --port <port>` with `ZIM_HOME=data/<nick>`.
 - **Window 1 `cli`** — one **pane per node**, each with `ZIM_HOME` pinned (so a bare `zim …` targets that peer) and the `alice`/`bob` functions sourced (so you can reach the others). A header line names the pane's peer.
@@ -63,8 +85,8 @@ Ctrl+b 0/1          # switch windows
 Ctrl+b ↑/↓          # switch panes
 Ctrl+b [            # scroll mode (q to exit)
 Ctrl+b d            # detach (session keeps running)
-tmux attach -t zim-dev
-tmux kill-session -t zim-dev
+./bin/dev attach    # = tmux attach -t <this worktree's session>
+./bin/dev kill      # = tmux kill-session -t <this worktree's session>
 ```
 
 ### Seeding fixtures (`./bin/dev seed`)
@@ -89,7 +111,7 @@ The hub embeds a peer (`zim::ServiceState`) and serves the web mirror. In dev it
 ./bin/dev hub down     # kill the hub window
 ```
 
-**Login.** The hub's login providers are a list in `ZIM_HUB_AUTH` (unset means `google`). Sign-in is separate from the wasm app: the hub only serves the app to signed-in, approved users and sends everyone else to the server-rendered `/auth/login` (or `/auth/pending`), a chooser with one button per enabled provider (even if there's only one) that returns you to the page you asked for (`?next=`, carried through Google's round trip in the OAuth `state` param). `hub up` builds with `--features dev-login` and defaults the list to `dev-trust`: open `http://127.0.0.1:17190`, type any email, and you're signed in as an admin. No Google account, OAuth client, or credential store needed. Type `$ZIM_DEV_SEED_EMAIL` (default `dev@example.com`) to land on the account `hub enroll` seeds. Accounts are bound to the provider that created them and never linked, so the seeded (dev-trust) account can't be signed into through Google, and an email first used with Google can't be signed into through dev-trust. Browser page loads on any other hostname (e.g. `localhost:17190`) are redirected to `HOST_NAME` (`127.0.0.1:17190`): the hub's `did:web` identity is fixed at startup and the browser builds DIDs from the address bar, so the two must agree. Dev-trust is refused unless `HOST_NAME` is loopback, and builds without the feature (release/Docker) refuse to start if it's listed. To exercise real Google OAuth too, list both; the sign-in page then offers both:
+**Login.** The hub's login providers are a list in `ZIM_HUB_AUTH` (unset means `google`). Sign-in is separate from the wasm app: the hub only serves the app to signed-in, approved users and sends everyone else to the server-rendered `/auth/login` (or `/auth/pending`), a chooser with one button per enabled provider (even if there's only one) that returns you to the page you asked for (`?next=`, carried through Google's round trip in the OAuth `state` param). `hub up` builds with `--features dev-login` and defaults the list to `dev-trust`: open the hub URL from `./bin/dev ports` (`http://127.0.0.1:17190` on `main`), type any email, and you're signed in as an admin. No Google account, OAuth client, or credential store needed. Type `$ZIM_DEV_SEED_EMAIL` (default `dev@example.com`) to land on the account `hub enroll` seeds. Accounts are bound to the provider that created them and never linked, so the seeded (dev-trust) account can't be signed into through Google, and an email first used with Google can't be signed into through dev-trust. Browser page loads on any other hostname (e.g. `localhost:17190`) are redirected to `HOST_NAME` (`127.0.0.1:17190`): the hub's `did:web` identity is fixed at startup and the browser builds DIDs from the address bar, so the two must agree. Dev-trust is refused unless `HOST_NAME` is loopback, and builds without the feature (release/Docker) refuse to start if it's listed. To exercise real Google OAuth too, list both; the sign-in page then offers both:
 
 ```bash
 ZIM_HUB_AUTH=dev-trust,google GOOGLE_O_AUTH_CLIENT_ID=… GOOGLE_O_AUTH_CLIENT_SECRET=… ./bin/dev hub up
@@ -116,13 +138,14 @@ ZIM_HUB_HOME=data/zim-hub ZIM_DEV_SEED_EMAIL=dev@example.com \
 ### S3 blob store (RustFS, MinIO-compatible)
 
 ```bash
-./bin/minio up       # container `zim-minio`, API :17180, console :17181 (17xxx port convention)
-./bin/minio ls       # objects the hub has mirrored into the `zim-blobs` bucket
+./bin/minio up             # container `zim-minio`, API :17180, console :17181 (confit `ports.infra`)
+./bin/minio bucket <name>  # create a bucket (`hub up` makes this worktree's)
+./bin/minio ls [bucket]    # objects a hub has mirrored (default `zim-blobs`, main's bucket)
 ./bin/minio down
 ./bin/minio status
 ```
 
-Runs `docker.io/rustfs/rustfs` (MinIO pulled its public images; RustFS speaks the same S3 API on the same ports). Credentials `minioadmin:minioadmin`, bucket `zim-blobs`. Works with podman or docker: prefers whichever is running, podman first; force with `ZIM_CONTAINER_RUNTIME`. Bucket setup is a SigV4 `curl` from the host, so nothing is exec'd inside the container.
+Runs `docker.io/rustfs/rustfs` (MinIO pulled its public images; RustFS speaks the same S3 API on the same ports). Credentials `minioadmin:minioadmin`. One container serves every worktree; each worktree's hub gets its own bucket (`zim-blobs` on `main`, `zim-blobs-<slug>` elsewhere). Works with podman or docker: prefers whichever is running, podman first; force with `ZIM_CONTAINER_RUNTIME`. Bucket setup is a SigV4 `curl` from the host, so nothing is exec'd inside the container.
 
 ## FUSE mounting
 

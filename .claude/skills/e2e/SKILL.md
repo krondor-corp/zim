@@ -5,7 +5,7 @@ allowed-tools:
   - Bash(./bin/dev *)
   - Bash(./bin/minio *)
   - Bash(curl *)
-  - Bash(./bin/minio *)
+  - Bash(confit *)
   - Bash(tmux capture-pane *)
   - Bash(tmux has-session *)
   - Bash(tmux list-windows *)
@@ -20,9 +20,17 @@ Run end-to-end tests of the dev environment to verify fixtures, cross-node
 sync, FUSE, and (optionally) web↔local sync through the hub. See
 `docs/dx/local.md` for the full `bin/dev` reference.
 
-Dev nodes are **`alice`** and **`bob`** (from `bin/dev_/nodes.toml`; ports per
-its band map — daemons 1717x, infra 1718x, hub 1719x), each a `zim` daemon
-with its own `$ZIM_HOME` under `data/<nick>/`.
+Dev nodes are **`alice`** and **`bob`** (from `bin/dev_/nodes.toml`), each a
+`zim` daemon with its own `$ZIM_HOME` under `data/<nick>/`.
+
+**Ports are per worktree, never hardcoded.** `bin/dev` needs
+[confit](https://confit.krondor.org) >= 0.5 (it exits with the install
+one-liner if missing) and resolves this worktree's slot from `confit.toml`.
+Run `./bin/dev ports` first and use the ports, hub URL, tmux session, and
+minio bucket it prints wherever this skill says `<alice port>`, `<hub url>`,
+`<session>`, or `<bucket>`. Other worktrees may be running their own dev
+envs at the same time; only touch this worktree's (`./bin/dev kill --force`
+is already scoped to it).
 
 **Expected end state is documented in `bin/dev_/fixtures.toml`** — see the
 "EXPECTED END STATE" comment at the end of that file for what to verify.
@@ -41,18 +49,20 @@ with its own `$ZIM_HOME` under `data/<nick>/`.
 ## E2E Test Flow (Track A — local p2p, no docker)
 
 **Fast path: `make e2e`** runs the `zim-e2e` crate: a hermetic one-shot
-with a PASS/FAIL exit code — its own daemons on the 1722x band (fresh
-homes under `data/e2e/`, the interactive env is untouched), fixtures
+with a PASS/FAIL exit code — its own daemons on free ports picked at boot
+(fresh homes under `data/e2e/`; the interactive env and other worktrees'
+runs are untouched), fixtures
 through the real CLI, and poll-based cross-node verification (peers
 cross-introduced directly, so no DHT wait). Use the manual steps below
 when you need to inspect intermediate state in the *interactive* env;
 the checks are the same.
 
 
+0. `./bin/dev ports` — note this worktree's ports and session
 1. `./bin/dev kill --force && ./bin/dev clean` — clean start
 2. `ZIM_DEV_FUSE=1 ./bin/dev run -b` — start nodes (FUSE feature on)
 3. Wait for health: `./bin/dev status` (or poll
-   `curl -sf http://127.0.0.1:17172/_status/livez`)
+   `curl -sf http://127.0.0.1:<alice port>/_status/livez`)
 4. **FUSE detection**: `./bin/dev fuse-check` — reports whether FUSE fixtures
    will run
 5. Apply fixtures: `ZIM_DEV_FUSE=1 ./bin/dev seed` — peer plumbing, then every
@@ -98,7 +108,7 @@ on macOS, `/dev/fuse` on Linux) and (b) a daemon built with the fuse feature
     `hub enroll`.
 11. Confirm enrollment settled: `./bin/dev cli alice hub peers ls` — the
     account roster lists the daemons (and web key once minted), `✓ in book`.
-12. Browser (manual): open `http://127.0.0.1:17190` — the dev login form
+12. Browser (manual): open `<hub url>` — the dev login form
     (no Google account needed) — type the seed email (`$ZIM_DEV_SEED_EMAIL`,
     default `dev@example.com`), mint the web key, open the vault tree —
     seeded vaults should appear.
@@ -108,8 +118,9 @@ on macOS, `/dev/fuse` on Linux) and (b) a daemon built with the fuse feature
 14. **local → web**: `echo hi | ./bin/dev cli alice vault add demo /from-alice.md`,
     refresh the tree. (Stuck? `./bin/dev cli alice hub peers sync`, wait.)
 15. Verify blobs in minio: `./bin/minio status`, then
-    `./bin/minio ls` (signed `curl` from the host — same under docker and
-    podman; container `zim-minio`, bucket `zim-blobs`).
+    `./bin/minio ls <bucket>` (signed `curl` from the host — same under
+    docker and podman; one shared container `zim-minio`, one bucket per
+    worktree: `zim-blobs` on main, `zim-blobs-<slug>` elsewhere).
 
 ## Report Format
 
@@ -130,12 +141,12 @@ on macOS, `/dev/fuse` on Linux) and (b) a daemon built with the fuse feature
 - bob→alice round-trip (/b.md): [pass/fail]
 
 ### Web↔Local Sync (Track B — if run)
-- Hub up (http://127.0.0.1:17190): [yes/no/skipped]
+- Hub up (<hub url>): [yes/no/skipped]
 - Enrollment settled (`hub peers ls` roster ✓): [yes/no]
 - Web signed in + web key minted: [yes/no/manual]
 - web→local: [pass/fail/skipped]
 - local→web: [pass/fail/skipped]
-- Blobs in minio (zim-blobs): [yes/no]
+- Blobs in minio (<bucket>): [yes/no]
 
 ### Errors
 [REAL errors only — NOT transient "No addressing information available"]

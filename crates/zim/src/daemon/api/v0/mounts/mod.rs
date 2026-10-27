@@ -249,14 +249,14 @@ mod handlers {
     }
 
     async fn stop(State(state): State<ServiceState>, Json(req): Json<StopRequest>) -> Response {
-        match state.mounts().stop(&PathBuf::from(&req.mountpoint)) {
+        match state.mounts().stop(&PathBuf::from(&req.mountpoint)).await {
             Ok(()) => Json(StopResponse { stopped: true }).into_response(),
             Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
         }
     }
 
     async fn remove(State(state): State<ServiceState>, Json(req): Json<RemoveRequest>) -> Response {
-        match state.mounts().remove(&PathBuf::from(&req.mountpoint)) {
+        match state.mounts().remove(&PathBuf::from(&req.mountpoint)).await {
             Ok(removed) => Json(RemoveResponse { removed }).into_response(),
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         }

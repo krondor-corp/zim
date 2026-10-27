@@ -24,11 +24,7 @@ use zim_core::vault::log::{Head, VaultLog, VaultLogError};
 use zim_core::vault::{Vault, VaultId};
 
 use crate::api::{self, GetBlob, GetHead, GetLog, PostHead, PutBlob};
-use crate::SESSION_KEY;
-
-/// `Error.name` of a [`WasmFs::cat`] failure whose blob the hub doesn't
-/// have yet.
-pub const BLOB_PENDING: &str = "BlobPending";
+use crate::{read, SESSION_KEY};
 
 fn blob_err(e: String) -> BlobError {
     BlobError::Store(anyhow::anyhow!(e))
@@ -45,7 +41,7 @@ pub struct HubBlobStore {
 }
 
 impl HubBlobStore {
-    fn new(base: Url) -> Self {
+    pub(crate) fn new(base: Url) -> Self {
         Self {
             client: Client::new(),
             base,
@@ -101,7 +97,7 @@ pub struct HubVaultLog {
 }
 
 impl HubVaultLog {
-    fn new(base: Url) -> Self {
+    pub(crate) fn new(base: Url) -> Self {
         Self {
             client: Client::new(),
             base,
@@ -222,7 +218,7 @@ pub struct WasmFs {
     vault: Vault<HubBlobStore, HubVaultLog>,
 }
 
-fn session_key() -> Result<zim_crypto::PrivateKey, JsError> {
+pub(crate) fn session_key() -> Result<zim_crypto::PrivateKey, JsError> {
     SESSION_KEY.with(|cell| {
         cell.borrow()
             .as_ref()
@@ -231,7 +227,13 @@ fn session_key() -> Result<zim_crypto::PrivateKey, JsError> {
     })
 }
 
-fn parse_base(hub_base: &str) -> Result<Url, JsError> {
+pub(crate) fn parse_vault_id(hex: &str) -> Result<VaultId, JsError> {
+    Ok(VaultId::from_hash(
+        Hash::from_str(hex).map_err(|e| JsError::new(&format!("vault id: {e}")))?,
+    ))
+}
+
+pub(crate) fn parse_base(hub_base: &str) -> Result<Url, JsError> {
     hub_base
         .parse()
         .map_err(|e| JsError::new(&format!("invalid hub url: {e}")))
@@ -300,11 +302,8 @@ impl WasmFs {
     pub async fn open(vault_id_hex: String, hub_base: String) -> Result<WasmFs, JsError> {
         let pk = session_key()?;
         let base = parse_base(&hub_base)?;
-        let vault_id = VaultId::from_hash(
-            Hash::from_str(&vault_id_hex).map_err(|e| JsError::new(&format!("vault id: {e}")))?,
-        );
         let vault = Vault::open(
-            vault_id,
+            parse_vault_id(&vault_id_hex)?,
             HubBlobStore::new(base.clone()),
             HubVaultLog::new(base),
             &pk,
@@ -364,65 +363,15 @@ impl WasmFs {
 
     /// List a directory. Returns JSON: `[{name, kind, hash, mime}]`.
     pub async fn ls(&self, path: String) -> Result<String, JsError> {
-        let abs = zim_core::fs::AbsPath::new(&path)
-            .ok_or_else(|| JsError::new(&format!("invalid path: {path}")))?;
-        let entries = self
-            .vault
-            .fs()
-            .ls(&abs)
-            .await
-            .map_err(|e| JsError::new(&format!("ls: {e}")))?;
-
-        #[derive(Serialize)]
-        struct View {
-            name: String,
-            kind: &'static str,
-            hash: String,
-            mime: Option<String>,
-        }
-
-        let views: Vec<View> = entries
-            .into_iter()
-            .map(|(p, e)| {
-                let name = p
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .into_owned();
-                match e {
-                    zim_core::fs::Entry::File { link, mime, .. } => View {
-                        name,
-                        kind: "file",
-                        hash: link.hash().to_hex(),
-                        mime: mime.0.as_ref().map(|m| m.to_string()),
-                    },
-                    zim_core::fs::Entry::Dir { link, .. } => View {
-                        name,
-                        kind: "dir",
-                        hash: link.hash().to_hex(),
-                        mime: None,
-                    },
-                }
-            })
-            .collect();
-
-        serde_json::to_string(&views).map_err(|e| JsError::new(&format!("json: {e}")))
+        read::ls(self.vault.fs(), &path).await
     }
 
     /// Read and decrypt a file's plaintext bytes. When the tree points at
     /// a blob the hub hasn't mirrored yet (another device just wrote it),
-    /// the error's `name` is [`BLOB_PENDING`] so the UI can show "syncing"
+    /// the error's `name` is [`BLOB_PENDING`](crate::BLOB_PENDING) so the UI can show "syncing"
     /// and retry, rather than treat the file as empty or broken.
     pub async fn cat(&self, path: String) -> Result<Vec<u8>, JsValue> {
-        let abs = zim_core::fs::AbsPath::new(&path)
-            .ok_or_else(|| JsError::new(&format!("invalid path: {path}")))?;
-        self.vault.fs().cat(&abs).await.map_err(|e| {
-            let err = js_sys::Error::new(&format!("cat: {e}"));
-            if e.missing_blob().is_some() {
-                err.set_name(BLOB_PENDING);
-            }
-            err.into()
-        })
+        read::cat(self.vault.fs(), &path).await
     }
 
     pub async fn add_file(&self, path: String, plaintext: Vec<u8>) -> Result<(), JsError> {

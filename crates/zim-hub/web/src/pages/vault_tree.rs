@@ -222,10 +222,7 @@ fn row(n: &TreeNode, props: &TreePaneProps) -> Html {
                 && !self_path.starts_with(&format!("{from}/"))
                 && crate::pages::vault_tree::parent_of(from) != self_path
         };
-        let droppable = dragged
-            .as_deref()
-            .map(is_valid_drop)
-            .unwrap_or(false);
+        let droppable = dragged.as_deref().map(is_valid_drop).unwrap_or(false);
         let ondragover = {
             Callback::from(move |e: DragEvent| {
                 if droppable {

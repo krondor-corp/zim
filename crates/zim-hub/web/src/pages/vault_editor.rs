@@ -67,7 +67,7 @@ pub fn editor_pane(props: &EditorProps) -> Html {
     }
 }
 
-fn media_preview(file: &OpenFile) -> Html {
+pub(crate) fn media_preview(file: &OpenFile) -> Html {
     let url = file.url.clone();
     let name = file.path.rsplit('/').next().unwrap_or_default().to_string();
     if file.mime.starts_with("image/") {

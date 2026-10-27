@@ -49,7 +49,6 @@ pub fn onboarding_shell(props: &OnboardingShellProps) -> Html {
     }
 }
 
-
 /// A header dropdown (pack's app-menu) as Yew state instead of a
 /// native `<details>`: in an SPA the DOM survives navigation, so a
 /// details element would stay open across route changes. Clicking the

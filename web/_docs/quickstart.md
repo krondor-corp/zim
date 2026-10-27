@@ -44,6 +44,11 @@ Inside a vault you can:
   and save. Each save commits a new version to the vault's history.
 - **Inspect** the vault's details — its id, current version, and the
   devices it's shared with.
+- **Go back in time** — **History** lists every version, newest first.
+  Pick one to browse the vault exactly as it was, open any file, and
+  **Restore this file** to bring that content back as a new version.
+  Nothing is ever rewritten, so an accidental overwrite is undoable.
+  Versions from before this browser was given access stay sealed.
 
 Everything you do here is committed as an encrypted version and synced
 to any other device that holds the vault.

@@ -21,6 +21,7 @@ use crate::api::{fetch_devices, fetch_me, fetch_vaults, Device, FsEntry, VaultIt
 use crate::components::dialog::{ConfirmDialog, PromptDialog};
 use crate::layouts::{HeaderMenu, SignOutItem};
 use crate::pages::vault_editor::{EditorPane, OpenFile};
+use crate::pages::vault_history::{HistoryView, Restore};
 use crate::pages::vault_tree::{build_rows, CtxMenu, CtxTarget, TreeNode, TreePane};
 use crate::routes::Route;
 use crate::util::{jserr, origin, sleep};
@@ -55,7 +56,7 @@ fn read_meta(fs: &FsHandle) -> Option<VaultMeta> {
     serde_json::from_str::<VaultMeta>(&json).ok()
 }
 
-fn guess_mime(name: &str) -> String {
+pub(crate) fn guess_mime(name: &str) -> String {
     let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     match ext.as_str() {
         "png" => "image/png",
@@ -86,7 +87,7 @@ fn guess_mime(name: &str) -> String {
     .to_string()
 }
 
-fn is_textual(mime: &str) -> bool {
+pub(crate) fn is_textual(mime: &str) -> bool {
     mime.starts_with("text/")
         || matches!(
             mime,
@@ -96,7 +97,7 @@ fn is_textual(mime: &str) -> bool {
 
 /// Build an object URL over `bytes` tagged with `mime`, for blob-backed
 /// rendering (`<img src>`, `<iframe src>`, download links).
-fn object_url(bytes: &[u8], mime: &str) -> Result<String, String> {
+pub(crate) fn object_url(bytes: &[u8], mime: &str) -> Result<String, String> {
     let arr = js_sys::Uint8Array::from(bytes);
     let parts = js_sys::Array::new();
     parts.push(&arr);
@@ -126,7 +127,7 @@ pub struct Props {
 
 /// Abbreviate a 64-char hex vault id for display: `01fc44f0\u{2026}405e38`.
 /// The full id is in the Details panel.
-fn short_id(id: &str) -> String {
+pub(crate) fn short_id(id: &str) -> String {
     if id.len() > 20 {
         format!("{}\u{2026}{}", &id[..8], &id[id.len() - 6..])
     } else {
@@ -295,6 +296,7 @@ pub fn vault_tree(props: &Props) -> Html {
     let devices = use_state(Vec::<Device>::new);
     let web_did = use_state(String::new);
     let show_details = use_state(|| false);
+    let show_history = use_state(|| false);
     let vaults = use_state(Vec::<VaultItem>::new);
     let ctx = use_state(|| None::<CtxMenu>);
     let dialog = use_state(|| None::<Dialog>);
@@ -352,6 +354,7 @@ pub fn vault_tree(props: &Props) -> Html {
         let open_file = open_file.clone();
         let syncing = syncing.clone();
         let open_seq = open_seq.clone();
+        let show_history = show_history.clone();
         let vault_id = props.vault_id.clone();
         use_effect_with(vault_id.clone(), move |_| {
             let fs = fs.clone();
@@ -363,6 +366,7 @@ pub fn vault_tree(props: &Props) -> Html {
             // Fresh vault, fresh view state: expansion paths and the
             // open file belong to the PREVIOUS vault.
             expanded.set(BTreeSet::new());
+            show_history.set(false);
             rows.set(None);
             open_file.set(None);
             syncing.set(None);
@@ -880,6 +884,46 @@ pub fn vault_tree(props: &Props) -> Html {
         Callback::from(move |_: MouseEvent| show_details.set(!*show_details))
     };
 
+    let toggle_history = {
+        let show_history = show_history.clone();
+        Callback::from(move |_: MouseEvent| show_history.set(!*show_history))
+    };
+
+    // Restore = write the historical bytes forward as a normal save (the
+    // chain only ever grows), then return to the live tree on that file.
+    let on_restore = {
+        let fs = fs.clone();
+        let show_history = show_history.clone();
+        let error = error.clone();
+        let status = status.clone();
+        let rebuild = rebuild.clone();
+        let on_open = on_open.clone();
+        Callback::from(move |r: Restore| {
+            let name = r.path.rsplit('/').next().unwrap_or_default().to_string();
+            let fs = fs.clone();
+            let show_history = show_history.clone();
+            let error = error.clone();
+            let status = status.clone();
+            let rebuild = rebuild.clone();
+            let on_open = on_open.clone();
+            status.set(format!("restoring {name}\u{2026}"));
+            yew::platform::spawn_local(async move {
+                match add_and_save(&fs, r.path.clone(), r.bytes).await {
+                    Ok(()) => {
+                        status.set(format!("restored {name} from version {}", r.height));
+                        show_history.set(false);
+                        rebuild.emit(());
+                        on_open.emit(r.path);
+                    }
+                    Err(e) => {
+                        status.set(String::new());
+                        error.set(e);
+                    }
+                }
+            });
+        })
+    };
+
     let details_modal = if *show_details {
         let close = {
             let show_details = show_details.clone();
@@ -923,13 +967,25 @@ pub fn vault_tree(props: &Props) -> Html {
                             { "Save" }
                         </button>
                     }
+                    <button type="button"
+                        class={classes!("app-header__btn", show_history.then_some("app-header__btn--on"))}
+                        title="Version history" onclick={toggle_history}>
+                        { "History" }
+                    </button>
                     <button type="button" class="app-header__btn" title="Vault details" onclick={toggle_details}>
                         { "\u{24D8}" }
                     </button>
                 </div>
             </header>
 
-            <div class="editor-layout">
+            if *show_history {
+                <HistoryView vault_id={props.vault_id.clone()} devices={(*devices).clone()}
+                    on_close={{ let show_history = show_history.clone(); Callback::from(move |_: ()| show_history.set(false)) }}
+                    {on_restore} />
+            }
+            // Hidden, not unmounted, under history: an unsaved draft keeps
+            // its textarea state for when the user comes back.
+            <div class="editor-layout" style={show_history.then_some("display:none;")}>
                 {
                     match &*rows {
                         None => html! {
@@ -1121,7 +1177,7 @@ fn share_row(s: &ShareMeta, devices: &[Device], web_did: &str, author: &str) -> 
     }
 }
 
-fn own_label(d: &Device) -> String {
+pub(crate) fn own_label(d: &Device) -> String {
     match &d.label {
         Some(l) if !l.is_empty() => l.clone(),
         _ if d.kind == "web" => "your web key".to_string(),

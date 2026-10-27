@@ -61,7 +61,9 @@ pub fn devices() -> Html {
         let error = error.clone();
         let pending = pending.clone();
         Callback::from(move |_: ()| {
-            let Some(pubkey) = (*pending).clone() else { return; };
+            let Some(pubkey) = (*pending).clone() else {
+                return;
+            };
             pending.set(None);
             let reload = reload.clone();
             let error = error.clone();

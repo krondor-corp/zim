@@ -45,7 +45,7 @@ Once in the tmux session:
 - `Ctrl+B` then `0/1/2` - Switch to pane 0, 1, or 2
 - `Ctrl+B` then arrow keys - Navigate between panes
 - `Ctrl+B` then `d` - Detach from session
-- `tmux attach -t zim-dev` - Reattach to session
+- `./bin/dev attach` - Reattach to this worktree's session (`zim-dev` on main, `zim-dev-<slug>` elsewhere; `./bin/dev ports`)
 
 ## Log Files
 

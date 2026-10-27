@@ -1,7 +1,7 @@
 #!/bin/bash
 # Node lifecycle + tmux session management.
 
-TMUX_SESSION="zim-dev"
+# TMUX_SESSION comes from ports.sh (per worktree).
 ZIM_BIN="${ZIM_BIN:-$PROJECT_ROOT/target/debug/zim}"
 
 cmd_clean() {
@@ -44,15 +44,17 @@ cmd_kill() {
 
 kill_dev_ports() {
     local killed=0
-    # Daemon ports + the hub port. The hub runs in its own tmux window
-    # under `cargo watch`, which can outlive `kill-session` — so
-    # without this a stale hub keeps holding :17190 and the next `hub up`
-    # fails to bind.
+    # This worktree's daemon ports + hub port, never another
+    # worktree's. The hub runs in its own tmux window under `cargo
+    # watch`, which can outlive `kill-session` — so without this a
+    # stale hub keeps holding its port and the next `hub up` fails to
+    # bind. Listeners only: a client merely connected to one of these
+    # ports (a browser tab, another worktree's daemon) is not ours.
     local ports
     ports=$(for node in $(get_node_names); do get_api_port "$node"; done)
-    ports="$ports ${HUB_PORT:-17190}"
+    ports="$ports $HUB_PORT"
     for port in $ports; do
-        local pid=$(lsof -ti tcp:"$port" 2>/dev/null)
+        local pid=$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null)
         if [[ -n "$pid" ]]; then
             echo -e "  killing pid $pid on port $port"
             kill -9 $pid 2>/dev/null && killed=$((killed + 1))
@@ -334,7 +336,7 @@ cmd_cli() {
 
 # Seed each node's $ZIM_HOME with a config.toml that pins its
 # `api_port`. Idempotent — overwrites the file every time so changes
-# to nodes.toml propagate. Shared by `cmd_run` and `cmd_shell` so the
+# to nodes.toml / confit.toml (or a new slot) propagate. Shared by `cmd_run` and `cmd_shell` so the
 # CLI resolves the right daemon port regardless of whether the user
 # started the tmux session first.
 seed_node_configs() {

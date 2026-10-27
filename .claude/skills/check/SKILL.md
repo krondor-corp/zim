@@ -5,12 +5,17 @@ allowed-tools:
   - Bash(make:*)
   - Bash(cat:*)
   - Bash(ls:*)
+  - Bash(confit validate:*)
   - Read
   - Glob
   - Grep
 ---
 
 Run Zim's full success criteria checks from the repository root.
+
+Required tools: cargo, and [confit](https://confit.krondor.org) >= 0.5 (the dev
+port map in `confit.toml`; `bin/dev` and `bin/minio` refuse to run without it).
+Install: `curl -fsSL https://raw.githubusercontent.com/krondor-corp/confit/main/install.sh | bash`.
 
 ## Steps
 
@@ -35,6 +40,9 @@ Run Zim's full success criteria checks from the repository root.
    ```bash
    cargo fmt -- --check
    ```
+
+   If the branch touches `confit.toml`, also run `confit validate` (lanes 10
+   apart, no duplicate or already-bound ports).
 
 3. Report a summary:
    - Build: PASS/FAIL

@@ -25,7 +25,7 @@
 #   ./bin/dev hub did      Print the hub's did:web (for `peers add`)
 #   ./bin/dev hub down     Kill the hub window
 
-HUB_PORT="${HUB_PORT:-17190}"
+# HUB_PORT and HUB_BUCKET come from ports.sh (per worktree).
 HUB_HOME="$DATA_DIR/zim-hub"
 HUB_BIN="$PROJECT_ROOT/target/debug/zim-hub"
 # The hub runs under `cargo watch` too, watching the shared sync crates — so an
@@ -55,6 +55,12 @@ hub_up() {
     echo -e "${BLUE}Starting minio (blob store)…${NC}"
     "$PROJECT_ROOT/bin/minio" up >/dev/null || {
         echo -e "${RED}blob store failed to start — is docker or podman running? (./bin/minio status)${NC}"
+        exit 1
+    }
+    # One shared container, one bucket per worktree: each hub has its own
+    # blob index and may delete objects, so hubs must never share a bucket.
+    "$PROJECT_ROOT/bin/minio" bucket "$HUB_BUCKET" >/dev/null || {
+        echo -e "${RED}could not create bucket $HUB_BUCKET (./bin/minio bucket $HUB_BUCKET)${NC}"
         exit 1
     }
 
@@ -88,10 +94,10 @@ hub_up() {
 ZIM_HUB_LISTEN='127.0.0.1:$HUB_PORT' \
 ZIM_HUB_HOME='$HUB_HOME' \
 ZIM_HUB_HOST='127.0.0.1%3A$HUB_PORT' \
-ZIM_HUB_S3_ENDPOINT="http://localhost:${MINIO_API_PORT:-17180}" \
+ZIM_HUB_S3_ENDPOINT='http://localhost:$MINIO_API_PORT' \
 ZIM_HUB_S3_ACCESS_KEY='minioadmin' \
 ZIM_HUB_S3_SECRET_KEY='minioadmin' \
-ZIM_HUB_S3_BUCKET='zim-blobs'"
+ZIM_HUB_S3_BUCKET='$HUB_BUCKET'"
     # Google sign-in settings, forwarded only when the caller set them:
     # the tmux pane gets the tmux server's env, not ours.
     local var
@@ -118,7 +124,7 @@ ZIM_HUB_S3_BUCKET='zim-blobs'"
     tmux new-window -t "$TMUX_SESSION" -n "$HUB_WINDOW" \
         "cd $PROJECT_ROOT && printf '%b\n' '${GREEN}=== zim-hub on :$HUB_PORT ===${NC}' && $launch"
 
-    echo -e "${GREEN}hub starting on $(hub_url)${NC} (tmux window '$HUB_WINDOW')"
+    echo -e "${GREEN}hub starting on $(hub_url)${NC} (tmux window '$HUB_WINDOW', bucket $HUB_BUCKET)"
     echo "  enroll: ./bin/dev hub enroll"
     echo "  did:    ./bin/dev hub did"
     echo "  logs:   tail -f $HUB_HOME/hub.log   (clean; pane has cargo-watch noise)"

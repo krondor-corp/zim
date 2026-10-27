@@ -1,0 +1,38 @@
+# zim's confit config: per-branch dev ports and names. No secrets.
+#
+# confit (https://confit.krondor.org) is a required dev tool, like
+# cargo. `./bin/dev` resolves `[env.dev]` once at startup, so every
+# worktree of this clone gets its own daemon/hub ports, tmux session,
+# and minio bucket and can run its dev env alongside the others.
+#
+#   ports.infra.*    = band + offset         same on every branch (shared minio)
+#   ports.services.* = band + lane + slot    slot 0 on `main`, else lowest free 1-9
+#
+# The slot ledger lives at <git-common-dir>/confit/ports.toml, shared by
+# every worktree; removed worktrees drop out on the next resolve.
+# `./bin/dev ports` prints this worktree's slot and ports;
+# `confit validate` checks the layout.
+
+[project]
+name = "zim"
+
+[ports]
+band = 17100
+
+[ports.infra]
+minio_api     = 80
+minio_console = 81
+
+[ports.services]
+alice = 10   # 17110 on main, 17111..17119 per worktree
+bob   = 20   # 17120 on main, 17121..17129
+hub   = 90   # 17190 on main, 17191..17199
+
+[env.dev]
+ZIM_DEV_ALICE_PORT = "{ports.services.alice}"
+ZIM_DEV_BOB_PORT   = "{ports.services.bob}"
+HUB_PORT           = "{ports.services.hub}"
+MINIO_API_PORT     = "{ports.infra.minio_api}"
+MINIO_CONSOLE_PORT = "{ports.infra.minio_console}"
+ZIM_DEV_SLOT       = "{ports.slot}"
+ZIM_DEV_SLUG       = "{ports.slug}"

@@ -249,9 +249,11 @@ mod handlers {
     }
 
     async fn stop(State(state): State<ServiceState>, Json(req): Json<StopRequest>) -> Response {
+        // Stopping an already-stopped mount is a no-op success; only an
+        // unregistered mountpoint is an error.
         match state.mounts().stop(&PathBuf::from(&req.mountpoint)).await {
             Ok(()) => Json(StopResponse { stopped: true }).into_response(),
-            Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+            Err(e) => (StatusCode::NOT_FOUND, e.to_string()).into_response(),
         }
     }
 

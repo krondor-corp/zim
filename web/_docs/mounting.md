@@ -42,6 +42,10 @@ zim mount remove notes        # unmount and forget it
 Auto-mounts come back on daemon start; a mount stopped with `stop` can
 be started again, while `remove` forgets it entirely.
 
+`stop` is safe to repeat. If the daemon was killed without a clean
+shutdown and left a dead volume behind (it shows in Finder or `mount` but
+hangs on access), `zim mount stop notes` clears it.
+
 ## How it works
 
 Every write through the mount encrypts the data, stores it as a

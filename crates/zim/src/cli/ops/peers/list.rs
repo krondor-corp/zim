@@ -38,8 +38,18 @@ impl Op for List {
 
     async fn run(&self, ctx: ApiContext) -> Result<Self::Output, Self::Error> {
         let r = ctx.client.call(ListRequest::default()).await?;
-        Ok(ListOutput(r.peers))
+        // The hub stays in the book (it gates the hub's pushes) but it's
+        // a relay, not something to share with — don't list it.
+        Ok(ListOutput(
+            r.peers.into_iter().filter(|p| !is_hub(&p.did)).collect(),
+        ))
     }
+}
+
+/// A hub is a host-only `did:web:<host>`; a user is `did:web:<host>:u:<name>`.
+fn is_hub(did: &str) -> bool {
+    did.strip_prefix("did:web:")
+        .is_some_and(|host| !host.contains(':'))
 }
 
 impl fmt::Display for ListOutput {
@@ -56,5 +66,21 @@ impl fmt::Display for ListOutput {
             t.add_row(vec![Cell::new(&p.nick), Cell::new(&p.did)]);
         }
         write!(f, "{t}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_hub_is_hidden_but_alice_and_her_devices_are_listed() {
+        assert!(is_hub("did:web:hub.example.com"));
+        assert!(is_hub("did:web:localhost%3A17190"));
+
+        assert!(!is_hub("did:web:hub.example.com:u:alice"));
+        assert!(!is_hub(
+            "did:key:z6MkiMxbZEgi5mgsMG24LT9sPaip9Ez699Nm83YqBNxAHuuV"
+        ));
     }
 }

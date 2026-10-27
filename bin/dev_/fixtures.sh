@@ -181,19 +181,24 @@ fixture_mv() { # vault from to node
 fixture_vault_read() { # vault path content node requires
     local vault="$1" path="$2" expected="$3" node="$4" requires="$5"
     echo -e "${BLUE}vault_read: $vault:$path (on $node)${NC}"
-    local actual
-    if ! actual="$(fix_cli "$node" vault cat "$vault" "$path" 2>/dev/null)"; then
+    local actual ok=false tries=0
+    # Mounts commit a write burst once quiet — give a FUSE write time to land
+    # (until then the path may not exist yet, or hold older content).
+    local max_tries=1
+    [[ "$requires" == "fuse" ]] && max_tries=20
+    while [[ $tries -lt $max_tries ]]; do
+        if actual="$(fix_cli "$node" vault cat "$vault" "$path" 2>/dev/null)"; then
+            ok=true
+            [[ -z "$expected" || "$actual" == "$(printf '%b' "$expected")" ]] && break
+        else
+            ok=false
+        fi
+        tries=$((tries + 1))
+        [[ $tries -lt $max_tries ]] && sleep 0.25
+    done
+    if ! $ok; then
         echo -e "  ${RED}FAILED: could not read${NC}"
         return 1
-    fi
-    # Mounts commit a write burst once quiet — give a FUSE write time to land.
-    if [[ "$requires" == "fuse" && -n "$expected" ]]; then
-        local tries=0
-        while [[ "$actual" != "$(printf '%b' "$expected")" && $tries -lt 20 ]]; do
-            sleep 0.25
-            actual="$(fix_cli "$node" vault cat "$vault" "$path" 2>/dev/null)" || true
-            tries=$((tries + 1))
-        done
     fi
     if [[ -n "$expected" ]]; then
         if [[ "$actual" == "$(printf '%b' "$expected")" ]]; then

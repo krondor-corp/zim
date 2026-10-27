@@ -118,14 +118,23 @@ fn apply_one(harness: &Harness, fixture: &Fixture, default_nick: &str) -> Result
             requires,
         } => {
             let node = harness.node(&nick(node))?;
-            let mut actual = node.cli(bin, &["vault", "cat", vault, path], None)?;
-            if let (Some(expected), Some("fuse")) = (content, requires.as_deref()) {
+            let read = || node.cli(bin, &["vault", "cat", vault, path], None);
+            // Settled = readable and (if given) holding the expected content.
+            // Before a mount's write commits, the path may not exist yet.
+            let settled = |r: &Result<String>| match (r, content) {
+                (Ok(actual), Some(expected)) => content_eq(actual, expected),
+                (Ok(_), None) => true,
+                (Err(_), _) => false,
+            };
+            let mut result = read();
+            if requires.as_deref() == Some("fuse") {
                 let start = Instant::now();
-                while !content_eq(&actual, expected) && start.elapsed() < FUSE_COMMIT_DEADLINE {
+                while !settled(&result) && start.elapsed() < FUSE_COMMIT_DEADLINE {
                     std::thread::sleep(Duration::from_millis(250));
-                    actual = node.cli(bin, &["vault", "cat", vault, path], None)?;
+                    result = read();
                 }
             }
+            let actual = result?;
             if let Some(expected) = content {
                 if !content_eq(&actual, expected) {
                     return Err(anyhow!(

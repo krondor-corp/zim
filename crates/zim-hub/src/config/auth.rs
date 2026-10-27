@@ -189,6 +189,27 @@ impl AuthConfig {
     pub fn is_bootstrap_admin(&self, email: &str) -> bool {
         self.admin_emails.iter().any(|e| e == email)
     }
+
+    /// Name of the browser session cookie. See [`session_cookie_name`].
+    pub fn session_cookie(&self) -> String {
+        session_cookie_name(&self.host_name)
+    }
+}
+
+/// `session`, or `session-<port>` for a loopback hub on an explicit
+/// port. Browsers scope cookies by host and ignore the port, so two dev
+/// hubs (one per worktree, `127.0.0.1:<a>` and `127.0.0.1:<b>`) sharing
+/// one name would overwrite each other's cookie, and each would reject
+/// the other's signature: signing into one logs you out of the other.
+fn session_cookie_name(host_name: &str) -> String {
+    let port = url::Url::parse(host_name)
+        .ok()
+        .filter(|_| is_loopback(host_name))
+        .and_then(|u| u.port());
+    match port {
+        Some(port) => format!("session-{port}"),
+        None => "session".to_string(),
+    }
 }
 
 /// Parse the `ZIM_HUB_AUTH` provider list (unset → `google`). Fails
@@ -273,6 +294,28 @@ mod tests {
 
     fn kinds(providers: &[AuthProvider]) -> Vec<DbAuthProvider> {
         providers.iter().map(AuthProvider::kind).collect()
+    }
+
+    // ── Session cookie name ────────────────────────────────────────
+
+    #[test]
+    fn production_hub_keeps_the_plain_session_cookie() {
+        assert_eq!(session_cookie_name(PUBLIC), "session");
+        assert_eq!(
+            session_cookie_name("https://hub.zim.krondor.org:8443"),
+            "session"
+        );
+    }
+
+    #[test]
+    fn two_worktree_hubs_on_loopback_get_their_own_cookies() {
+        // Alice runs main's hub and a feature worktree's hub side by
+        // side in one browser; each keeps its own sign-in.
+        let main = session_cookie_name(LOOPBACK);
+        let feature = session_cookie_name("http://127.0.0.1:17191");
+        assert_eq!(main, "session-17190");
+        assert_eq!(feature, "session-17191");
+        assert_ne!(main, feature);
     }
 
     // ── Google: the default, in every build ────────────────────────

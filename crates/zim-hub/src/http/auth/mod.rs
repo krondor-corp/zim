@@ -40,7 +40,7 @@ use axum::Router;
 use jsonwebtoken::{decode, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 
-use crate::config::AuthProvider;
+use crate::config::{AuthConfig, AuthProvider};
 use crate::database::models::{User, UserPeer};
 use crate::state::AppState;
 
@@ -51,7 +51,6 @@ pub const PENDING_PATH: &str = "/auth/pending";
 /// Where to send an authenticated-but-not-onboarded HTML client: the SPA
 /// root, which shows the web-key gate.
 pub const ONBOARDING_PATH: &str = "/";
-pub const SESSION_COOKIE: &str = "session";
 
 pub fn router(state: AppState) -> Router<AppState> {
     let mut r = Router::new()
@@ -201,7 +200,7 @@ async fn resolve_user(parts: &Parts, state: &AppState) -> Option<User> {
     if let Some(token) = bearer_token(parts) {
         return resolve_user_by_jwt(&token, state).await;
     }
-    let claims = extract_claims(parts, &state.auth.service_secret)?;
+    let claims = extract_claims(parts, &state.auth)?;
     match User::find_by_email(&claims.email, &state.db).await {
         Ok(u) => {
             if u.is_none() {
@@ -341,8 +340,9 @@ pub(crate) fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
         .map(|(_, v)| v.trim().to_string())
 }
 
-fn extract_claims(parts: &Parts, secret: &str) -> Option<Claims> {
-    let token = cookie(&parts.headers, SESSION_COOKIE)?;
+fn extract_claims(parts: &Parts, auth: &AuthConfig) -> Option<Claims> {
+    let token = cookie(&parts.headers, &auth.session_cookie())?;
+    let secret = &auth.service_secret;
     if secret.is_empty() {
         return None;
     }

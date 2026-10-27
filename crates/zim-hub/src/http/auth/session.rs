@@ -14,7 +14,7 @@ use jsonwebtoken::{encode, EncodingKey, Header};
 use crate::config::AuthConfig;
 use crate::database::models::User;
 use crate::database::types::DbAuthProvider;
-use crate::http::auth::{Claims, SESSION_COOKIE};
+use crate::http::auth::Claims;
 use crate::state::AppState;
 
 pub const COOKIE_MAX_AGE_SECS: i64 = 60 * 60 * 24 * 7;
@@ -111,7 +111,12 @@ pub async fn mint_session(
     )?;
 
     let secure = state.auth.host_name.starts_with("https://");
-    let cookie = build_cookie(&token, secure, COOKIE_MAX_AGE_SECS);
+    let cookie = build_cookie(
+        &state.auth.session_cookie(),
+        &token,
+        secure,
+        COOKIE_MAX_AGE_SECS,
+    );
 
     tracing::info!(
         email = user.email(),
@@ -191,11 +196,9 @@ fn check_identity<'a>(
     }
 }
 
-fn build_cookie(token: &str, secure: bool, max_age_secs: i64) -> String {
+fn build_cookie(name: &str, token: &str, secure: bool, max_age_secs: i64) -> String {
     let secure_attr = if secure { "; Secure" } else { "" };
-    format!(
-        "{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age_secs}{secure_attr}"
-    )
+    format!("{name}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age_secs}{secure_attr}")
 }
 
 #[cfg(test)]
@@ -294,7 +297,7 @@ mod tests {
 
     #[test]
     fn cookie_is_secure_only_over_https() {
-        assert!(build_cookie("t", true, 60).ends_with("; Secure"));
-        assert!(!build_cookie("t", false, 60).contains("Secure"));
+        assert!(build_cookie("session", "t", true, 60).ends_with("; Secure"));
+        assert!(!build_cookie("session", "t", false, 60).contains("Secure"));
     }
 }

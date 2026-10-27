@@ -38,9 +38,8 @@ zim-peer = { path = "../zim-peer", version = "0.1.2" }
 # FUSE deps (feature `fuse`) — see src/fuse/.
 # - abi-7-31: parse RENAME2 (and newer ops) so macOS `mv` dispatches to our
 #   rename instead of returning ENOSYS.
-# - macfuse-4-compat: modern macFUSE (4.x) changed some struct layouts; without
-#   this, fuser misparses its messages.
-fuser = { version = "0.15", optional = true, features = ["abi-7-31", "macfuse-4-compat"] }
+# - macfuse-4-compat is macOS-only: see the target table below.
+fuser = { version = "0.15", optional = true, features = ["abi-7-31"] }
 moka = { version = "0.12", features = ["sync"], optional = true }
 libc = { version = "0.2", optional = true }
 
@@ -71,6 +70,14 @@ tracing-appender = "0.2"
 tracing-subscriber = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
+
+# macfuse-4-compat: modern macFUSE (4.x) changed some struct layouts (e.g. adds
+# flags/padding to fuse_rename_in); without it fuser misparses macFUSE messages.
+# It must NOT be enabled on Linux — the kernel uses the original layout, so
+# fuser would read RENAME names 8 bytes late and every `mv` fails with ENOENT.
+# Cargo merges these features into the fuser dependency above.
+[target.'cfg(target_os = "macos")'.dependencies]
+fuser = { version = "0.15", optional = true, features = ["macfuse-4-compat"] }
 
 [build-dependencies]
 chrono = { workspace = true }

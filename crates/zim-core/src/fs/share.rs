@@ -50,6 +50,11 @@ pub enum ShareError {
     /// decrypt error.
     #[error("share sealed at height {sealed_at} is newer than manifest height {height}")]
     SealedAfterManifest { sealed_at: u64, height: u64 },
+    /// A share reached *via its own recipient* — the relay itself as the
+    /// seal target. A relay carries ciphertext it cannot read; sealing it
+    /// the root would hand it the vault.
+    #[error("refusing to seal the vault to its own relay {0}")]
+    SealedToRelay(Did),
     /// Sealing to, or unsealing with, the recipient's key failed.
     #[error("ratchet share: {0}")]
     Crypto(#[from] RatchetShareError),
@@ -95,15 +100,20 @@ impl Share {
     }
 
     /// Seal `root` — the root ratchet state at `sealed_at` — to
-    /// `recipient`, reached through `via`.
+    /// `recipient`, reached through `via`. Refuses a `via` that *is* the
+    /// recipient: that's the relay sealed as a member.
     pub fn seal(
         root: &EntryRatchet,
         recipient: &PublicKey,
         sealed_at: u64,
         via: Option<Did>,
     ) -> Result<Self, ShareError> {
+        let identity = Did::from_key(recipient);
+        if via.as_ref() == Some(&identity) {
+            return Err(ShareError::SealedToRelay(identity));
+        }
         let ratchet_share = RatchetShare::new(root, recipient, sealed_at)?;
-        Ok(Self::new(ratchet_share, Did::from_key(recipient), via))
+        Ok(Self::new(ratchet_share, identity, via))
     }
 
     /// Replace the sealed state with `root` at `sealed_at`, keeping
@@ -324,6 +334,19 @@ mod tests {
         assert_eq!(share.via(), Some(&Did::from_key(&hub)));
         assert_eq!(share.ratchet_share().sealed_at(), 7);
         assert_eq!(share.root_ratchet_at(&alice, 7).unwrap().key(), new.key());
+    }
+
+    #[test]
+    fn the_hub_cannot_be_sealed_a_share_reached_via_itself() {
+        // Sharing to the hub's host-only did:web resolves to the hub's
+        // own key, reached via the hub: a relay as a member. Refused.
+        let hub = PrivateKey::generate().public();
+
+        let sealed = Share::seal(&EntryRatchet::seed(), &hub, 0, Some(Did::from_key(&hub)));
+
+        assert!(
+            matches!(sealed, Err(ShareError::SealedToRelay(did)) if did == Did::from_key(&hub))
+        );
     }
 
     #[test]

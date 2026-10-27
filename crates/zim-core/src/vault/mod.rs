@@ -343,7 +343,9 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
     /// changes the vault — save first, or replay them after.
     pub async fn refresh(&mut self) -> Result<bool, VaultError<L::Error>> {
         let head = self.log.head(self.id, None).await?;
-        if head.link == self.manifest_link {
+        // Compare by hash: a log may hand back the link under a different
+        // codec than `put_cbor` minted, and that's still the same manifest.
+        if head.link.hash() == self.manifest_link.hash() {
             return Ok(false);
         }
 

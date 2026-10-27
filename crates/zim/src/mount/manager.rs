@@ -217,7 +217,8 @@ impl MountManager {
                         )
                     };
                     let Some(latest) = latest else { continue };
-                    if latest == current {
+                    // By hash, not `Link`: the codec isn't part of identity.
+                    if latest.hash() == current.hash() {
                         continue; // our tree is the canonical head
                     }
                     let mut g = vault.write().await;

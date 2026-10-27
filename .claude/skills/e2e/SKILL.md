@@ -115,6 +115,9 @@ on macOS, `/dev/fuse` on Linux) and (b) a daemon built with the fuse feature
     (no Google account needed) — type the seed email (`$ZIM_DEV_SEED_EMAIL`,
     default `dev@example.com`), mint the web key, open the vault tree —
     seeded vaults should appear.
+    Optional device-code check: `./bin/dev cli alice hub login --hub <hub url>`,
+    open the printed `/auth/device?code=…` link signed out → sign in →
+    the approval page (no web-key prompt) → Approve → the CLI enrolls.
 13. **web → local**: edit a file in the browser tree, then
     `./bin/dev cli alice vault cat <vault> /<file>` — the hub announces the
     head to shareholder daemons over iroh.

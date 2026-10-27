@@ -39,9 +39,6 @@ hub = ["dep:zim-crypto", "dep:zim-did", "dep:chrono", "dep:base64"]
 # `/api/v0/admin/*` — the SPA's admin page + the hub server. Daemons never
 # speak these.
 admin = ["hub"]
-# `/api/v0/auth/device-code/*`, browser approve side — SPA + hub server.
-# (The daemon side of device-code login has its own types in `zim`.)
-grant = ["hub"]
 # `/api/v0/vaults/{id}/*` + `/api/v0/blob` — the hub's vault mirror surface
 # (head, log, blobs). Spoken by the browser wasm SDK + the hub server;
 # daemons sync over iroh, not HTTP. Pulls `zim-core` for `Link`/`VaultId`.

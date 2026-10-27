@@ -181,6 +181,14 @@ pub(super) fn shell(heading: &str, body: &str) -> String {
     )
 }
 
+/// Escape untrusted text for an HTML attribute or element body.
+pub(super) fn escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,8 +196,8 @@ mod tests {
 
     #[test]
     fn a_single_provider_still_gets_a_chooser() {
-        let html = chooser(&[google()], "/device?code=XYZ", None);
-        assert!(html.contains(r#"href="/auth/google/login?next=%2Fdevice%3Fcode%3DXYZ""#));
+        let html = chooser(&[google()], "/auth/device?code=XYZ", None);
+        assert!(html.contains(r#"href="/auth/google/login?next=%2Fauth%2Fdevice%3Fcode%3DXYZ""#));
         assert!(!html.contains(r#"class="error""#));
     }
 

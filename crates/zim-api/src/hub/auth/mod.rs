@@ -1,16 +1,13 @@
-//! Auth-facing surface: session introspection + device-code approval.
+//! Auth-facing surface: session introspection.
 //!
 //! - [`me`] — `GET /api/v0/me`, who's signed in (RequireUser).
-//! - [`grant`] — `/api/v0/auth/device-code/*`, the browser side of
-//!   daemon device-code login (behind the `grant` capability).
+//!
+//! Approving a daemon's device code is a server-rendered hub page
+//! (`/auth/device`), not a JSON route, so it has no wire types here.
 //!
 //! The JWT primitives (mint + verify) live in [`super::jwt`] — they're
 //! auth *machinery*, not a route.
 
-#[cfg(feature = "grant")]
-pub mod grant;
 pub mod me;
 
-#[cfg(feature = "grant")]
-pub use grant::{GrantApproveRequest, GrantInfo, GrantInfoRequest};
 pub use me::{Me, MeRequest};

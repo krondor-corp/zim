@@ -41,8 +41,8 @@ mod tests {
     fn deep_links_survive_sign_in() {
         assert_eq!(sanitize(Some("/v/abc")), "/v/abc");
         assert_eq!(
-            sanitize(Some("/device?code=XYZ-123")),
-            "/device?code=XYZ-123"
+            sanitize(Some("/auth/device?code=XYZ-123")),
+            "/auth/device?code=XYZ-123"
         );
     }
 
@@ -72,8 +72,8 @@ mod tests {
         assert_eq!(login_url("/"), "/auth/login");
         assert_eq!(login_url("//evil.com"), "/auth/login");
         assert_eq!(
-            login_url("/device?code=XYZ"),
-            "/auth/login?next=%2Fdevice%3Fcode%3DXYZ"
+            login_url("/auth/device?code=XYZ"),
+            "/auth/login?next=%2Fauth%2Fdevice%3Fcode%3DXYZ"
         );
     }
 }

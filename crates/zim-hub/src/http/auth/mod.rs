@@ -3,6 +3,7 @@
 //! `ZIM_HUB_AUTH`, can run side by side, and all mint sessions through
 //! [`session`]. [`login`] is the server-rendered sign-in page; the
 //! wasm app is only served to users who already have a session.
+//! [`device`] approves a daemon's `zim hub login` the same way.
 //!
 //! Three extractors layered by access level:
 //!
@@ -20,6 +21,7 @@
 
 #[cfg(feature = "dev-login")]
 pub mod dev;
+pub mod device;
 pub mod google;
 pub mod login;
 // Both ends of the JWT format (mint + verify) live in `zim_api::hub::jwt`
@@ -56,7 +58,9 @@ pub fn router(state: AppState) -> Router<AppState> {
     let mut r = Router::new()
         .route("/login", get(login::handler))
         .route("/logout", post(logout::handler))
-        .route("/pending", get(pending_page));
+        .route("/pending", get(pending_page))
+        .route("/device", get(device::page))
+        .route("/device/approve", post(device::approve));
     // Each enabled provider mounts its own routes; disabled ones 404.
     for provider in &state.auth.providers {
         r = match provider {

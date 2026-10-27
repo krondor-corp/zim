@@ -12,7 +12,7 @@ use axum::routing::get;
 use axum::{Form, Router};
 use serde::Deserialize;
 
-use crate::http::auth::login::{shell, LoginError};
+use crate::http::auth::login::{escape, shell, LoginError};
 use crate::http::auth::return_to;
 use crate::http::auth::session::{mint_session, Authority};
 use crate::state::AppState;
@@ -45,8 +45,8 @@ fn form_page(next: &str) -> String {
           <button type="submit" class="btn btn-primary" style="width:100%;">Sign in</button>
         </form>
         <p class="dim" style="text-align:center;margin-top:1rem;"><a href="{back}">Other sign-in options</a></p>"#,
-            next_attr = escape_attr(next),
-            back = escape_attr(&return_to::login_url(next)),
+            next_attr = escape(next),
+            back = escape(&return_to::login_url(next)),
         ),
     )
 }
@@ -72,13 +72,6 @@ async fn submit(State(state): State<AppState>, Form(f): Form<Submit>) -> Respons
             Redirect::to(&LoginError::from(&e).url(next)).into_response()
         }
     }
-}
-
-fn escape_attr(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('"', "&quot;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
 }
 
 #[cfg(test)]

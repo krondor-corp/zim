@@ -67,9 +67,12 @@ mod tests {
 
     #[test]
     fn alice_returns_to_where_she_started() {
-        let (state, set_cookie) = begin("/device?code=XYZ", false);
+        let (state, set_cookie) = begin("/auth/device?code=XYZ", false);
         let alice = browser_with(&nonce_cookie(&set_cookie));
-        assert_eq!(finish(&state, &alice).as_deref(), Some("/device?code=XYZ"));
+        assert_eq!(
+            finish(&state, &alice).as_deref(),
+            Some("/auth/device?code=XYZ")
+        );
     }
 
     #[test]

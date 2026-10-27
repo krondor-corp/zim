@@ -15,9 +15,8 @@ use zim_api::{ApiError, ApiRequest, Client, Url};
 
 // One definition per endpoint — server serializes, CLI + SPA deserialize.
 pub use zim_api::hub::{
-    AdminActionRequest, AdminUser, AdminUsers, AdminUsersRequest, Device, DevicesRequest,
-    GrantApproveRequest, GrantInfo, GrantInfoRequest, Me, MeRequest, RemoveDeviceRequest,
-    VaultItem, VaultsRequest,
+    AdminActionRequest, AdminUser, AdminUsers, AdminUsersRequest, Device, DevicesRequest, Me,
+    MeRequest, RemoveDeviceRequest, VaultItem, VaultsRequest,
 };
 
 /// One entry as `WasmFs::ls` serializes it.
@@ -80,22 +79,6 @@ pub async fn admin_action(user_id: &str, action: &str) -> Result<(), String> {
     call(AdminActionRequest {
         user_id: user_id.to_string(),
         action: action.to_string(),
-    })
-    .await
-}
-
-// ─── Device-code approval (RequireUser) ───────────────────────────────
-
-pub async fn fetch_grant(code: &str) -> Result<GrantInfo, String> {
-    call(GrantInfoRequest {
-        code: code.to_string(),
-    })
-    .await
-}
-
-pub async fn approve_grant(code: &str) -> Result<(), String> {
-    call(GrantApproveRequest {
-        code: code.to_string(),
     })
     .await
 }

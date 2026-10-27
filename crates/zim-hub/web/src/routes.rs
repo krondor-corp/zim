@@ -18,8 +18,6 @@ pub enum Route {
     Settings,
     #[at("/admin")]
     Admin,
-    #[at("/device")]
-    DevicePair,
     #[not_found]
     #[at("/404")]
     NotFound,
@@ -49,9 +47,6 @@ pub fn switch(route: Route, me: &Me) -> Html {
                 <pages::admin::Admin />
             </PackChrome>
         },
-        // Device pairing has its own bare layout (reached pre-app from a
-        // `zim hub login` link).
-        Route::DevicePair => html! { <pages::device_pair::DevicePair /> },
         Route::NotFound => html! { <pages::not_found::NotFound /> },
     }
 }

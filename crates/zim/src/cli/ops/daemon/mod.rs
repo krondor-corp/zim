@@ -1,7 +1,7 @@
 //! `zim daemon <subcommand>` — the daemon process and its lifecycle.
 //!
 //! - `zim daemon run` — runs in the foreground until SIGINT/SIGTERM.
-//! - `zim daemon service <op>` — register/start/stop/status/uninstall
+//! - `zim daemon service <op>` — register/start/stop/restart/status/uninstall
 //!   the daemon as a user-level service (launchd, systemd --user,
 //!   sc.exe). See [`service`].
 //!

@@ -48,7 +48,7 @@ pub enum UpdateError {
     Download(String),
     #[error("install: {0}")]
     Install(String),
-    #[error("service restart: {0} — run `zim daemon service start` manually")]
+    #[error("service restart: {0} — run `zim daemon service restart` manually")]
     ServiceRestart(String),
 }
 
@@ -119,31 +119,28 @@ async fn latest_release(http: &reqwest::Client) -> Result<Option<Release>, Updat
 
 /// Restart the installed daemon service, if there is one. `Ok(false)`
 /// when no service is installed/running — not an error.
-fn restart_service_if_running() -> Result<bool, UpdateError> {
+async fn restart_service_if_running() -> Result<bool, UpdateError> {
     use crate::cli::ops::daemon::service as svc;
-    let Ok(manager) = svc::manager() else {
-        return Ok(false);
+    // The manager isn't `Send`; keep it out of scope across the await.
+    let status = {
+        let Ok(manager) = svc::manager() else {
+            return Ok(false);
+        };
+        manager
+            .status(service_manager::ServiceStatusCtx {
+                label: svc::label(),
+            })
+            .map_err(|e| UpdateError::ServiceRestart(e.to_string()))?
     };
-    let label = svc::label();
-    let status = manager
-        .status(service_manager::ServiceStatusCtx {
-            label: label.clone(),
-        })
-        .map_err(|e| UpdateError::ServiceRestart(e.to_string()))?;
-    match status {
-        service_manager::ServiceStatus::Running => {
-            manager
-                .stop(service_manager::ServiceStopCtx {
-                    label: label.clone(),
-                })
-                .map_err(|e| UpdateError::ServiceRestart(e.to_string()))?;
-            manager
-                .start(service_manager::ServiceStartCtx { label })
-                .map_err(|e| UpdateError::ServiceRestart(e.to_string()))?;
-            Ok(true)
-        }
-        _ => Ok(false),
+    if !matches!(status, service_manager::ServiceStatus::Running) {
+        return Ok(false);
     }
+    let ctx = crate::context::ApiContext::build(None)
+        .map_err(|e| UpdateError::ServiceRestart(e.to_string()))?;
+    svc::restart::restart_service(&ctx.client)
+        .await
+        .map_err(|e| UpdateError::ServiceRestart(e.to_string()))?;
+    Ok(true)
 }
 
 #[async_trait]
@@ -226,7 +223,7 @@ impl Op for Update {
 
         // A running managed daemon is still executing the old binary —
         // bounce it so daemon and CLI stay in lockstep.
-        let service_restarted = restart_service_if_running()?;
+        let service_restarted = restart_service_if_running().await?;
 
         Ok(UpdateOutput {
             current,

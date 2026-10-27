@@ -78,12 +78,21 @@ zim update           # download, swap the binary, restart the daemon service if 
 The daemon manages its own OS service registration — no unit files to write:
 
 ```bash
-zim daemon service install    # register with launchd (macOS) / systemd (Linux)
-zim daemon service start
+zim daemon service install    # register with launchd (macOS) / systemd (Linux) and start it
 zim daemon service status
 ```
 
-`stop` and `uninstall` undo it. Logs: `zim daemon logs`.
+`install` starts the daemon and keeps it starting on login; pass `--no-autostart` to register without starting, then `zim daemon service start` when you want it. The service manager restarts the daemon if it crashes, but not after you stop it.
+
+```bash
+zim daemon service restart    # stop, wait for it to drain, start again
+zim daemon service stop       # stop until the next start (or login)
+zim daemon service uninstall  # unregister entirely
+```
+
+Logs: `zim daemon logs`.
+
+If `stop` reports the daemon was registered with KeepAlive, it was installed by an older `zim` that launchd always respawns — run `zim daemon service install` again to re-register it.
 
 To run it in the foreground instead (debugging, containers):
 

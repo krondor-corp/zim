@@ -60,6 +60,7 @@ hex = "0.4"
 hostname = "0.4"
 serde = { workspace = true }
 serde_json = { workspace = true }
+plist = "1"
 service-manager = "0.8"
 thiserror = { workspace = true }
 tokio = { workspace = true }

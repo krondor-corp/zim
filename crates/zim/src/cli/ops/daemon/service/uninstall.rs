@@ -48,7 +48,7 @@ impl fmt::Display for UninstallOutput {
         write!(
             f,
             "{}",
-            ui::failure("uninstalled", &label().to_qualified_name())
+            ui::success("uninstalled", &label().to_qualified_name())
         )
     }
 }

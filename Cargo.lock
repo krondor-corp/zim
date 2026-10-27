@@ -7440,6 +7440,7 @@ dependencies = [
  "libc",
  "moka",
  "owo-colors",
+ "plist",
  "reqwest",
  "serde",
  "serde_json",

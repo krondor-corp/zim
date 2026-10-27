@@ -6,12 +6,15 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use clap::Args;
-use service_manager::ServiceInstallCtx;
+use service_manager::{ServiceInstallCtx, ServiceStartCtx};
 
 use crate::cli::op::Op;
 use crate::cli::ui;
 
-use super::{label, manager};
+use super::{label, launchd, manager};
+
+/// Arguments the service runs `zim` with.
+const DAEMON_ARGS: [&str; 2] = ["daemon", "run"];
 
 #[derive(Args, Debug, Clone)]
 pub struct Install {
@@ -30,6 +33,8 @@ pub struct Install {
 pub struct InstallOutput {
     pub program: PathBuf,
     pub autostart: bool,
+    /// Whether the daemon was started as part of installing.
+    pub started: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -40,6 +45,8 @@ pub enum InstallError {
     Manager(std::io::Error),
     #[error("install: {0}")]
     Install(std::io::Error),
+    #[error("start: {0}")]
+    Start(std::io::Error),
 }
 
 #[async_trait]
@@ -60,11 +67,15 @@ impl Op for Install {
         let autostart = !self.no_autostart;
 
         let mgr = manager().map_err(InstallError::Manager)?;
+        let qn = label().to_qualified_name();
         mgr.install(ServiceInstallCtx {
             label: label(),
             program: program.clone(),
-            args: vec![OsString::from("daemon"), OsString::from("run")],
-            contents: None,
+            args: DAEMON_ARGS.iter().map(OsString::from).collect(),
+            // service-manager's launchd plist keeps the daemon alive
+            // through a clean stop; ours only restarts it on a crash.
+            contents: launchd::active()
+                .then(|| launchd::plist(&qn, &program, &DAEMON_ARGS, autostart)),
             username: None,
             working_directory: None,
             environment: None,
@@ -73,23 +84,42 @@ impl Op for Install {
         })
         .map_err(InstallError::Install)?;
 
-        Ok(InstallOutput { program, autostart })
+        // launchd starts an autostart job at load (`RunAtLoad`); other
+        // managers only enable it for next boot, so start it now —
+        // autostart means running, on every platform.
+        if autostart && !launchd::active() {
+            mgr.start(ServiceStartCtx { label: label() })
+                .map_err(InstallError::Start)?;
+        }
+
+        Ok(InstallOutput {
+            program,
+            autostart,
+            started: autostart,
+        })
     }
 }
 
 impl fmt::Display for InstallOutput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let autostart_note = if self.autostart {
-            ui::dim("autostart on login")
+        let qn = label().to_qualified_name();
+        let program = ui::dim(self.program.display().to_string());
+        if self.started {
+            write!(
+                f,
+                "{} ({}) — {}",
+                ui::success("installed and started", &qn),
+                program,
+                ui::dim("autostart on login"),
+            )
         } else {
-            ui::dim("manual start")
-        };
-        write!(
-            f,
-            "{} ({}) — {}\n  next: zim daemon service start",
-            ui::success("installed", &label().to_qualified_name()),
-            ui::dim(self.program.display().to_string()),
-            autostart_note,
-        )
+            write!(
+                f,
+                "{} ({}) — {}\n  next: zim daemon service start",
+                ui::success("installed", &qn),
+                program,
+                ui::dim("manual start"),
+            )
+        }
     }
 }

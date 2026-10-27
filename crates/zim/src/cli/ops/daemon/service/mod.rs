@@ -4,7 +4,8 @@
 //! Defaults to the **user** service level (launchd `~/Library/
 //! LaunchAgents`, systemd `--user`) — no root required. The daemon
 //! itself lives one level up at `zim daemon run`; this module is
-//! just the registration / start / stop plumbing.
+//! just the registration / start / stop plumbing. On macOS we write
+//! our own launchd plist (see [`launchd`]) so a stop actually sticks.
 
 use std::fmt;
 
@@ -15,6 +16,9 @@ use service_manager::{ServiceLabel, ServiceLevel, ServiceManager};
 use crate::cli::op::Op;
 
 pub mod install;
+mod launchd;
+mod probe;
+pub mod restart;
 pub mod start;
 pub mod status;
 pub mod stop;
@@ -28,6 +32,8 @@ pub enum Service {
     Start(start::Start),
     /// Stop the running service.
     Stop(stop::Stop),
+    /// Stop the service, wait for it to drain, and start it again.
+    Restart(restart::Restart),
     /// Show whether the service is installed / running.
     Status(status::Status),
     /// Unregister the service.
@@ -40,6 +46,7 @@ pub enum ServiceOutput {
     Install(install::InstallOutput),
     Start(start::StartOutput),
     Stop(stop::StopOutput),
+    Restart(restart::RestartOutput),
     Status(status::StatusOutput),
     Uninstall(uninstall::UninstallOutput),
 }
@@ -52,6 +59,8 @@ pub enum ServiceError {
     Start(#[from] start::StartError),
     #[error(transparent)]
     Stop(#[from] stop::StopError),
+    #[error(transparent)]
+    Restart(#[from] restart::RestartError),
     #[error(transparent)]
     Status(#[from] status::StatusError),
     #[error(transparent)]
@@ -73,6 +82,7 @@ impl Op for Service {
             Service::Install(c) => ServiceOutput::Install(c.run(c.build_context().await?).await?),
             Service::Start(c) => ServiceOutput::Start(c.run(c.build_context().await?).await?),
             Service::Stop(c) => ServiceOutput::Stop(c.run(c.build_context().await?).await?),
+            Service::Restart(c) => ServiceOutput::Restart(c.run(c.build_context().await?).await?),
             Service::Status(c) => ServiceOutput::Status(c.run(c.build_context().await?).await?),
             Service::Uninstall(c) => {
                 ServiceOutput::Uninstall(c.run(c.build_context().await?).await?)
@@ -87,6 +97,7 @@ impl fmt::Display for ServiceOutput {
             ServiceOutput::Install(o) => write!(f, "{o}"),
             ServiceOutput::Start(o) => write!(f, "{o}"),
             ServiceOutput::Stop(o) => write!(f, "{o}"),
+            ServiceOutput::Restart(o) => write!(f, "{o}"),
             ServiceOutput::Status(o) => write!(f, "{o}"),
             ServiceOutput::Uninstall(o) => write!(f, "{o}"),
         }

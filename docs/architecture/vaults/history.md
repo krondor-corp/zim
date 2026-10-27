@@ -19,6 +19,33 @@ but the concrete append implementations do not currently enforce every
 height/parent invariant described by the trait. Chain verification must not
 assume an append alone proved continuity.
 
+## Reading Past Versions
+
+Every manifest pins its whole tree, so any historical head fully
+reconstructs that version. `Vault::open_at(id, height, ..)` opens the
+canonical head at `height` through the same path as `open_with_head`.
+
+Decryption uses the share sealed into *that* manifest. Shares are copied
+forward on every save, so a key granted at height `N` can open versions
+`>= N` and gets `ShareError::NotFound` for anything earlier — grants are
+"from this version onward" by construction. A revocation re-seeds the root
+lineage going forward, but the remaining holders' old shares ride along in
+the old manifests, so pre-revocation history stays readable to them.
+
+Restoring is never a chain rewrite: read the old content from the
+historical handle, write it on the live handle, and save. The restored
+content lands at a new height; the overwritten version stays in history.
+
+The browser exposes this as a read-only `WasmVersion` (no `save`) plus
+`WasmVersion::history`, which pages `/api/v0/vaults/{id}/log` and fetches
+each manifest's plaintext header for its author and whether this browser
+holds a share there. The web workspace's History view restores per file —
+whole-vault restore would clobber concurrent work in unrelated paths.
+
+Manifests carry height and author but no wall-clock time, so history lists
+versions by height. A signed timestamp would need a clock passed in from
+the caller (zim-core is wasm-clean and cannot read one itself).
+
 ## Operations
 
 Each manifest may point to an encrypted operations log containing only the

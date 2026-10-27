@@ -645,3 +645,121 @@ async fn revoking_bob_reseeds_the_root_lineage() {
         b"not for bob"
     );
 }
+
+// -- reading + restoring history --
+
+#[tokio::test]
+async fn alice_restores_a_note_she_overwrote() {
+    // Alice writes a note, then clobbers it. The old text is unreachable
+    // from the live tree, but the version before the overwrite still
+    // holds it — and restoring is just writing it forward.
+    let blobs = MemBlobs::default();
+    let log = MemLog::default();
+    let alice = PrivateKey::generate();
+    let mut live = Vault::init("h".to_string(), &alice, blobs.clone(), log.clone())
+        .await
+        .expect("init");
+    let id = live.id();
+    let note = AbsPath::new("/plan.md").unwrap();
+
+    // -- v1: the good draft; v2: the overwrite --
+    live.fs()
+        .add(&note, Cursor::new(b"the good draft"))
+        .await
+        .unwrap();
+    live.save().await.expect("save 1");
+    live.fs().add(&note, Cursor::new(b"oops")).await.unwrap();
+    live.save().await.expect("save 2");
+
+    // -- browse v1: it reads exactly as it was --
+    let v1 = Vault::open_at(id, 1, blobs.clone(), log.clone(), &alice)
+        .await
+        .expect("open v1");
+    assert_eq!(v1.height(), 1);
+    let old = v1.fs().cat(&note).await.unwrap();
+    assert_eq!(old, b"the good draft");
+
+    // -- restore: a normal save on the live handle, appended at v3 --
+    live.fs().add(&note, Cursor::new(old)).await.unwrap();
+    live.save().await.expect("save 3 restores");
+    assert_eq!(live.height(), 3);
+    assert_eq!(live.fs().cat(&note).await.unwrap(), b"the good draft");
+
+    // The overwrite is still in the chain — restore never rewrites it.
+    let v2 = Vault::open_at(id, 2, blobs, log, &alice)
+        .await
+        .expect("open v2");
+    assert_eq!(v2.fs().cat(&note).await.unwrap(), b"oops");
+}
+
+#[tokio::test]
+async fn bob_reads_history_only_from_his_grant_onward() {
+    // Bob is granted at v1. Versions from there on carry his share;
+    // genesis predates him and stays sealed.
+    let blobs = MemBlobs::default();
+    let log = MemLog::default();
+    let alice = PrivateKey::generate();
+    let bob = PrivateKey::generate();
+    let mut vault = Vault::init("g".to_string(), &alice, blobs.clone(), log.clone())
+        .await
+        .expect("init");
+    let id = vault.id();
+    vault.add_share(bob.public()).expect("grant");
+    vault
+        .fs()
+        .add(&AbsPath::new("/a.md").unwrap(), Cursor::new(b"hi bob"))
+        .await
+        .unwrap();
+    vault.save().await.expect("save 1");
+
+    let before: Result<Vault<MemBlobs, MemLog>, _> =
+        Vault::open_at(id, 0, blobs.clone(), log.clone(), &bob).await;
+    assert!(matches!(
+        before,
+        Err(VaultError::Share(ShareError::NotFound))
+    ));
+
+    let at_grant = Vault::open_at(id, 1, blobs, log, &bob)
+        .await
+        .expect("bob opens v1");
+    assert_eq!(
+        at_grant
+            .fs()
+            .cat(&AbsPath::new("/a.md").unwrap())
+            .await
+            .unwrap(),
+        b"hi bob"
+    );
+}
+
+#[tokio::test]
+async fn alice_still_reads_history_from_before_a_revocation() {
+    // Revoking Bob re-seeds the root lineage. Alice's old share rides
+    // along in the old manifests, so the pre-revocation versions stay
+    // readable to her.
+    let blobs = MemBlobs::default();
+    let log = MemLog::default();
+    let alice = PrivateKey::generate();
+    let bob = PrivateKey::generate();
+    let mut vault = Vault::init("rv".to_string(), &alice, blobs.clone(), log.clone())
+        .await
+        .expect("init");
+    let id = vault.id();
+    let note = AbsPath::new("/old.md").unwrap();
+    vault.add_share(bob.public()).expect("grant");
+    vault
+        .fs()
+        .add(&note, Cursor::new(b"shared era"))
+        .await
+        .unwrap();
+    vault.save().await.expect("save 1");
+
+    vault.remove_share(bob.public()).expect("revoke");
+    vault.fs().rm(&note).await.unwrap();
+    vault.save().await.expect("save 2 on the new lineage");
+
+    let v1 = Vault::open_at(id, 1, blobs, log, &alice)
+        .await
+        .expect("alice opens v1");
+    assert_eq!(v1.fs().cat(&note).await.unwrap(), b"shared era");
+}

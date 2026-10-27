@@ -3,7 +3,9 @@
 //! Owns the **long-lived vault handles** and their FUSE sessions. Each mount
 //! opens its vault exactly once into an `Arc<RwLock<Vault>>` and hands it to
 //! [`crate::fuse::FuseFs`], which serializes every mutation through the write lock
-//! then `save()`s — a single in-process writer advancing the chain linearly.
+//! and stages it; a shared [`PendingCommit`] `save()`s once the mount goes quiet
+//! — a single in-process writer advancing the chain linearly, one version per
+//! editor save rather than per syscall.
 //! This is deliberately *unlike* the daemon's HTTP path (which re-opens per
 //! request and can fork the head under concurrency); see the FUSE plan.
 //!
@@ -11,12 +13,13 @@
 //! HTTP vault-mutation handlers call [`MountManager::fs_add`] (etc.) first: if
 //! the target vault is mounted they go through the mount's handle + shared
 //! cache, so a `zim vault … add` to a mounted vault can't fork the head and is
-//! immediately visible through the mountpoint.
+//! immediately visible through the mountpoint. Their `save()` sweeps up any
+//! staged mount work, so they mark the pending commit done.
 //!
 //! Remote sync is reconciled by a per-mount watcher: when an incoming
 //! `HeadAdvanced` → `PullFromPeer` advances the local log past the mount's
-//! pinned in-memory manifest, the watcher reloads the handle to the canonical
-//! head and drops the stale cache. (Concurrent local-mount *and* remote writes
+//! pinned in-memory manifest, the watcher commits any staged mount work, then
+//! reloads the handle to the canonical head and drops the stale cache. (Concurrent local-mount *and* remote writes
 //! to the same vault still pick the canonical fork — full merge is future
 //! work.)
 
@@ -27,7 +30,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::fuse::inode_table::InodeTable;
-use crate::fuse::{spawn_mount, BackgroundSession, FileCache, FileCacheConfig, FuseFs};
+use crate::fuse::{
+    spawn_mount, BackgroundSession, FileCache, FileCacheConfig, FuseFs, OnCommit, PendingCommit,
+};
 use tokio::runtime::Handle;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
@@ -41,6 +46,7 @@ use super::store::{MountRecord, MountStore};
 
 type DaemonPeer = Peer<SqliteVaultLog>;
 type DaemonVault = Vault<BlobsProvider, SqliteVaultLog>;
+type DaemonPending = PendingCommit<BlobsProvider, SqliteVaultLog>;
 
 /// A running mount: the FUSE session (dropping it unmounts) plus the shared
 /// handle + cache the daemon reuses to keep HTTP writes coherent, and a
@@ -51,6 +57,8 @@ struct LiveMount {
     vault_id: VaultId,
     vault: Arc<RwLock<DaemonVault>>,
     cache: FileCache,
+    /// Mount mutations staged on `vault` but not yet committed.
+    pending: Arc<DaemonPending>,
     /// Background reconciliation task; aborted when the mount goes away.
     watcher: JoinHandle<()>,
 }
@@ -139,14 +147,16 @@ impl MountManager {
         let vault = Arc::new(RwLock::new(vault));
         let cache = FileCache::new(FileCacheConfig::default());
 
-        // After each committed FUSE mutation, announce the new head to peers.
-        let on_commit: Arc<dyn Fn() + Send + Sync> = {
+        // After each (debounced) mount commit, announce the new head to peers.
+        // Fired from inside the runtime under the write guard → spawn, and
+        // the announce reads the head once the guard is released.
+        let on_commit: OnCommit = {
             let peer = self.peer.clone();
             let rt = self.rt.clone();
             let vault = vault.clone();
             Arc::new(move || {
-                let (peer, rt, vault) = (peer.clone(), rt.clone(), vault.clone());
-                rt.block_on(async move {
+                let (peer, vault) = (peer.clone(), vault.clone());
+                rt.spawn(async move {
                     let guard = vault.read().await;
                     if let Ok(head) = guard.head().await {
                         peer.announce_head(&guard, head).await;
@@ -154,13 +164,18 @@ impl MountManager {
                 });
             })
         };
+        let pending = Arc::new(PendingCommit::new(
+            self.rt.clone(),
+            vault.clone(),
+            Some(on_commit),
+        ));
 
         let fs = FuseFs::new(
             self.rt.clone(),
             vault.clone(),
             cache.clone(),
             record.read_only,
-            Some(on_commit),
+            pending.clone(),
         );
         let volname = mountpoint
             .file_name()
@@ -182,11 +197,14 @@ impl MountManager {
         // Reconcile with remote sync: the long-lived handle's in-memory tree
         // (`manifest_link`) is pinned, but `head()` reflects the live log. When
         // a remote peer advances the log past our manifest, reload the handle to
-        // the canonical head and drop the stale cache.
+        // the canonical head and drop the stale cache. A reload discards staged
+        // mutations, so commit them first — all under one write guard, so the
+        // mount can't stage anything between the commit and the swap.
         let watcher = {
             let peer = self.peer.clone();
             let vault = vault.clone();
             let cache = cache.clone();
+            let pending = pending.clone();
             let id = record.vault_id;
             self.rt.spawn(async move {
                 loop {
@@ -202,9 +220,14 @@ impl MountManager {
                     if latest == current {
                         continue; // our tree is the canonical head
                     }
+                    let mut g = vault.write().await;
+                    if let Err(e) = pending.flush_locked(&mut g).await {
+                        tracing::warn!(%id, "mount commit before reload failed: {e}");
+                        continue; // keep the staged work; retry next poll
+                    }
                     match peer.vault(id).await {
                         Ok(fresh) => {
-                            *vault.write().await = fresh;
+                            *g = fresh;
                             cache.invalidate_all();
                             tracing::info!(%id, "mount reloaded to advanced head");
                         }
@@ -221,6 +244,7 @@ impl MountManager {
                 vault_id: record.vault_id,
                 vault,
                 cache,
+                pending,
                 watcher,
             },
         );
@@ -250,9 +274,15 @@ impl MountManager {
     /// shutdown so mounts spin down with the process instead of lingering
     /// as dead volumes; `start_auto` on the next boot brings the `--auto`
     /// ones back.
-    pub fn stop_all(&self) {
-        let mut live = self.live.lock().unwrap();
-        for (mountpoint, _mount) in live.drain() {
+    ///
+    /// Staged mount work is committed first: its debounce timer would
+    /// otherwise die with the runtime.
+    pub async fn stop_all(&self) {
+        let drained: Vec<_> = self.live.lock().unwrap().drain().collect();
+        for (mountpoint, mount) in drained {
+            if let Err(e) = mount.pending.flush().await {
+                tracing::warn!("commit {} before unmount: {e}", mountpoint.display());
+            }
             // Dropping the LiveMount drops its BackgroundSession → unmount.
             tracing::info!("unmounting {} (daemon shutdown)", mountpoint.display());
         }
@@ -342,17 +372,27 @@ impl MountManager {
     // the op, saves, announces the new head, and invalidates the shared cache so
     // the mount reflects the change immediately.
 
-    /// The live handle + cache for a mounted `vault_id`, if any.
-    fn live_of(&self, id: VaultId) -> Option<(Arc<RwLock<DaemonVault>>, FileCache)> {
+    /// The live handle, cache + pending commit for a mounted `vault_id`.
+    fn live_of(
+        &self,
+        id: VaultId,
+    ) -> Option<(Arc<RwLock<DaemonVault>>, FileCache, Arc<DaemonPending>)> {
         let live = self.live.lock().unwrap();
         live.values()
             .find(|m| m.vault_id == id)
-            .map(|m| (m.vault.clone(), m.cache.clone()))
+            .map(|m| (m.vault.clone(), m.cache.clone(), m.pending.clone()))
     }
 
     /// Save under the held write guard, announce the new head, return it.
-    async fn save_announce(&self, guard: &mut DaemonVault) -> anyhow::Result<Committed> {
+    /// The save sweeps up any staged mount work, so the pending commit has
+    /// nothing left to do.
+    async fn save_announce(
+        &self,
+        guard: &mut DaemonVault,
+        pending: &DaemonPending,
+    ) -> anyhow::Result<Committed> {
         let link = guard.save().await?;
+        pending.mark_committed();
         let head = guard.head().await?;
         self.peer.announce_head(guard, head.clone()).await;
         Ok(Committed {
@@ -368,11 +408,11 @@ impl MountManager {
         path: String,
         bytes: Vec<u8>,
     ) -> Option<anyhow::Result<Committed>> {
-        let (vault, cache) = self.live_of(id)?;
+        let (vault, cache, pending) = self.live_of(id)?;
         let result = async {
             let mut g = vault.write().await;
             g.fs().add(&abs(&path), Cursor::new(bytes)).await?;
-            self.save_announce(&mut g).await
+            self.save_announce(&mut g, &pending).await
         }
         .await;
         cache.invalidate(&path);
@@ -382,11 +422,11 @@ impl MountManager {
 
     /// Route a mkdir through the mount (if mounted).
     pub async fn fs_mkdir(&self, id: VaultId, path: String) -> Option<anyhow::Result<Committed>> {
-        let (vault, cache) = self.live_of(id)?;
+        let (vault, cache, pending) = self.live_of(id)?;
         let result = async {
             let mut g = vault.write().await;
             g.fs().mkdir(&abs(&path), false).await?;
-            self.save_announce(&mut g).await
+            self.save_announce(&mut g, &pending).await
         }
         .await;
         cache.invalidate(&path);
@@ -396,11 +436,11 @@ impl MountManager {
 
     /// Route a remove through the mount (if mounted).
     pub async fn fs_rm(&self, id: VaultId, path: String) -> Option<anyhow::Result<Committed>> {
-        let (vault, cache) = self.live_of(id)?;
+        let (vault, cache, pending) = self.live_of(id)?;
         let result = async {
             let mut g = vault.write().await;
             g.fs().rm(&abs(&path)).await?;
-            self.save_announce(&mut g).await
+            self.save_announce(&mut g, &pending).await
         }
         .await;
         cache.invalidate(&path);
@@ -415,11 +455,11 @@ impl MountManager {
         from: String,
         to: String,
     ) -> Option<anyhow::Result<Committed>> {
-        let (vault, cache) = self.live_of(id)?;
+        let (vault, cache, pending) = self.live_of(id)?;
         let result = async {
             let mut g = vault.write().await;
             g.fs().mv(&abs(&from), &abs(&to)).await?;
-            self.save_announce(&mut g).await
+            self.save_announce(&mut g, &pending).await
         }
         .await;
         for p in [&from, &to] {

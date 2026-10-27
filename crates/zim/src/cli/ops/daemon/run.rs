@@ -88,7 +88,7 @@ impl Op for Run {
         // Spin mounts down with the daemon — a dead mount is worse than
         // no mount (Finder shows a ghost volume; IO hangs).
         #[cfg(feature = "fuse")]
-        state.mounts().stop_all();
+        state.mounts().stop_all().await;
 
         Ok(RunOutput {})
     }

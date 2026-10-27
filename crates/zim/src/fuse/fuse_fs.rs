@@ -1,8 +1,10 @@
 //! `fuser::Filesystem` over a long-lived [`Vault`].
 //!
 //! Reads serve from the in-memory tree under a read lock (fast); mutations
-//! take the write lock, apply the `fs()` op, and `save()` — committing a new
-//! manifest head in-process, atomically under a single lock. There is no HTTP
+//! take the write lock and apply the `fs()` op to the in-memory tree — visible
+//! through the mount at once — then hand the commit to [`PendingCommit`],
+//! which coalesces an editor's multi-syscall save into one `save()` + announce
+//! once the mount goes quiet. There is no HTTP
 //! self-round-trip (the old `_zim-peer` design persisted via the daemon's own
 //! API); the `Vault` *is* the persistence layer.
 //!
@@ -31,6 +33,7 @@ use zim_core::vault::log::VaultLog;
 use zim_core::vault::Vault;
 
 use super::cache::{CachedAttr, CachedContent, CachedDirEntry, FileCache};
+use super::commit::PendingCommit;
 use super::inode_table::InodeTable;
 
 /// Pending whole-file write buffer, keyed by file handle. We buffer the whole
@@ -55,9 +58,8 @@ pub struct FuseFs<B: BlobStore, L: VaultLog> {
     cache: FileCache,
     read_only: bool,
     next_fh: AtomicU64,
-    /// Invoked after every committed mutation (the daemon wires this to
-    /// `Peer::announce_head`). `None` in tests / standalone mounts.
-    on_commit: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Turns staged mutations into debounced commits (+ announces).
+    pending: Arc<PendingCommit<B, L>>,
 }
 
 const ATTR_TTL: Duration = Duration::from_secs(1);
@@ -82,12 +84,6 @@ fn errno(e: &FsError) -> libc::c_int {
     }
 }
 
-/// `Vault::save`'s error type isn't `FsError`; flatten it into one so it rides
-/// the same errno mapping.
-fn save_err<E: std::fmt::Display>(e: E) -> FsError {
-    FsError::Backing(anyhow::anyhow!("vault save: {e}"))
-}
-
 fn abs(path: &str) -> AbsPath {
     AbsPath::from_abs(std::path::PathBuf::from(path))
 }
@@ -104,12 +100,14 @@ impl<B: BlobStore, L: VaultLog> FuseFs<B, L> {
     /// `cache` is supplied by the caller (rather than built here) so the
     /// daemon can keep a clone and invalidate it when it mutates the same
     /// vault out-of-band — keeping the mount coherent with HTTP-API writes.
+    /// `pending` likewise, so the daemon can commit staged mount work before
+    /// it reloads or saves the same handle.
     pub fn new(
         rt: Handle,
         vault: Arc<RwLock<Vault<B, L>>>,
         cache: FileCache,
         read_only: bool,
-        on_commit: Option<Arc<dyn Fn() + Send + Sync>>,
+        pending: Arc<PendingCommit<B, L>>,
     ) -> Self {
         Self {
             rt,
@@ -119,7 +117,7 @@ impl<B: BlobStore, L: VaultLog> FuseFs<B, L> {
             cache,
             read_only,
             next_fh: AtomicU64::new(1),
-            on_commit,
+            pending,
         }
     }
 
@@ -171,9 +169,10 @@ impl<B: BlobStore, L: VaultLog> FuseFs<B, L> {
         }
     }
 
-    /// Run a committed mutation: block on `fut` (which takes the write lock,
-    /// stages the op, and `save()`s), then invalidate cache + fire `on_commit`.
-    fn commit(
+    /// Run a staged mutation: block on `fut` (which takes the write lock,
+    /// applies the op, and `touch`es the pending commit), then invalidate the
+    /// cache. The commit itself lands once the mount goes quiet.
+    fn stage(
         &self,
         invalidate: &[&str],
         fut: impl Future<Output = Result<(), FsError>>,
@@ -182,9 +181,6 @@ impl<B: BlobStore, L: VaultLog> FuseFs<B, L> {
             Ok(()) => {
                 for p in invalidate {
                     self.cache.invalidate(p);
-                }
-                if let Some(cb) = &self.on_commit {
-                    cb();
                 }
                 Ok(())
             }
@@ -303,18 +299,19 @@ impl<B: BlobStore, L: VaultLog> FuseFs<B, L> {
         result
     }
 
-    /// Stage `data` as the whole body of `path` and commit. Shared by
+    /// Stage `data` as the whole body of `path`. Shared by
     /// create/write-flush/truncate.
     fn write_whole(&self, path: &str, parent: &str, data: Vec<u8>) -> Result<(), libc::c_int> {
         let vault = self.vault.clone();
+        let pending = self.pending.clone();
         let p = path.to_string();
         let fut = async move {
-            let mut g = vault.write().await;
+            let g = vault.write().await;
             g.fs().add(&abs(&p), Cursor::new(data)).await?;
-            g.save().await.map_err(save_err)?;
+            pending.touch();
             Ok(())
         };
-        self.commit(&[path, parent], fut)
+        self.stage(&[path, parent], fut)
     }
 
     /// Shared body for `unlink` + `rmdir`.
@@ -333,14 +330,15 @@ impl<B: BlobStore, L: VaultLog> FuseFs<B, L> {
         };
         let path = build_path(&parent_path, name);
         let vault = self.vault.clone();
+        let pending = self.pending.clone();
         let p = path.clone();
         let fut = async move {
-            let mut g = vault.write().await;
+            let g = vault.write().await;
             g.fs().rm(&abs(&p)).await?;
-            g.save().await.map_err(save_err)?;
+            pending.touch();
             Ok(())
         };
-        if let Err(e) = self.commit(&[&path, &parent_path], fut) {
+        if let Err(e) = self.stage(&[&path, &parent_path], fut) {
             reply.error(e);
             return;
         }
@@ -728,14 +726,15 @@ impl<B: BlobStore, L: VaultLog> Filesystem for FuseFs<B, L> {
         };
         let path = build_path(&parent_path, name);
         let vault = self.vault.clone();
+        let pending = self.pending.clone();
         let p = path.clone();
         let fut = async move {
-            let mut g = vault.write().await;
+            let g = vault.write().await;
             g.fs().mkdir(&abs(&p), false).await?;
-            g.save().await.map_err(save_err)?;
+            pending.touch();
             Ok(())
         };
-        if let Err(e) = self.commit(&[&path, &parent_path], fut) {
+        if let Err(e) = self.stage(&[&path, &parent_path], fut) {
             reply.error(e);
             return;
         }
@@ -782,14 +781,15 @@ impl<B: BlobStore, L: VaultLog> Filesystem for FuseFs<B, L> {
         let from = build_path(&pp, name);
         let to = build_path(&npp, newname);
         let vault = self.vault.clone();
+        let pending = self.pending.clone();
         let (f, t) = (from.clone(), to.clone());
         let fut = async move {
-            let mut g = vault.write().await;
+            let g = vault.write().await;
             g.fs().mv(&abs(&f), &abs(&t)).await?;
-            g.save().await.map_err(save_err)?;
+            pending.touch();
             Ok(())
         };
-        if let Err(e) = self.commit(&[&from, &to, &pp, &npp], fut) {
+        if let Err(e) = self.stage(&[&from, &to, &pp, &npp], fut) {
             reply.error(e);
             return;
         }

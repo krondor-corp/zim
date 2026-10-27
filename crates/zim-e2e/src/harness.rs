@@ -3,9 +3,9 @@
 //! together deterministically (address-book cross-add + direct
 //! NodeAddr introduction — no DHT in the dial path).
 //!
-//! Ports live in the 1722x band (see bin/dev_/nodes.toml's band map)
-//! so a harness run never collides with the interactive dev
-//! environment on 1717x.
+//! Ports are picked free at boot (bind `127.0.0.1:0`, read the port
+//! back, release it), so a harness run never collides with the
+//! interactive dev environment or with another worktree's `make e2e`.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -13,7 +13,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 
-pub const E2E_PORT_BASE: u16 = 17220;
+/// Each node's daemon pid, written at spawn so the next boot can reap
+/// a stale run (e.g. a previous `--keep`) before wiping its homes.
+const PID_FILE: &str = "daemon.pid";
 
 pub struct Node {
     pub nick: String,
@@ -91,47 +93,13 @@ impl Harness {
     /// Boot one daemon per nick under `data_root`, wiping any previous
     /// run's state first.
     pub fn boot(zim_bin: &Path, nicks: &[String], data_root: &Path, keep: bool) -> Result<Self> {
-        // The 1722x band is harness-owned: anything already listening
-        // there is a stale run (e.g. a previous --keep). Kill it, or
-        // this run's daemons die on bind while health checks happily
-        // talk to the wrong (old-binary, old-state) processes.
-        // Probe by CONNECT, not bind: TIME_WAIT remnants of our own
-        // health checks block a plain bind() long after the listener
-        // is gone (std doesn't set SO_REUSEADDR on unix).
-        let alive = |port: u16| {
-            std::net::TcpStream::connect_timeout(
-                &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
-                Duration::from_millis(300),
-            )
-            .is_ok()
-        };
-        for i in 0..nicks.len() {
-            let port = E2E_PORT_BASE + i as u16;
-            if alive(port) {
-                eprintln!("  clearing stale process on :{port}");
-                // SIGKILL: these are harness-owned throwaways, and
-                // SIGTERM triggers the daemon's graceful drain (with
-                // its request-grace sleep) — slower than our patience.
-                let _ = Command::new("pkill")
-                    .args(["-9", "-f", &format!("daemon run --port {port}")])
-                    .status();
-                let start = Instant::now();
-                while alive(port) {
-                    if start.elapsed() > Duration::from_secs(5) {
-                        return Err(anyhow!(
-                            "port {port} still occupied after clearing — free it and retry"
-                        ));
-                    }
-                    std::thread::sleep(Duration::from_millis(300));
-                }
-            }
-        }
+        reap_stale(data_root);
         if data_root.exists() {
             std::fs::remove_dir_all(data_root).ok();
         }
+        let ports = free_ports(nicks.len())?;
         let mut nodes = Vec::new();
-        for (i, nick) in nicks.iter().enumerate() {
-            let port = E2E_PORT_BASE + i as u16;
+        for (nick, port) in nicks.iter().zip(ports) {
             let home = data_root.join(nick);
             std::fs::create_dir_all(&home)?;
             std::fs::write(
@@ -150,6 +118,7 @@ impl Harness {
                 .stderr(Stdio::from(log))
                 .spawn()
                 .with_context(|| format!("spawn daemon {nick}"))?;
+            std::fs::write(home.join(PID_FILE), child.id().to_string())?;
             nodes.push(Node {
                 nick: nick.clone(),
                 port,
@@ -216,6 +185,7 @@ impl Harness {
             .stdout(Stdio::from(log.try_clone()?))
             .stderr(Stdio::from(log))
             .spawn()?;
+        std::fs::write(node.home.join(PID_FILE), child.id().to_string())?;
         node.child = Some(child);
         self.wait_healthy(Duration::from_secs(30))
     }
@@ -308,6 +278,46 @@ impl Drop for Harness {
                     );
                 }
             }
+        }
+    }
+}
+
+/// `n` distinct ports nothing is listening on right now. The OS picks
+/// each one; all `n` listeners are held until every port is known (so
+/// no two nodes get the same port), then released and the numbers
+/// handed to the daemons. The window before a daemon binds is tiny.
+fn free_ports(n: usize) -> Result<Vec<u16>> {
+    let listeners = (0..n)
+        .map(|_| std::net::TcpListener::bind(("127.0.0.1", 0)).context("pick a free port"))
+        .collect::<Result<Vec<_>>>()?;
+    listeners
+        .iter()
+        .map(|l| Ok(l.local_addr()?.port()))
+        .collect()
+}
+
+/// SIGKILL any daemon a previous run left under `data_root`, found
+/// via each home's pid file. Only processes that are still a
+/// `daemon run` are killed, so a recycled pid is left alone. SIGKILL
+/// because these are throwaways: SIGTERM triggers the daemon's
+/// graceful drain, slower than our patience.
+fn reap_stale(data_root: &Path) {
+    let Ok(entries) = std::fs::read_dir(data_root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(pid) = std::fs::read_to_string(entry.path().join(PID_FILE)) else {
+            continue;
+        };
+        let pid = pid.trim();
+        let is_daemon = Command::new("ps")
+            .args(["-p", pid, "-o", "command="])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("daemon run"))
+            .unwrap_or(false);
+        if is_daemon {
+            eprintln!("  clearing stale daemon (pid {pid})");
+            let _ = Command::new("kill").args(["-9", pid]).status();
         }
     }
 }

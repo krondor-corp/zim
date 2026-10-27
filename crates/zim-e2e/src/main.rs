@@ -1,13 +1,14 @@
 //! `zim-e2e` — the end-to-end verdict tool.
 //!
-//! Boots a hermetic throwaway environment (real daemons on the 1722x
-//! band, fresh homes under data/e2e/), wires peers deterministically,
-//! applies `bin/dev_/fixtures.toml` through the real CLI, then verifies
+//! Boots a hermetic throwaway environment (real daemons on free ports
+//! picked at boot, fresh homes under data/e2e/), wires peers
+//! deterministically, applies `bin/dev_/fixtures.toml` through the real CLI, then verifies
 //! cross-node sync convergence with poll-until-deadline assertions.
 //! Exit code is the verdict.
 //!
 //! This deliberately does NOT touch the interactive dev environment
-//! (`./bin/dev`, ports 1717x) — the two can run side by side.
+//! (`./bin/dev`) — the two can run side by side, as can several
+//! worktrees' runs.
 //!
 //! Usage:
 //!   zim-e2e [--keep] [--skip-fuse] [--deadline SECS]
@@ -81,7 +82,7 @@ fn project_root() -> PathBuf {
 
 /// Node nicks from bin/dev_/nodes.toml section headers — the single
 /// source of truth for who the dev peers are. Ports are NOT taken from
-/// there: the harness maps nicks onto its own 1722x band.
+/// there: the harness picks a free port per nick at boot.
 fn node_nicks(root: &std::path::Path) -> Result<Vec<String>> {
     let text = std::fs::read_to_string(root.join("bin/dev_/nodes.toml"))?;
     let table: toml::Table = text.parse()?;
@@ -118,7 +119,7 @@ fn run() -> Result<()> {
     let nicks = node_nicks(&root)?;
     let fixtures = fixtures::load(&root.join("bin/dev_/fixtures.toml"))?;
 
-    println!("[1/6] boot: {} daemons on the 1722x band", nicks.len());
+    println!("[1/6] boot: {} daemons on free ports", nicks.len());
     let mut harness = Harness::boot(&zim_bin, &nicks, &root.join("data/e2e"), opts.keep)?;
 
     println!("[2/6] wire: address books + direct NodeAddr introduction");

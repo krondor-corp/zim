@@ -92,6 +92,7 @@ Mount a vault as a local folder (requires FUSE — see
 zim mount add notes ~/zim/notes    # mount at a path
 zim mount list                     # mounts + status
 zim mount stop notes               # unmount (keeps the registration)
+zim mount start notes              # re-mount a stopped registration
 zim mount remove notes             # unmount and forget
 ```
 

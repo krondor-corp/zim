@@ -36,11 +36,14 @@ zim mount list                # mounts and their status
 zim mount set notes --auto    # remount automatically when the daemon starts
 zim mount set notes --ro      # remount read-only
 zim mount stop notes          # unmount, keep the registration
+zim mount start notes         # mount a stopped registration again
 zim mount remove notes        # unmount and forget it
 ```
 
-Auto-mounts come back on daemon start; a mount stopped with `stop` can
-be started again, while `remove` forgets it entirely.
+Only `--auto` mounts come back on their own when the daemon starts. Any
+other registration — or one you unmounted with `stop` — stays unmounted
+until you run `zim mount start`, which mounts it again with its saved
+`--auto` / read-only settings. `remove` forgets a mount entirely.
 
 `stop` is safe to repeat. If the daemon was killed without a clean
 shutdown and left a dead volume behind (it shows in Finder or `mount` but

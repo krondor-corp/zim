@@ -48,7 +48,7 @@ pub enum UpdateError {
     Download(String),
     #[error("install: {0}")]
     Install(String),
-    #[error("service restart: {0} — run `zim daemon service restart` manually")]
+    #[error("binary updated, but the daemon service restart failed: {0}")]
     ServiceRestart(String),
 }
 

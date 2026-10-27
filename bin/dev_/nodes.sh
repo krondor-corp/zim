@@ -336,7 +336,7 @@ cmd_cli() {
 
 # Seed each node's $ZIM_HOME with a config.toml that pins its
 # `api_port`. Idempotent — overwrites the file every time so changes
-# to nodes.toml / confit.toml (or a new slot) propagate. Shared by `cmd_run` and `cmd_shell` so the
+# to confit.toml (or a new slot) propagate. Shared by `cmd_run` and `cmd_shell` so the
 # CLI resolves the right daemon port regardless of whether the user
 # started the tmux session first.
 seed_node_configs() {
@@ -355,7 +355,7 @@ seed_node_configs() {
 #     eval "$(./bin/dev shell)"
 #
 # After that, `alice vault head demo` and `bob vault list` just work.
-# Regenerate after editing nodes.toml. Seeds each node's config.toml
+# Regenerate after editing [dev.nodes]. Seeds each node's config.toml
 # so commands don't accidentally hit the default port 17171 because a
 # config wasn't written yet.
 cmd_shell() {

@@ -117,7 +117,7 @@ To exercise sync between two peers without juggling terminals, use `./bin/dev`:
 ./bin/dev clean              # delete the per-peer data dirs under ./data
 ```
 
-Node config: `bin/dev_/nodes.toml`. Add more nodes by appending sections.
+Nodes: `confit.toml` `[dev.nodes]`. Add one with a `ports.services` lane plus a `[dev.nodes]` line.
 
 ## Re-installing after code changes
 
@@ -150,5 +150,5 @@ The daemon isn't running on the endpoint you're pointing at. Start it with
 
 **Two daemons on the same port**
 
-Use `./bin/dev`; it assigns isolated homes and ports from
-`bin/dev_/nodes.toml`.
+Use `./bin/dev`; it assigns isolated homes and per-worktree ports from
+`confit.toml` (`./bin/dev ports`).

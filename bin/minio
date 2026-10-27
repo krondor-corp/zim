@@ -50,7 +50,7 @@ MINIO_VOLUME_NAME="${PROJECT_NAME}-minio-data"
 # every worktree shares this one container (each hub gets its own
 # bucket — see `bucket`). They live in the project's 171xx band so
 # nothing collides with common services (minio's native 9000 is
-# ClickHouse's port, for one). Band map: bin/dev_/nodes.toml.
+# ClickHouse's port, for one). Band map: confit.toml.
 MINIO_API_PORT=${MINIO_API_PORT:-$(cd "$PROJECT_ROOT" && confit resolve ports.infra.minio_api)}
 MINIO_CONSOLE_PORT=${MINIO_CONSOLE_PORT:-$(cd "$PROJECT_ROOT" && confit resolve ports.infra.minio_console)}
 MINIO_ROOT_USER=minioadmin

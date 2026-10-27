@@ -6,7 +6,7 @@
 # and each service lane a port at band + lane + slot. Everything a
 # worktree's dev env owns derives from that, so several worktrees run
 # side by side:
-#   - daemon ports    ZIM_DEV_<NICK>_PORT   (get_api_port)
+#   - daemon ports    [dev.nodes]           (get_api_port)
 #   - hub port        HUB_PORT              (+ its did:web and cookie name)
 #   - tmux session    zim-dev[-<slug>]
 #   - minio bucket    zim-blobs[-<slug>]    (the container itself is shared)
@@ -27,6 +27,8 @@ if ! dev_env="$(cd "$PROJECT_ROOT" && confit export --profile dev --format shell
 fi
 eval "$dev_env"
 unset dev_env
+# The dev peers and their ports, as `nick=port` lines (see config.sh).
+DEV_NODES="$(cd "$PROJECT_ROOT" && confit show dev.nodes)" || exit 1
 
 # `main` (slot 0) keeps the bare names; other worktrees suffix the slug.
 if [[ "$ZIM_DEV_SLOT" == "0" ]]; then

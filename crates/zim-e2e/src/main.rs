@@ -80,15 +80,22 @@ fn project_root() -> PathBuf {
         .expect("workspace root")
 }
 
-/// Node nicks from bin/dev_/nodes.toml section headers — the single
-/// source of truth for who the dev peers are. Ports are NOT taken from
-/// there: the harness picks a free port per nick at boot.
+/// Node nicks: the keys of confit.toml's `[dev.nodes]` — the single
+/// source of truth for who the dev peers are. Read as plain TOML, so
+/// the harness doesn't need confit; the values (this worktree's
+/// interactive ports) are ignored, since the harness picks a free port
+/// per nick at boot.
 fn node_nicks(root: &std::path::Path) -> Result<Vec<String>> {
-    let text = std::fs::read_to_string(root.join("bin/dev_/nodes.toml"))?;
+    let text = std::fs::read_to_string(root.join("confit.toml"))?;
     let table: toml::Table = text.parse()?;
-    let nicks: Vec<String> = table.keys().cloned().collect();
+    let nicks: Vec<String> = table
+        .get("dev")
+        .and_then(|dev| dev.get("nodes"))
+        .and_then(|nodes| nodes.as_table())
+        .map(|nodes| nodes.keys().cloned().collect())
+        .unwrap_or_default();
     if nicks.is_empty() {
-        return Err(anyhow!("no nodes defined in bin/dev_/nodes.toml"));
+        return Err(anyhow!("no nodes defined in confit.toml [dev.nodes]"));
     }
     Ok(nicks)
 }

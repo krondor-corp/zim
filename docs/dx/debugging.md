@@ -20,15 +20,7 @@ Guide for debugging Zim during development.
 
 ## Dev Environment
 
-The `./bin/dev` script reads node configuration from `./bin/dev_/nodes.toml`:
-
-| Node | Nick | Role | API Port | Gateway Port | Blob Store |
-|------|------|------|----------|-------------|------------|
-| node0 | owner | Primary owner | 5002 | 8081 | legacy |
-| node1 | _owner | Replica owner | 5003 | 8082 | filesystem |
-| node2 | mirror | Mirror | 5004 | 8083 | s3 (MinIO) |
-
-Each node runs both an API server (private, mutation/RPC) and a gateway server (public, read-only) on separate ports.
+`./bin/dev` reads its nodes and their ports from `confit.toml`'s `[dev.nodes]` (`alice`, `bob`); `./bin/dev ports` prints this worktree's. See [local.md](local.md#ports-and-several-worktrees-at-once).
 
 ### Commands
 

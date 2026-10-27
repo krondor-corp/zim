@@ -8,12 +8,16 @@ This file covers contributor-specific multi-peer dev tooling that doesn't belong
 
 `bin/dev` spins up a multi-node P2P network in tmux so you can exercise sync, sharing, mounting, and the hub locally. It builds the workspace's debug binary once (`cargo build -p zim` → `target/debug/zim`) and runs that same binary for every peer — **not** `cargo run`, and **not** an installed `~/.cargo/bin/zim`. Peers are isolated purely by `ZIM_HOME`.
 
-Nodes are defined in `bin/dev_/nodes.toml`. The section name is the peer's nick (`alice`, `bob`), its data dir (`data/<nick>/`), its tmux pane label, and the name of the generated shell function. Ports are not set there; they come from confit (next section).
+Nodes are defined in `confit.toml`'s `[dev.nodes]`. The key is the peer's nick (`alice`, `bob`), its data dir (`data/<nick>/`), its tmux pane label, and the name of the generated shell function; the value is its daemon port, resolved per worktree (next section).
 
 ```toml
-[alice]
+[ports.services]
+alice = 10
+bob   = 20
 
-[bob]
+[dev.nodes]
+alice = "{ports.services.alice}"
+bob   = "{ports.services.bob}"
 ```
 
 ### Ports and several worktrees at once
@@ -22,7 +26,7 @@ Nodes are defined in `bin/dev_/nodes.toml`. The section name is the peer's nick 
 
 | Resource | Source | `main` (slot 0) | worktree in slot N |
 | -- | -- | -- | -- |
-| daemon ports | `ports.services.<nick>` lane | alice 17110, bob 17120 | 17110+N, 17120+N |
+| daemon ports | `[dev.nodes]` → `ports.services.<nick>` lane | alice 17110, bob 17120 | 17110+N, 17120+N |
 | hub port | `ports.services.hub` | 17190 | 17190+N |
 | tmux session | `ports.slug` | `zim-dev` | `zim-dev-<slug>` |
 | minio bucket | `ports.slug` | `zim-blobs` | `zim-blobs-<slug>` (capped at 63 chars) |
@@ -37,7 +41,7 @@ What each worktree keeps to itself:
 - **Buckets.** `hub up` creates the worktree's bucket (`./bin/minio bucket <name>`) and points the hub at it. Each hub keeps its own blob index and may delete objects, so hubs never share a bucket.
 - **Browser sessions.** A loopback hub names its session cookie `session-<port>` (production keeps `session`). Browsers scope cookies by host and ignore the port, so with one shared name, signing into one worktree's hub would log you out of another's.
 
-To add a node: add a `[<nick>]` section to `nodes.toml`, plus a `ports.services.<nick>` lane and a `ZIM_DEV_<NICK>_PORT` entry under `[env.dev]` in `confit.toml`. iroh endpoints already bind random ports and need no setup. `make e2e` doesn't use confit: it picks free ports at boot.
+To add a node: add a `ports.services.<nick>` lane (10 from the others) and a `<nick> = "{ports.services.<nick>}"` line under `[dev.nodes]`, both in `confit.toml`. `bin/dev` reads the section once with `confit show dev.nodes` (`nick=port` lines); `zim-e2e` reads only its keys, as plain TOML. iroh endpoints already bind random ports and need no setup. `make e2e` doesn't use confit: it picks free ports at boot.
 
 ### Commands
 

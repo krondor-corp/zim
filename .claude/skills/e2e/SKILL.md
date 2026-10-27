@@ -20,7 +20,7 @@ Run end-to-end tests of the dev environment to verify fixtures, cross-node
 sync, FUSE, and (optionally) web↔local sync through the hub. See
 `docs/dx/local.md` for the full `bin/dev` reference.
 
-Dev nodes are **`alice`** and **`bob`** (from `bin/dev_/nodes.toml`), each a
+Dev nodes are **`alice`** and **`bob`** (from `confit.toml` `[dev.nodes]`), each a
 `zim` daemon with its own `$ZIM_HOME` under `data/<nick>/`.
 
 **Ports are per worktree, never hardcoded.** `bin/dev` needs

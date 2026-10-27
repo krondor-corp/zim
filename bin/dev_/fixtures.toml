@@ -22,7 +22,7 @@
 #   fuse_mv_out  - Move a file from a FUSE mount to outside
 #   fuse_rm      - Delete a file on a FUSE mount
 #
-# `node` defaults to the first node in nodes.toml (alice). FUSE fixtures
+# `node` defaults to the first node in confit.toml [dev.nodes] (alice). FUSE fixtures
 # auto-skip (not fail) when FUSE is unavailable — see `./bin/dev fuse-check`.
 # Relative mount_point paths resolve against the repo's data/ dir.
 

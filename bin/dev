@@ -26,7 +26,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DATA_DIR="$PROJECT_ROOT/data"
 DEV_DIR="$SCRIPT_DIR/dev_"
-CONFIG_FILE="$DEV_DIR/nodes.toml"
 
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
@@ -90,8 +89,8 @@ Examples:
   alice health
   bob vault list
 
-Node config: $CONFIG_FILE
-Ports:       $PROJECT_ROOT/confit.toml (this worktree: slot $ZIM_DEV_SLOT, session $TMUX_SESSION)
+Nodes + ports: $PROJECT_ROOT/confit.toml ([dev.nodes]; this worktree:
+               slot $ZIM_DEV_SLOT, session $TMUX_SESSION)
 EOF
 }
 

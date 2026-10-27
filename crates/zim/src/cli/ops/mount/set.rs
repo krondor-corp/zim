@@ -1,4 +1,4 @@
-//! `zim mount set <vault|path> [--auto <bool>] [--read-only <bool>]` —
+//! `zim mount set <vault|path> [--auto [<bool>]] [--read-only|--ro [<bool>]]` —
 //! edit a registration in place (no remove + re-add dance). A
 //! `--read-only` change on a live mount remounts it.
 
@@ -17,11 +17,18 @@ use crate::daemon::api::v0::mounts::{MountInfo, SetRequest};
 pub struct Set {
     /// The mount to edit — a vault name/id, or a mountpoint path.
     pub target: String,
-    /// Re-mount automatically when the daemon starts.
-    #[arg(long)]
+    /// Re-mount automatically when the daemon starts. Bare `--auto`
+    /// means true; pass `--auto false` to turn it off.
+    #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     pub auto: Option<bool>,
-    /// Mount read-only (remounts if currently mounted).
-    #[arg(long = "read-only")]
+    /// Mount read-only (remounts if currently mounted). Bare
+    /// `--read-only` / `--ro` means true; pass `false` to turn it off.
+    #[arg(
+        long = "read-only",
+        visible_alias = "ro",
+        num_args = 0..=1,
+        default_missing_value = "true"
+    )]
     pub read_only: Option<bool>,
 }
 
@@ -94,5 +101,57 @@ impl fmt::Display for SetOutput {
             )?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser, Debug)]
+    struct Cli {
+        #[command(flatten)]
+        set: Set,
+    }
+
+    fn parse(args: &[&str]) -> Set {
+        Cli::try_parse_from(std::iter::once("set").chain(args.iter().copied()))
+            .expect("args should parse")
+            .set
+    }
+
+    #[test]
+    fn alice_follows_the_docs_with_bare_flags() {
+        // `zim mount set notes --auto` — a bare flag turns it on.
+        let set = parse(&["notes", "--auto"]);
+        assert_eq!(set.auto, Some(true));
+        assert_eq!(set.read_only, None);
+
+        // `zim mount set notes --ro` — the short alias for --read-only.
+        let set = parse(&["notes", "--ro"]);
+        assert_eq!(set.read_only, Some(true));
+        assert_eq!(set.auto, None);
+
+        let set = parse(&["notes", "--read-only"]);
+        assert_eq!(set.read_only, Some(true));
+    }
+
+    #[test]
+    fn alice_turns_flags_off_with_explicit_bools() {
+        let set = parse(&["notes", "--auto", "false", "--ro", "false"]);
+        assert_eq!(set.auto, Some(false));
+        assert_eq!(set.read_only, Some(false));
+
+        let set = parse(&["notes", "--auto=true", "--read-only=false"]);
+        assert_eq!(set.auto, Some(true));
+        assert_eq!(set.read_only, Some(false));
+    }
+
+    #[test]
+    fn alice_mixes_a_bare_flag_with_an_explicit_one() {
+        let set = parse(&["notes", "--ro", "--auto", "false"]);
+        assert_eq!(set.read_only, Some(true));
+        assert_eq!(set.auto, Some(false));
     }
 }

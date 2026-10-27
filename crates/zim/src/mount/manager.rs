@@ -295,16 +295,24 @@ impl MountManager {
         }
     }
 
-    /// Unmount a live mount (keeps its registration).
+    /// Unmount a registered mount, keeping its registration. Idempotent:
+    /// stopping an already-stopped mount succeeds.
+    ///
+    /// A live mount commits its staged work, then unmounts. A registration
+    /// that isn't live may still have a **ghost** in the OS mount table — a
+    /// hard-killed daemon never ran `Drop` — so it gets a best-effort
+    /// force-unmount. Errors only on an unknown mountpoint.
     pub async fn stop(&self, mountpoint: &Path) -> anyhow::Result<()> {
         let mount = self.live.lock().unwrap().remove(mountpoint);
-        match mount {
-            Some(mount) => {
-                unmount(mountpoint, mount).await;
-                Ok(())
-            }
-            None => anyhow::bail!("not mounted: {}", mountpoint.display()),
+        if let Some(mount) = mount {
+            unmount(mountpoint, mount).await;
+            return Ok(());
         }
+        if !self.store.load().iter().any(|r| r.mountpoint == mountpoint) {
+            anyhow::bail!("no mount registered at {}", mountpoint.display());
+        }
+        force_unmount_stale(mountpoint);
+        Ok(())
     }
 
     /// Update a registration's `auto_mount` / `read_only` flags in
@@ -482,5 +490,59 @@ impl MountManager {
             cache.invalidate(&InodeTable::parent_path(p));
         }
         Some(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use zim_core::linked_data::Hash;
+    use zim_crypto::PrivateKey;
+
+    use super::*;
+
+    /// Alice's daemon: a mount manager over an offline peer, rooted at `home`.
+    async fn alice_daemon(home: &Path) -> MountManager {
+        let peer = Peer::builder()
+            .with_secret(PrivateKey::generate())
+            .with_log(SqliteVaultLog::in_memory().unwrap())
+            .with_blobs(BlobsProvider::memory().await.unwrap())
+            .build()
+            .await
+            .unwrap();
+        MountManager::new(peer, Handle::current(), home)
+    }
+
+    #[tokio::test]
+    async fn stopping_a_stopped_mount_is_a_no_op() {
+        let home = tempfile::tempdir().unwrap();
+        let alice = alice_daemon(home.path()).await;
+
+        // Alice registered `notes` in a previous daemon life; this daemon
+        // never started it, so it reads `stopped`.
+        let notes = home.path().join("notes");
+        alice
+            .store
+            .upsert(MountRecord {
+                vault_id: VaultId::from_hash(Hash::new(&[7u8; 32])),
+                mountpoint: notes.clone(),
+                auto_mount: false,
+                read_only: false,
+            })
+            .unwrap();
+        assert!(!alice.list()[0].mounted);
+
+        // `zim mount stop notes` succeeds — twice — and keeps the registration.
+        alice.stop(&notes).await.unwrap();
+        alice.stop(&notes).await.unwrap();
+        assert_eq!(alice.list().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn stopping_an_unknown_mountpoint_errors() {
+        let home = tempfile::tempdir().unwrap();
+        let alice = alice_daemon(home.path()).await;
+
+        let err = alice.stop(&home.path().join("nowhere")).await.unwrap_err();
+        assert!(err.to_string().contains("no mount registered"));
     }
 }

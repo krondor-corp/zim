@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/krondor-corp/zim/compare/zim-api-v0.1.2...zim-api-v0.2.0) - 2026-10-28
+
+### Added
+
+- *(hub)* approve daemon device codes on a server-rendered /auth/device page (KRO-254) ([#51](https://github.com/krondor-corp/zim/pull/51))
+
 ## [0.1.2](https://github.com/krondor-corp/zim/compare/zim-api-v0.1.1...zim-api-v0.1.2) - 2026-10-06
 
 ### Other

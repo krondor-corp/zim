@@ -97,6 +97,28 @@ impl ApiRequest for SetRequest {
     }
 }
 
+// -- start -------------------------------------------------------------------
+
+/// Re-mount an existing registration with its persisted flags.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StartRequest {
+    pub mountpoint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StartResponse {
+    pub mount: MountInfo,
+}
+
+impl ApiRequest for StartRequest {
+    type Response = StartResponse;
+    fn build_request(self, base: &Url, client: &Client) -> RequestBuilder {
+        client
+            .post(base.join("/api/v0/mounts/start").unwrap())
+            .json(&self)
+    }
+}
+
 // -- stop --------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,6 +181,7 @@ mod handlers {
             .route("/list", post(list))
             .route("/add", post(add))
             .route("/set", post(set))
+            .route("/start", post(start))
             .route("/stop", post(stop))
             .route("/remove", post(remove))
             .with_state(state)
@@ -240,6 +263,23 @@ mod handlers {
             Ok(status) => {
                 let name = vault_names(&state).await.get(&status.vault_id).cloned();
                 Json(SetResponse {
+                    mount: info(status, name),
+                })
+                .into_response()
+            }
+            Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+        }
+    }
+
+    async fn start(State(state): State<ServiceState>, Json(req): Json<StartRequest>) -> Response {
+        match state
+            .mounts()
+            .start_registered(&PathBuf::from(&req.mountpoint))
+            .await
+        {
+            Ok(status) => {
+                let name = vault_names(&state).await.get(&status.vault_id).cloned();
+                Json(StartResponse {
                     mount: info(status, name),
                 })
                 .into_response()

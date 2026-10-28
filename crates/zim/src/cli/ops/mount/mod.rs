@@ -18,9 +18,10 @@ pub mod add;
 pub mod list;
 pub mod remove;
 pub mod set;
+pub mod start;
 pub mod stop;
 
-/// Resolve a `stop`/`remove` target — a mountpoint **path** or a **vault
+/// Resolve a `start`/`stop`/`remove` target — a mountpoint **path** or a **vault
 /// name/id** — to the affected mountpoint(s). A path matches itself; a vault
 /// matches *every* mount of that vault. An unknown target falls back to the
 /// literal string, so operating on a stale/registered path still works.
@@ -55,7 +56,9 @@ pub enum Mount {
     List(list::List),
     /// Edit a registration in place (auto/read-only).
     Set(set::Set),
-    /// Unmount, keeping the registration (re-`start` later / on boot).
+    /// Re-mount a stopped registration with its saved flags.
+    Start(start::Start),
+    /// Unmount, keeping the registration (re-`start` later; `--auto` ones return on boot).
     Stop(stop::Stop),
     /// Unmount and forget the registration.
     Remove(remove::Remove),
@@ -67,6 +70,7 @@ pub enum MountOutput {
     Add(add::AddOutput),
     List(list::ListOutput),
     Set(set::SetOutput),
+    Start(start::StartOutput),
     Stop(stop::StopOutput),
     Remove(remove::RemoveOutput),
 }
@@ -79,6 +83,8 @@ pub enum MountError {
     List(#[from] list::ListError),
     #[error(transparent)]
     Set(#[from] set::SetError),
+    #[error(transparent)]
+    Start(#[from] start::StartError),
     #[error(transparent)]
     Stop(#[from] stop::StopError),
     #[error(transparent)]
@@ -100,6 +106,7 @@ impl Op for Mount {
             Mount::Add(c) => MountOutput::Add(c.run(c.build_context().await?).await?),
             Mount::List(c) => MountOutput::List(c.run(c.build_context().await?).await?),
             Mount::Set(c) => MountOutput::Set(c.run(c.build_context().await?).await?),
+            Mount::Start(c) => MountOutput::Start(c.run(c.build_context().await?).await?),
             Mount::Stop(c) => MountOutput::Stop(c.run(c.build_context().await?).await?),
             Mount::Remove(c) => MountOutput::Remove(c.run(c.build_context().await?).await?),
         })
@@ -112,6 +119,7 @@ impl fmt::Display for MountOutput {
             MountOutput::Add(o) => write!(f, "{o}"),
             MountOutput::List(o) => write!(f, "{o}"),
             MountOutput::Set(o) => write!(f, "{o}"),
+            MountOutput::Start(o) => write!(f, "{o}"),
             MountOutput::Stop(o) => write!(f, "{o}"),
             MountOutput::Remove(o) => write!(f, "{o}"),
         }

@@ -283,6 +283,25 @@ impl MountManager {
         self.start(record).await
     }
 
+    /// Re-mount an existing registration with its persisted flags. Errors if
+    /// nothing is registered at `mountpoint` or it's already mounted.
+    pub async fn start_registered(&self, mountpoint: &Path) -> anyhow::Result<MountStatus> {
+        let record = self
+            .store
+            .load()
+            .into_iter()
+            .find(|r| r.mountpoint == mountpoint)
+            .ok_or_else(|| anyhow::anyhow!("no mount registered at {}", mountpoint.display()))?;
+        self.start(record.clone()).await?;
+        Ok(MountStatus {
+            vault_id: record.vault_id,
+            mountpoint: record.mountpoint,
+            read_only: record.read_only,
+            auto_mount: record.auto_mount,
+            mounted: true,
+        })
+    }
+
     /// Unmount every live mount (registrations kept). Called on daemon
     /// shutdown so mounts spin down with the process instead of lingering
     /// as dead volumes; `start_auto` on the next boot brings the `--auto`
@@ -544,5 +563,21 @@ mod tests {
 
         let err = alice.stop(&home.path().join("nowhere")).await.unwrap_err();
         assert!(err.to_string().contains("no mount registered"));
+    }
+
+    #[tokio::test]
+    async fn alice_cannot_start_a_mount_she_never_registered() {
+        let home = tempfile::tempdir().unwrap();
+        let alice = alice_daemon(home.path()).await;
+
+        // ── Alice asks to start a path with no registration ──
+        let err = alice
+            .start_registered(&home.path().join("nowhere"))
+            .await
+            .expect_err("unregistered start must fail");
+
+        // ── She's told nothing is registered there, and nothing went live ──
+        assert!(err.to_string().contains("no mount registered"), "{err}");
+        assert!(alice.list().is_empty());
     }
 }

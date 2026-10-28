@@ -38,8 +38,10 @@ content lands at a new height; the overwritten version stays in history.
 
 The browser exposes this as a read-only `WasmVersion` (no `save`) plus
 `WasmVersion::history`, which pages `/api/v0/vaults/{id}/log` and fetches
-each manifest's plaintext header for its author and whether this browser
-holds a share there. The web workspace's History view restores per file —
+each manifest's plaintext header for its author and an `access` of
+`readable`, `sealed` (no share for this browser — permanent), or
+`unavailable` (the manifest fetch failed — transient, says nothing about
+access; the UI keeps it clickable to retry). The web workspace's History view restores per file —
 whole-vault restore would clobber concurrent work in unrelated paths.
 
 Manifests carry height and author but no wall-clock time, so history lists

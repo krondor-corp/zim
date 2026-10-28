@@ -34,12 +34,15 @@ impl WasmVersion {
     /// One page of the version chain, newest first, starting at height
     /// `from` (default: the hub's current head) and walking back at most
     /// `limit` versions. Returns JSON
-    /// `[{height, manifest_hash, author, readable}]`.
+    /// `[{height, manifest_hash, author, access}]`.
     ///
     /// Each version's manifest is fetched for its plaintext header (no
-    /// decryption): `author` is the signing key, and `readable` says
-    /// whether this browser's key holds a share in that version — a key
-    /// granted later can't open versions from before its grant.
+    /// decryption): `author` is the signing key, and `access` is
+    /// - `"readable"` — this browser's key holds a share in that version;
+    /// - `"sealed"` — it doesn't (a key granted later can't open versions
+    ///   from before its grant). Permanent;
+    /// - `"unavailable"` — the manifest couldn't be fetched (network, hub
+    ///   hiccup). Says nothing about access; opening it again may work.
     pub async fn history(
         vault_id_hex: String,
         hub_base: String,
@@ -73,25 +76,30 @@ impl WasmVersion {
             height: u64,
             manifest_hash: String,
             author: Option<String>,
-            readable: bool,
+            access: &'static str,
         }
 
         let blobs = HubBlobStore::new(base);
         let manifests: Vec<Result<Manifest, _>> =
             futures::future::join_all(resp.entries.iter().map(|e| blobs.get_cbor(&e.link))).await;
-        // A manifest the hub can't serve still lists — just without its
-        // header, and not openable.
+        // A manifest the hub can't serve still lists — without its header,
+        // and marked unavailable rather than sealed: a fetch failure is no
+        // evidence about access.
         let versions: Vec<Version> = resp
             .entries
             .into_iter()
             .zip(manifests)
             .map(|(e, m)| {
-                let m = m.ok();
+                let (author, access) = match m {
+                    Ok(m) if m.get_share(&me).is_some() => (Some(m.author().to_hex()), "readable"),
+                    Ok(m) => (Some(m.author().to_hex()), "sealed"),
+                    Err(_) => (None, "unavailable"),
+                };
                 Version {
                     height: e.height,
                     manifest_hash: e.link.hash().to_hex(),
-                    author: m.as_ref().map(|m| m.author().to_hex()),
-                    readable: m.is_some_and(|m| m.get_share(&me).is_some()),
+                    author,
+                    access,
                 }
             })
             .collect();

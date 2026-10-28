@@ -1634,6 +1634,7 @@ button.app-menu__item {
   text-overflow: ellipsis;
 }
 .history-version--sealed { opacity: 0.45; cursor: not-allowed; }
+.history-version--unavailable .history-version__author { color: hsl(var(--destructive)); font-style: italic; }
 .history-text {
   white-space: pre-wrap;
   word-break: break-word;

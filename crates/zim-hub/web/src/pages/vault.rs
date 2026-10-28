@@ -297,6 +297,9 @@ pub fn vault_tree(props: &Props) -> Html {
     let web_did = use_state(String::new);
     let show_details = use_state(|| false);
     let show_history = use_state(|| false);
+    // A failed restore, shown inside the history view (the live error
+    // banner is hidden under it) — the view stays open to retry.
+    let restore_error = use_state(String::new);
     let vaults = use_state(Vec::<VaultItem>::new);
     let ctx = use_state(|| None::<CtxMenu>);
     let dialog = use_state(|| None::<Dialog>);
@@ -886,7 +889,11 @@ pub fn vault_tree(props: &Props) -> Html {
 
     let toggle_history = {
         let show_history = show_history.clone();
-        Callback::from(move |_: MouseEvent| show_history.set(!*show_history))
+        let restore_error = restore_error.clone();
+        Callback::from(move |_: MouseEvent| {
+            restore_error.set(String::new());
+            show_history.set(!*show_history);
+        })
     };
 
     // Restore = write the historical bytes forward as a normal save (the
@@ -894,7 +901,7 @@ pub fn vault_tree(props: &Props) -> Html {
     let on_restore = {
         let fs = fs.clone();
         let show_history = show_history.clone();
-        let error = error.clone();
+        let restore_error = restore_error.clone();
         let status = status.clone();
         let rebuild = rebuild.clone();
         let on_open = on_open.clone();
@@ -902,10 +909,11 @@ pub fn vault_tree(props: &Props) -> Html {
             let name = r.path.rsplit('/').next().unwrap_or_default().to_string();
             let fs = fs.clone();
             let show_history = show_history.clone();
-            let error = error.clone();
+            let restore_error = restore_error.clone();
             let status = status.clone();
             let rebuild = rebuild.clone();
             let on_open = on_open.clone();
+            restore_error.set(String::new());
             status.set(format!("restoring {name}\u{2026}"));
             yew::platform::spawn_local(async move {
                 match add_and_save(&fs, r.path.clone(), r.bytes).await {
@@ -917,7 +925,7 @@ pub fn vault_tree(props: &Props) -> Html {
                     }
                     Err(e) => {
                         status.set(String::new());
-                        error.set(e);
+                        restore_error.set(format!("Couldn't restore {name}: {e}"));
                     }
                 }
             });
@@ -980,7 +988,15 @@ pub fn vault_tree(props: &Props) -> Html {
 
             if *show_history {
                 <HistoryView vault_id={props.vault_id.clone()} devices={(*devices).clone()}
-                    on_close={{ let show_history = show_history.clone(); Callback::from(move |_: ()| show_history.set(false)) }}
+                    restore_error={(*restore_error).clone()}
+                    on_close={{
+                        let show_history = show_history.clone();
+                        let restore_error = restore_error.clone();
+                        Callback::from(move |_: ()| {
+                            restore_error.set(String::new());
+                            show_history.set(false);
+                        })
+                    }}
                     {on_restore} />
             }
             // Hidden, not unmounted, under history: an unsaved draft keeps

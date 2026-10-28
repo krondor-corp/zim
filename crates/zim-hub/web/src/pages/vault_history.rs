@@ -37,6 +37,8 @@ pub struct HistoryProps {
     pub devices: Vec<Device>,
     pub on_close: Callback<()>,
     pub on_restore: Callback<Restore>,
+    /// Why the parent's last restore save failed; empty when it didn't.
+    pub restore_error: String,
 }
 
 type Snapshot = Rc<RefCell<Option<Rc<WasmVersion>>>>;
@@ -385,6 +387,9 @@ pub fn history_view(props: &HistoryProps) -> Html {
                     <button type="button" class="dialog__btn" onclick={close}>{ "Back to live" }</button>
                 </div>
                 <div class="editor-body">
+                    if !props.restore_error.is_empty() {
+                        <div class="error" style="margin:1rem 2rem 0;">{ props.restore_error.clone() }</div>
+                    }
                     if !(*error).is_empty() {
                         <div class="error" style="margin:1rem 2rem 0;">{ (*error).clone() }</div>
                     }

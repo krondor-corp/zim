@@ -17,7 +17,9 @@ pub(crate) struct VersionMeta {
     pub manifest_hash: String,
     pub author: Option<String>,
     /// This browser's key holds a share in this version.
-    pub readable: bool,
+    /// `"readable"` | `"sealed"` (no share for this browser — permanent) |
+    /// `"unavailable"` (the hub didn't serve its manifest — maybe transient).
+    pub access: String,
 }
 
 pub(crate) fn author_label(author: Option<&str>, devices: &[Device]) -> String {
@@ -57,20 +59,27 @@ pub(crate) fn version_row(
         let pick = pick.clone();
         Callback::from(move |_: MouseEvent| pick.emit(height))
     };
-    let title = if v.readable {
-        format!("manifest {}", v.manifest_hash)
-    } else {
+    let sealed = v.access == "sealed";
+    let unavailable = v.access == "unavailable";
+    let title = if sealed {
         "Sealed before this browser was granted access".to_string()
+    } else if unavailable {
+        "Couldn't load this version from the hub \u{2014} click to try again".to_string()
+    } else {
+        format!("manifest {}", v.manifest_hash)
     };
     html! {
-        <button type="button" {title} disabled={!v.readable} {onclick}
+        <button type="button" {title} disabled={sealed} {onclick}
             class={classes!(
                 "tree-item", "tree-item--file", "history-version",
                 (selected == Some(height)).then_some("tree-item--active"),
-                (!v.readable).then_some("history-version--sealed"),
+                sealed.then_some("history-version--sealed"),
+                unavailable.then_some("history-version--unavailable"),
             )}>
             <span class="history-version__height">{ format!("v{height}") }</span>
-            <span class="history-version__author">{ author_label(v.author.as_deref(), devices) }</span>
+            <span class="history-version__author">
+                { if unavailable { "couldn't load".to_string() } else { author_label(v.author.as_deref(), devices) } }
+            </span>
             if head == Some(height) {
                 <span class="device-row__badge">{ "current" }</span>
             }

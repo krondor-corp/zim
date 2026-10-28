@@ -3232,7 +3232,7 @@ dependencies = [
 
 [[package]]
 name = "zim-api"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -3250,7 +3250,7 @@ dependencies = [
 
 [[package]]
 name = "zim-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",

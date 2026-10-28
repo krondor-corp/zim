@@ -18,9 +18,9 @@ pub struct OpenFile {
     /// Fingerprint of the decrypted bytes: tells a remote edit to this
     /// file apart from a head change that left it untouched.
     pub digest: u64,
-    /// Unique per load. The textarea is uncontrolled (its value is set
-    /// once, at mount), so it's keyed on this: every (re)load remounts it
-    /// with the freshly read text instead of keeping the old DOM value.
+    /// Unique per load. The textarea is uncontrolled (its text is written
+    /// once per load, then left to the user), so it's keyed on this:
+    /// every (re)load remounts it with the freshly read text.
     pub rev: u32,
 }
 
@@ -42,6 +42,21 @@ pub fn editor_pane(props: &EditorProps) -> Html {
         .unwrap_or_else(|| name.clone());
     let editable = file.text.is_some();
 
+    // Write the loaded text into the textarea once per load. Not via
+    // `value=`: Yew re-asserts that against the DOM on every render,
+    // clobbering whatever the user typed since.
+    let textarea = use_node_ref();
+    {
+        let textarea = textarea.clone();
+        let text = file.text.clone().unwrap_or_default();
+        use_effect_with((file.path.clone(), file.rev), move |_| {
+            if let Some(el) = textarea.cast::<web_sys::HtmlTextAreaElement>() {
+                el.set_value(&text);
+            }
+            || ()
+        });
+    }
+
     let oninput = {
         let on_change = props.on_change.clone();
         Callback::from(move |e: InputEvent| {
@@ -59,7 +74,7 @@ pub fn editor_pane(props: &EditorProps) -> Html {
                 if editable {
                     html! {
                         <textarea class="editor-textarea--doc" key={format!("{}#{}", file.path, file.rev)}
-                            defaultvalue={file.text.clone().unwrap_or_default()}
+                            ref={textarea}
                             {oninput} spellcheck="false" placeholder="Write\u{2026}" />
                     }
                 } else {

@@ -45,6 +45,10 @@ other registration — or one you unmounted with `stop` — stays unmounted
 until you run `zim mount start`, which mounts it again with its saved
 `--auto` / read-only settings. `remove` forgets a mount entirely.
 
+A path holds one mount. `zim mount add` refuses a path that's already
+registered — use `start` to re-mount it, `set` to change its flags, or
+`remove` then `add` to put a different vault there.
+
 `stop` is safe to repeat. If the daemon was killed without a clean
 shutdown and left a dead volume behind (it shows in Finder or `mount` but
 hangs on access), `zim mount stop notes` clears it.

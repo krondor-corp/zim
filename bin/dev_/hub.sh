@@ -65,9 +65,9 @@ hub_up() {
     }
 
     echo -e "${BLUE}Building web SPA…${NC}"
-    # `ARGS=` neutralizes make's command-line-variable propagation: with
-    # `make dev ARGS="--hub"`, the sub-make would otherwise inherit
-    # ARGS=--hub and hand it to trunk.
+    # `ARGS=` neutralizes make's command-line-variable propagation: a
+    # caller's `make … ARGS=…` would otherwise reach the sub-make and be
+    # handed to trunk.
     make -C "$PROJECT_ROOT" build-web ARGS= || {
         echo -e "${RED}web SPA build failed${NC}"
         exit 1

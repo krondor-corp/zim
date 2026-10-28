@@ -12,13 +12,11 @@ help: ## Show this help message
 	@echo '  install-dev    Symlink ~/.cargo/bin/zim to the debug build: isolated'
 	@echo '                 data dir (~/.config/zim/debug), debug logs, `zim clean`.'
 	@echo '  uninstall      Remove ~/.cargo/bin/zim. uninstall-purge also deletes $$ZIM_HOME.'
-	@echo '  up             Whole stack: daemons + hub + minio + fixtures + enroll.'
-	@echo '                 (ZIM_DEV_FUSE=1 make up to include FUSE mounts.)'
-	@echo '  dev            Spawn 2 daemons in tmux for local sync testing.'
-	@echo '                 Subcommands pass through: `make dev hub up`,'
-	@echo '                 `make dev status`; flags via ARGS="-b --fuse".'
-	@echo '                 Ports + tmux session are per worktree (needs confit):'
-	@echo '                 `make dev ports` shows this one'"'"'s.'
+	@echo '  dev            Whole dev stack in tmux: daemons (with FUSE) + hub +'
+	@echo '                 minio + fixtures + enroll. Ports/session per worktree'
+	@echo '                 (needs confit): `./bin/dev ports`.'
+	@echo '  dev-kill       Kill this worktree'"'"'s dev session and free its ports.'
+	@echo '  dev-clean      dev-kill + wipe dev data (./data) and minio state.'
 	@echo '  e2e            Hermetic e2e verdict (zim-e2e crate): daemons on'
 	@echo '                 free ports, fixtures, sync convergence. Exit code ='
 	@echo '                 result. Safe to run in several worktrees at once.'
@@ -35,22 +33,25 @@ help: ## Show this help message
 	@echo ''
 	@echo 'Misc:'
 	@echo '  deps           cargo fetch (download dependencies)'
-	@echo '  clean          cargo clean'
-	@echo '  cleanup        Free disk: cargo target + site build artifacts'
-	@echo '  cleanup-all    cleanup + wipe dev data (./data) and minio state'
+	@echo '  rust-clean     cargo clean'
+	@echo '  clean          Everything: dev-clean + rust-clean + site build artifacts'
 
 .PHONY: dev
-dev: ## Start the local dev environment (2 daemons in tmux)
-	./bin/dev $(DEV_ARGS) $(ARGS)
+dev: ## Whole dev stack: daemons (with FUSE) + hub + minio + fixtures + enroll
+	ZIM_DEV_FUSE=1 ./bin/dev --hub
+
+.PHONY: dev-kill
+dev-kill: ## Kill this worktree's dev session and free its ports
+	./bin/dev kill --force
+
+.PHONY: dev-clean
+dev-clean: dev-kill ## Kill the dev session; wipe dev data (./data) and minio state
+	rm -rf data .minio
 
 .PHONY: e2e
 e2e: ## One-shot hermetic e2e run (zim-e2e crate; free ports, own data)
 	cargo build -p zim-cli --features hub,fuse
 	cargo run -q -p zim-e2e
-
-.PHONY: up
-up: ## The whole dev stack: daemons + hub + minio + fixtures + enroll
-	./bin/dev --hub
 
 .PHONY: hub
 hub: ## Start the hub in this worktree's dev tmux session (minio + dev-trust login: any email is admin)
@@ -127,28 +128,11 @@ fmt: ## Format code
 fmt-check: ## Check code formatting
 	cargo fmt --all -- --check
 
-.PHONY: clean
-clean: ## Clean build artifacts
+.PHONY: rust-clean
+rust-clean: ## Clean cargo build artifacts
 	cargo clean
 
-.PHONY: cleanup
-cleanup: ## Free disk: cargo target + site build artifacts
-	cargo clean
+.PHONY: clean
+clean: dev-clean rust-clean ## Everything: dev data, cargo target, site build artifacts
 	rm -rf web/_site web/vendor web/.jekyll-cache
 	rm -f web/Gemfile.lock
-
-.PHONY: cleanup-all
-cleanup-all: cleanup ## Also wipe dev data (./data) and minio local state
-	rm -rf data .minio
-
-# `make dev <words...>` — words after `dev` pass through to ./bin/dev
-# (`make dev hub up`, `make dev status`). Lives at the BOTTOM of the
-# file so the no-op goals declared here override any real targets the
-# words collide with (clean, e2e, hub, help) — otherwise `make dev
-# clean` would also run cargo clean. The override warning is expected.
-# Flags can't ride this way (make parses leading dashes itself) — use
-# ARGS for those: `make dev run ARGS="-b --fuse"`.
-ifeq (dev,$(firstword $(MAKECMDGOALS)))
-  DEV_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
-  $(eval $(DEV_ARGS):;@:)
-endif

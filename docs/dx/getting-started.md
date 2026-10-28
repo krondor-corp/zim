@@ -36,7 +36,7 @@ cargo run --bin zim -- daemon run
 # Start zim-hub (gateway/relay)
 make hub
 
-# 2-node dev environment (tmux)
+# Whole dev stack in tmux: 2 daemons + hub + minio + fixtures + enroll
 make dev
 
 # This worktree's dev ports (each worktree gets its own; see local.md)

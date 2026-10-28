@@ -15,6 +15,9 @@ pub struct OpenFile {
     pub url: String,
     /// Decoded text for textual files.
     pub text: Option<String>,
+    /// Fingerprint of the decrypted bytes: tells a remote edit to this
+    /// file apart from a head change that left it untouched.
+    pub digest: u64,
     /// Unique per load. The textarea is uncontrolled (its value is set
     /// once, at mount), so it's keyed on this: every (re)load remounts it
     /// with the freshly read text instead of keeping the old DOM value.

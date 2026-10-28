@@ -13,7 +13,9 @@ use yew::prelude::*;
 use zim_wasm::{WasmVersion, BLOB_PENDING};
 
 use crate::api::{Device, FsEntry};
-use crate::pages::vault::{guess_mime, is_textual, object_url, SYNC_RETRIES, SYNC_RETRY_MS};
+use crate::pages::vault::{
+    digest, guess_mime, is_textual, object_url, SYNC_RETRIES, SYNC_RETRY_MS,
+};
 use crate::pages::vault_editor::OpenFile;
 use crate::pages::vault_history_view::{
     author_label, file_preview, tree_list, version_row, VersionMeta,
@@ -286,6 +288,7 @@ pub fn history_view(props: &HistoryProps) -> Html {
                     let name = path.rsplit('/').next().unwrap_or_default();
                     let mime = guess_mime(name);
                     let url = object_url(&bytes, &mime)?;
+                    let digest = digest(&bytes);
                     let text = (is_textual(&mime) && bytes.len() < 2_000_000)
                         .then(|| String::from_utf8(bytes).ok())
                         .flatten();
@@ -294,6 +297,7 @@ pub fn history_view(props: &HistoryProps) -> Html {
                         mime,
                         url,
                         text,
+                        digest,
                         rev: 0,
                     };
                     // Unknown on failure: Restore stays offered and

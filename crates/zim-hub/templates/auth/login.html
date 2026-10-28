@@ -1,0 +1,9 @@
+{% extends "auth/base.html" %}
+{% block body %}
+{% if let Some(error) = error %}
+<div class="error" style="margin-bottom:0.75rem;">{{ error }}</div>
+{% endif %}
+{% for provider in providers %}
+<a class="btn btn-primary" href="{{ provider.path }}?next={{ next }}" style="width:100%;text-align:center;margin-bottom:0.5rem;">{{ provider.label }}</a>
+{% endfor %}
+{% endblock %}

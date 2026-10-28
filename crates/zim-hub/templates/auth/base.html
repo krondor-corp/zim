@@ -1,0 +1,24 @@
+{#- Frame shared by every server-rendered `/auth/*` page: the SPA's
+    onboarding look (`.onb`, `.gate`, `.btn`), so both share style.css.
+    Child templates provide `heading` and fill `body`. -#}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ heading }} — zim</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="onb">
+    <header class="onb__bar"><span class="onb__brand">zim</span></header>
+    <main class="onb__main"><div class="onb__inner">
+      <div class="gate" style="max-width:440px;margin:0 auto;">
+        <h3 style="margin-top:0;">{{ heading }}</h3>
+        {% block body %}{% endblock %}
+      </div>
+    </div></main>
+  </div>
+</body>
+</html>

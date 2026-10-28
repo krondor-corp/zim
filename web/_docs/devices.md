@@ -22,7 +22,8 @@ zim hub login --hub https://hub.zim.krondor.org
 ```
 
 The terminal prints a URL and a short code. Open the URL in a browser
-where you're already signed in, enter the code, and approve the device.
+(sign in if asked), check the code matches your terminal, and approve the
+device. You don't need to set up your browser key first.
 That approval enrolls this machine's key into your account — the CLI
 never sees your Google credentials.
 

@@ -49,4 +49,4 @@ zim-hub-wasm = { path = "../wasm" }
 # Shared hub wire types + the typed client (reqwest's wasm/fetch backend).
 # Same `ApiRequest` types the hub server compiles + the CLI calls; the SPA
 # additionally speaks the admin page + browser device-code approval.
-zim-api = { path = "../../zim-api", features = ["hub", "admin", "grant"] }
+zim-api = { path = "../../zim-api", features = ["hub", "admin"] }

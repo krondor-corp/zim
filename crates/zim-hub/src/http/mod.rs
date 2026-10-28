@@ -49,10 +49,12 @@ pub fn build_router(state: AppState) -> Router {
         .route("/static/*path", get(html::static_files::handler))
         // OAuth flow is public so anonymous users can sign in.
         .nest("/auth", auth::router(state.clone()))
+        // Verification URLs minted before approval moved to `/auth/device`.
+        .route("/device", get(auth::device::legacy_redirect))
         // JSON API — the SPA's whole backend (incl. /api/v0/admin).
         .nest("/api", api::router(state.clone()))
         // The Yew SPA owns everything else: `/`, `/v/:id`, `/settings`,
-        // `/admin`, `/device`, deep links, and its hashed assets. Mounted last
+        // `/admin`, deep links, and its hashed assets. Mounted last
         // as the fallback so the routes above win.
         .route("/", get(spa::root))
         .fallback(spa::fallback)

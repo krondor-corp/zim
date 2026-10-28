@@ -44,7 +44,7 @@ dev-login = []
 # Shared API contract: the server serializes these wire types; the CLI +
 # web SPA deserialize them. Routes here MUST mirror the request types in
 # `zim_api::hub` (no compile-time link — see each request's doc comment).
-zim-api = { path = "../zim-api", version = "0.1.2", features = ["hub", "admin", "grant", "vault"] }
+zim-api = { path = "../zim-api", version = "0.1.2", features = ["hub", "admin", "vault"] }
 zim-core = { path = "../zim-core", version = "0.2.0" }
 zim-did = { path = "../zim-did", version = "0.1.1" }
 zim-peer = { path = "../zim-peer", version = "0.1.2" }
@@ -56,7 +56,9 @@ tower = { workspace = true }
 tower-http = { workspace = true, features = ["cors", "trace", "set-header"] }
 http = { workspace = true }
 
-# templates + static
+# templates + static — askama renders the server-side `/auth/*` pages
+askama = { workspace = true }
+askama_axum = { workspace = true }
 rust-embed = "8.5"
 mime_guess = { workspace = true }
 

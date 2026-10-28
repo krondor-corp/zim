@@ -3,6 +3,7 @@
 //! `ZIM_HUB_AUTH`, can run side by side, and all mint sessions through
 //! [`session`]. [`login`] is the server-rendered sign-in page; the
 //! wasm app is only served to users who already have a session.
+//! [`device`] approves a daemon's `zim hub login` the same way.
 //!
 //! Three extractors layered by access level:
 //!
@@ -20,6 +21,7 @@
 
 #[cfg(feature = "dev-login")]
 pub mod dev;
+pub mod device;
 pub mod google;
 pub mod login;
 // Both ends of the JWT format (mint + verify) live in `zim_api::hub::jwt`
@@ -29,6 +31,7 @@ pub mod logout;
 pub mod return_to;
 pub mod session;
 
+use askama::Template;
 use axum::async_trait;
 use axum::extract::{FromRequestParts, OriginalUri};
 use axum::http::request::Parts;
@@ -56,7 +59,9 @@ pub fn router(state: AppState) -> Router<AppState> {
     let mut r = Router::new()
         .route("/login", get(login::handler))
         .route("/logout", post(logout::handler))
-        .route("/pending", get(pending_page));
+        .route("/pending", get(pending_page))
+        .route("/device", get(device::page))
+        .route("/device/approve", post(device::approve));
     // Each enabled provider mounts its own routes; disabled ones 404.
     for provider in &state.auth.providers {
         r = match provider {
@@ -355,27 +360,19 @@ fn extract_claims(parts: &Parts, auth: &AuthConfig) -> Option<Claims> {
     Some(decoded.claims)
 }
 
+/// `templates/auth/pending.html`: signed in, not yet authorized.
+#[derive(Template)]
+#[template(path = "auth/pending.html")]
+struct PendingPage<'a> {
+    heading: &'static str,
+    email: &'a str,
+}
+
 async fn pending_page(OptionalUser(user): OptionalUser) -> Response {
     let email = user.as_ref().map(|u| u.email()).unwrap_or("you");
-    let body = format!(
-        r#"<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>access pending — zim-hub</title>
-  <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-  <header><h1>zim-hub</h1></header>
-  <main>
-    <h2>access pending</h2>
-    <p>You're signed in as <strong>{email}</strong>, but your account hasn't been authorized for this hub yet. An admin needs to approve you.</p>
-    <p><form method="post" action="/auth/logout" style="display:inline">
-      <button type="submit" class="link-button">sign out</button>
-    </form></p>
-  </main>
-</body>
-</html>"#
-    );
-    axum::response::Html(body).into_response()
+    PendingPage {
+        heading: "Access pending",
+        email,
+    }
+    .into_response()
 }

@@ -2,11 +2,13 @@
 //! on the left, document editor/viewer on the right. Read (`ls`/`cat`)
 //! and edit (`add_file`/`mkdir`/`rm` then `save`) go through the held
 //! `WasmFs` — all blob crypto happens inside the SDK. The handle lives
-//! in a `RefCell` across user actions (which are sequential, so the
-//! borrows don't overlap).
+//! in a `RefCell` shared by user actions and the background follow
+//! loop; async helpers wait out an in-flight borrow ([`lock`],
+//! [`lock_mut`]) instead of panicking on it.
 
-use std::cell::RefCell;
+use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::collections::BTreeSet;
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -50,7 +52,7 @@ struct ShareMeta {
 
 /// Read the open vault's manifest metadata (synchronous — no network).
 fn read_meta(fs: &FsHandle) -> Option<VaultMeta> {
-    let guard = fs.borrow();
+    let guard = fs.try_borrow().ok()?;
     let f = guard.as_ref()?;
     let json = f.manifest_info().ok()?;
     serde_json::from_str::<VaultMeta>(&json).ok()
@@ -125,6 +127,13 @@ pub struct Props {
     pub user_id: String,
 }
 
+/// Fingerprint decrypted bytes for [`OpenFile::digest`].
+pub(crate) fn digest(bytes: &[u8]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// Abbreviate a 64-char hex vault id for display: `01fc44f0\u{2026}405e38`.
 /// The full id is in the Details panel.
 pub(crate) fn short_id(id: &str) -> String {
@@ -135,16 +144,40 @@ pub(crate) fn short_id(id: &str) -> String {
     }
 }
 
+/// How long [`lock`]/[`lock_mut`] wait before re-trying a busy handle.
+const LOCK_RETRY_MS: i32 = 25;
+
+/// Borrow the handle, waiting while another task holds it mutably
+/// across an await (a save, or the follow loop's refresh).
+async fn lock(fs: &FsHandle) -> Ref<'_, Option<WasmFs>> {
+    loop {
+        if let Ok(guard) = fs.try_borrow() {
+            return guard;
+        }
+        sleep(LOCK_RETRY_MS).await;
+    }
+}
+
+/// Mutably borrow the handle, waiting out any in-flight borrow.
+async fn lock_mut(fs: &FsHandle) -> RefMut<'_, Option<WasmFs>> {
+    loop {
+        if let Ok(guard) = fs.try_borrow_mut() {
+            return guard;
+        }
+        sleep(LOCK_RETRY_MS).await;
+    }
+}
+
 async fn open(fs: &FsHandle, vault_id: String) -> Result<(), String> {
     let opened = WasmFs::open(vault_id, origin())
         .await
         .map_err(|e| jserr(e.into()))?;
-    *fs.borrow_mut() = Some(opened);
+    *lock_mut(fs).await = Some(opened);
     Ok(())
 }
 
 async fn ls(fs: &FsHandle, path: String) -> Result<Vec<FsEntry>, String> {
-    let guard = fs.borrow();
+    let guard = lock(fs).await;
     let f = guard.as_ref().ok_or("vault not open")?;
     let json = f.ls(path).await.map_err(|e| jserr(e.into()))?;
     serde_json::from_str::<Vec<FsEntry>>(&json).map_err(|e| e.to_string())
@@ -159,7 +192,7 @@ enum LoadError {
 }
 
 async fn cat(fs: &FsHandle, path: String) -> Result<Vec<u8>, LoadError> {
-    let guard = fs.borrow();
+    let guard = lock(fs).await;
     let f = guard
         .as_ref()
         .ok_or_else(|| LoadError::Failed("vault not open".into()))?;
@@ -176,7 +209,7 @@ async fn cat(fs: &FsHandle, path: String) -> Result<Vec<u8>, LoadError> {
 /// `true` when the tree changed. Best-effort: a failed refresh (offline,
 /// transient) keeps the current view rather than breaking navigation.
 async fn refresh(fs: &FsHandle) -> bool {
-    let mut guard = fs.borrow_mut();
+    let mut guard = lock_mut(fs).await;
     match guard.as_mut() {
         Some(f) => f.refresh().await.unwrap_or(false),
         None => false,
@@ -189,7 +222,7 @@ async fn save_with_retry<F>(fs: &FsHandle, op: F) -> Result<(), String>
 where
     F: for<'a> AsyncFn(&'a mut WasmFs) -> Result<(), String>,
 {
-    let mut guard = fs.borrow_mut();
+    let mut guard = lock_mut(fs).await;
     let f = guard.as_mut().ok_or("vault not open")?;
     op(f).await?;
     match f.save().await {
@@ -244,6 +277,17 @@ async fn mv_and_save(fs: &FsHandle, from: String, to: String) -> Result<(), Stri
 pub(crate) const SYNC_RETRIES: u32 = 30;
 pub(crate) const SYNC_RETRY_MS: i32 = 2_000;
 
+/// How often an open vault re-checks the hub's head while the tab is
+/// visible, so another device's edits show up without re-opening.
+const FOLLOW_MS: i32 = 3_000;
+
+/// Whether the tab is in the background (no point polling then).
+fn tab_hidden() -> bool {
+    web_sys::window()
+        .and_then(|w| w.document())
+        .is_some_and(|d| d.hidden())
+}
+
 /// Load `path` into an [`OpenFile`] (decrypt, object-URL, decode text).
 async fn load_file(fs: &FsHandle, path: String) -> Result<OpenFile, LoadError> {
     static LOADS: AtomicU32 = AtomicU32::new(0);
@@ -251,6 +295,7 @@ async fn load_file(fs: &FsHandle, path: String) -> Result<OpenFile, LoadError> {
     let name = path.rsplit('/').next().unwrap_or_default();
     let mime = guess_mime(name);
     let url = object_url(&bytes, &mime).map_err(LoadError::Failed)?;
+    let digest = digest(&bytes);
     let text = if is_textual(&mime) && bytes.len() < 2_000_000 {
         String::from_utf8(bytes).ok()
     } else {
@@ -261,6 +306,7 @@ async fn load_file(fs: &FsHandle, path: String) -> Result<OpenFile, LoadError> {
         mime,
         url,
         text,
+        digest,
         rev: LOADS.fetch_add(1, Ordering::Relaxed),
     })
 }
@@ -323,7 +369,8 @@ pub fn vault_tree(props: &Props) -> Html {
             let error = error.clone();
             let meta = meta.clone();
             yew::platform::spawn_local(async move {
-                if fs.borrow().is_none() {
+                // Busy means a task holds an open vault.
+                if fs.try_borrow().is_ok_and(|g| g.is_none()) {
                     return; // pre-open effect fire; mount path rebuilds explicitly
                 }
                 refresh(&fs).await;
@@ -338,7 +385,9 @@ pub fn vault_tree(props: &Props) -> Html {
                     Ok(r) => rows.set(Some(r)),
                     Err(e) => error.set(e),
                 }
-                meta.set(read_meta(&fs));
+                if let Some(m) = read_meta(&fs) {
+                    meta.set(Some(m));
+                }
             });
         })
     };
@@ -461,11 +510,6 @@ pub fn vault_tree(props: &Props) -> Html {
                     if !current() {
                         return;
                     }
-                    // Another action holds the handle across an await; a
-                    // borrow now would panic. Try again next tick.
-                    if fs.try_borrow_mut().is_err() {
-                        continue;
-                    }
                     let changed = refresh(&fs).await;
                     let loaded = load_file(&fs, path.clone()).await;
                     // Rebuild only once our borrow is released.
@@ -553,6 +597,105 @@ pub fn vault_tree(props: &Props) -> Html {
             });
         })
     };
+
+    // Follow remote edits: every FOLLOW_MS a ticker bumps `follow_tick`,
+    // and the effect below (which sees this render's state) fast-forwards
+    // to the hub's head. A changed head rebuilds the tree and reloads the
+    // open file if its bytes changed — unless it holds an unsaved draft,
+    // which is never clobbered. A reload that couldn't land (blob still
+    // mirroring) leaves `follow_stale` set so the next tick tries again.
+    let follow_tick = use_state(|| 0u32);
+    let follow_count = use_mut_ref(|| 0u32);
+    let follow_stale = use_mut_ref(|| false);
+    // Mirrors `draft.is_some()` for the follow task, which outlives the
+    // render it was spawned from.
+    let dirty = use_mut_ref(|| false);
+    {
+        let dirty = dirty.clone();
+        use_effect_with(draft.is_some(), move |&d| {
+            *dirty.borrow_mut() = d;
+            || ()
+        });
+    }
+    {
+        let tick = follow_tick.setter();
+        let count = follow_count.clone();
+        use_effect_with(props.vault_id.clone(), move |_| {
+            let alive = Rc::new(Cell::new(true));
+            {
+                let alive = alive.clone();
+                yew::platform::spawn_local(async move {
+                    loop {
+                        sleep(FOLLOW_MS).await;
+                        if !alive.get() {
+                            return;
+                        }
+                        if !tab_hidden() {
+                            let n = {
+                                let mut c = count.borrow_mut();
+                                *c = c.wrapping_add(1);
+                                *c
+                            };
+                            tick.set(n);
+                        }
+                    }
+                });
+            }
+            move || alive.set(false)
+        });
+    }
+    {
+        let fs = fs.clone();
+        let open_file = open_file.clone();
+        let open_seq = open_seq.clone();
+        let follow_stale = follow_stale.clone();
+        let dirty = dirty.clone();
+        let status = status.clone();
+        let rebuild = rebuild.clone();
+        use_effect_with(*follow_tick, move |&tick| {
+            // A user action holds the handle: it refreshes on its own.
+            let idle = fs.try_borrow().is_ok_and(|g| g.is_some());
+            if tick > 0 && idle {
+                let open = (*open_file).clone();
+                let ticket = *open_seq.borrow();
+                yew::platform::spawn_local(async move {
+                    let changed = refresh(&fs).await;
+                    if changed {
+                        rebuild.emit(());
+                    }
+                    if !changed && !*follow_stale.borrow() {
+                        return;
+                    }
+                    *follow_stale.borrow_mut() = false;
+                    let Some(open) = open else {
+                        return;
+                    };
+                    if *dirty.borrow() {
+                        status.set("changed on another device".to_string());
+                        return;
+                    }
+                    let loaded = load_file(&fs, open.path.clone()).await;
+                    // The user opened another file or started typing
+                    // while we loaded: their view wins.
+                    let current = *open_seq.borrow() == ticket && !*dirty.borrow();
+                    match loaded {
+                        Ok(f) if current && f.digest != open.digest => {
+                            open_file.set(Some(f));
+                        }
+                        Ok(f) => {
+                            let _ = web_sys::Url::revoke_object_url(&f.url);
+                        }
+                        Err(LoadError::Pending) => *follow_stale.borrow_mut() = true,
+                        // Removed or renamed elsewhere: don't leave a
+                        // stale copy up to be saved back.
+                        Err(LoadError::Failed(_)) if current => open_file.set(None),
+                        Err(LoadError::Failed(_)) => {}
+                    }
+                });
+            }
+            || ()
+        });
+    }
 
     let on_change = {
         let draft = draft.clone();

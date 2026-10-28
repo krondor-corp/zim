@@ -143,6 +143,19 @@ impl Entry {
         }
     }
 
+    /// Whether `self` and `other` are the same saved revision of the same
+    /// file. Every saved rewrite advances an entity's ratchet, and the
+    /// ratchet is a pure function of (entity, saved revision count), so
+    /// equal ratchets mean the file hasn't been rewritten between the two
+    /// trees (a move reuses the entry, ratchet and all). Always `false`
+    /// for directories — "unchanged" is a question about file content.
+    pub fn is_same_file_revision(&self, other: &Entry) -> bool {
+        matches!(
+            (self, other),
+            (Entry::File { ratchet: a, .. }, Entry::File { ratchet: b, .. }) if a == b
+        )
+    }
+
     /// The prior saved revision of this entity; `None` when there is
     /// none (the stored sentinel is `Link::default()`, never handed out).
     pub fn previous(&self) -> Option<&Link> {

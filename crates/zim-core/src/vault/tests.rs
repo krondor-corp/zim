@@ -763,3 +763,64 @@ async fn alice_still_reads_history_from_before_a_revocation() {
         .expect("alice opens v1");
     assert_eq!(v1.fs().cat(&note).await.unwrap(), b"shared era");
 }
+
+#[tokio::test]
+async fn alice_sees_which_files_changed_since_an_old_version() {
+    // v1 holds two notes. Alice rewrites one and leaves the other alone.
+    // Against v1, the untouched note is the same revision (nothing to
+    // restore); the rewritten one isn't — even once its old text is
+    // restored, because that restore is a new revision.
+    let blobs = MemBlobs::default();
+    let log = MemLog::default();
+    let alice = PrivateKey::generate();
+    let mut live = Vault::init("d".to_string(), &alice, blobs.clone(), log.clone())
+        .await
+        .expect("init");
+    let id = live.id();
+    let kept = AbsPath::new("/kept.md").unwrap();
+    let edited = AbsPath::new("/edited.md").unwrap();
+
+    // -- v1: both notes; v2: edit one --
+    live.fs().add(&kept, Cursor::new(b"same")).await.unwrap();
+    live.fs()
+        .add(&edited, Cursor::new(b"before"))
+        .await
+        .unwrap();
+    live.save().await.expect("save 1");
+    live.fs().add(&edited, Cursor::new(b"after")).await.unwrap();
+    live.save().await.expect("save 2");
+
+    let v1 = Vault::open_at(id, 1, blobs, log, &alice)
+        .await
+        .expect("open v1");
+    let same = async |v: &Vault<MemBlobs, MemLog>, path: &AbsPath| {
+        let then = v1.fs().get_entry_at_path(path).await.unwrap().unwrap();
+        let now = v.fs().get_entry_at_path(path).await.unwrap().unwrap();
+        then.is_same_file_revision(&now)
+    };
+
+    // -- compare v1 against the live head --
+    assert!(same(&live, &kept).await, "untouched note is unchanged");
+    assert!(!same(&live, &edited).await, "rewritten note changed");
+
+    // -- restoring the old text is itself a new revision --
+    live.fs()
+        .add(&edited, Cursor::new(b"before"))
+        .await
+        .unwrap();
+    live.save().await.expect("save 3 restores");
+    assert!(!same(&live, &edited).await);
+
+    // -- directories are never "unchanged" files --
+    live.fs()
+        .mkdir(&AbsPath::new("/dir").unwrap(), false)
+        .await
+        .unwrap();
+    let dir = live
+        .fs()
+        .get_entry_at_path(&AbsPath::new("/dir").unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!dir.is_same_file_revision(&dir));
+}

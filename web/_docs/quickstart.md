@@ -47,7 +47,9 @@ Inside a vault you can:
 - **Go back in time** — **History** lists every version, newest first.
   Pick one to browse the vault exactly as it was, open any file, and
   **Restore this file** to bring that content back as a new version.
-  Nothing is ever rewritten, so an accidental overwrite is undoable.
+  Files that haven't changed since that version show as unchanged —
+  there's nothing to restore. Nothing is ever rewritten, so an
+  accidental overwrite is undoable.
   Versions from before this browser was given access stay sealed.
 
 Everything you do here is committed as an encrypted version and synced

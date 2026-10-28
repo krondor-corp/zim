@@ -12,21 +12,28 @@
 //!
 //! [`WasmVersion::history`] lists the chain to pick a version from.
 
+use std::cell::RefCell;
+
 use reqwest::Client;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 use zim_core::blobs::BlobStore;
-use zim_core::fs::Manifest;
+use zim_core::fs::{AbsPath, FsError, Manifest};
 use zim_core::vault::{Vault, VaultLog};
 
 use crate::api::{self, GetLog};
 use crate::fs::{parse_base, parse_vault_id, session_key, HubBlobStore, HubVaultLog};
 use crate::read;
 
+type HubVault = Vault<HubBlobStore, HubVaultLog>;
+
 #[wasm_bindgen]
 pub struct WasmVersion {
-    vault: Vault<HubBlobStore, HubVaultLog>,
+    vault: HubVault,
+    /// The hub's current head, opened on demand to answer "has this file
+    /// changed since?". Reopened only when the head moves.
+    live: RefCell<Option<HubVault>>,
 }
 
 #[wasm_bindgen]
@@ -123,7 +130,10 @@ impl WasmVersion {
         )
         .await
         .map_err(|e| JsError::new(&format!("open version {height}: {e}")))?;
-        Ok(WasmVersion { vault })
+        Ok(WasmVersion {
+            vault,
+            live: RefCell::new(None),
+        })
     }
 
     /// This version's header as JSON: `{height, manifest_hash, author}`.
@@ -150,5 +160,65 @@ impl WasmVersion {
     /// A file's plaintext as it was at this version.
     pub async fn cat(&self, path: String) -> Result<Vec<u8>, JsValue> {
         read::cat(self.vault.fs(), &path).await
+    }
+
+    /// Whether the file at `path` is the same saved revision in this
+    /// version and at the hub's *current* head — its ratchet hasn't
+    /// advanced, so there is nothing to restore. `false` when the file is
+    /// gone or different now (restorable), or isn't a file in this
+    /// version. Checks the head afresh on every call.
+    pub async fn is_unchanged(&self, path: String) -> Result<bool, JsError> {
+        let abs =
+            AbsPath::new(&path).ok_or_else(|| JsError::new(&format!("invalid path: {path}")))?;
+        let fs_err = |e: FsError| JsError::new(&format!("compare {path}: {e}"));
+        let Some(then) = self
+            .vault
+            .fs()
+            .get_entry_at_path(&abs)
+            .await
+            .map_err(fs_err)?
+        else {
+            return Ok(false);
+        };
+        let live = self.live().await?;
+        // A path that no longer resolves (a parent became a file, …) is as
+        // changed as a missing one. Any other failure (a blob the hub
+        // didn't serve) is an error, never "changed": a hiccup must not
+        // offer a restore of a file that is in fact unchanged.
+        let now = match live.fs().get_entry_at_path(&abs).await {
+            Ok(now) => now,
+            Err(FsError::PathNotFound(_) | FsError::CannotMutate(..)) => None,
+            Err(e) => return Err(fs_err(e)),
+        };
+        Ok(now.is_some_and(|now| then.is_same_file_revision(&now)))
+    }
+}
+
+impl WasmVersion {
+    /// The live head, reusing the cached handle while the head hasn't
+    /// moved. `Vault` clones are cheap, so no borrow outlives a call.
+    async fn live(&self) -> Result<HubVault, JsError> {
+        let id = self.vault.id();
+        let head = self
+            .vault
+            .log()
+            .head(id, None)
+            .await
+            .map_err(|e| JsError::new(&format!("current head: {e}")))?;
+        let cached = self.live.borrow().clone();
+        if let Some(live) = cached.filter(|v| *v.manifest_link() == head.link) {
+            return Ok(live);
+        }
+        let live = Vault::open_with_head(
+            id,
+            head.link,
+            self.vault.blobs().clone(),
+            self.vault.log().clone(),
+            self.vault.private_key(),
+        )
+        .await
+        .map_err(|e| JsError::new(&format!("open current head: {e}")))?;
+        *self.live.borrow_mut() = Some(live.clone());
+        Ok(live)
     }
 }

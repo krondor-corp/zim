@@ -36,6 +36,15 @@ Restoring is never a chain rewrite: read the old content from the
 historical handle, write it on the live handle, and save. The restored
 content lands at a new height; the overwritten version stays in history.
 
+A file is restorable only if it changed since the version: the old
+entry and the live head's entry at that path must not be the same saved
+revision (`Entry::is_same_file_revision`). Every saved rewrite advances an
+entity's ratchet, and a move reuses the entry, so equal ratchets mean "not
+rewritten since". A restore is itself a rewrite, so restored content counts
+as changed relative to the version it came from. The browser checks
+against the hub's current head when a file is opened and again at restore
+time; a fetch failure during the check is an error, never "changed".
+
 The browser exposes this as a read-only `WasmVersion` (no `save`) plus
 `WasmVersion::history`, which pages `/api/v0/vaults/{id}/log` and fetches
 each manifest's plaintext header for its author and an `access` of

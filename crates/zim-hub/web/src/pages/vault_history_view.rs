@@ -136,8 +136,19 @@ pub(crate) fn tree_list(
     }
 }
 
-pub(crate) fn file_preview(f: &OpenFile, restore: &Callback<String>) -> Html {
+/// `unchanged`: `Some(true)` when the file is the same revision at the
+/// live head — Restore is withheld, since there's nothing to bring back.
+pub(crate) fn file_preview(
+    f: &OpenFile,
+    unchanged: Option<bool>,
+    height: Option<u64>,
+    restore: &Callback<String>,
+) -> Html {
     let name = f.path.rsplit('/').next().unwrap_or_default().to_string();
+    let is_unchanged = unchanged == Some(true);
+    let since = height
+        .map(|h| format!(" since version {h}"))
+        .unwrap_or_default();
     let onclick = {
         let restore = restore.clone();
         let path = f.path.clone();
@@ -147,10 +158,17 @@ pub(crate) fn file_preview(f: &OpenFile, restore: &Callback<String>) -> Html {
         <div class="editor-container">
             <div class="editor-title-row">
                 <h1 class="editor-title" style="flex:1;" title={f.path.clone()}>{ name }</h1>
-                <button type="button" class="app-header__btn app-header__btn--save" {onclick}
-                    title="Write this content forward as the vault's next version">
-                    { "Restore this file" }
-                </button>
+                if is_unchanged {
+                    <span class="history-unchanged"
+                        title="This file hasn't been rewritten since; the current version is identical">
+                        { format!("Unchanged{since}") }
+                    </span>
+                } else {
+                    <button type="button" class="app-header__btn app-header__btn--save" {onclick}
+                        title="Write this content forward as the vault's next version">
+                        { "Restore this file" }
+                    </button>
+                }
             </div>
             {
                 match &f.text {

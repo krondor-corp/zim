@@ -1642,3 +1642,11 @@ button.app-menu__item {
   line-height: 1.6;
   color: hsl(var(--foreground));
 }
+.history-unchanged {
+  font-size: 0.78rem;
+  color: hsl(var(--muted-foreground));
+  padding: 0.3rem 0.65rem;
+  border: 1px dashed hsl(var(--border));
+  border-radius: var(--radius);
+  white-space: nowrap;
+}

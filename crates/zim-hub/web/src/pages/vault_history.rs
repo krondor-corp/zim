@@ -101,6 +101,9 @@ pub fn history_view(props: &HistoryProps) -> Html {
     let dir = use_state(|| "/".to_string());
     let entries = use_state(|| None::<Vec<FsEntry>>);
     let preview = use_state(|| None::<OpenFile>);
+    // Whether the previewed file is the same revision at the live head
+    // (nothing to restore). `None` when the comparison couldn't be made.
+    let unchanged = use_state(|| None::<bool>);
     let error = use_state(String::new);
     // A file whose blob is still on its way to the hub; shown as
     // "syncing" while the read retries.
@@ -251,6 +254,7 @@ pub fn history_view(props: &HistoryProps) -> Html {
         let snap = snap.clone();
         let file_seq = file_seq.clone();
         let preview = preview.clone();
+        let unchanged = unchanged.clone();
         let syncing = syncing.clone();
         let error = error.clone();
         Callback::from(move |path: String| {
@@ -264,6 +268,7 @@ pub fn history_view(props: &HistoryProps) -> Html {
             let snap = snap.clone();
             let file_seq = file_seq.clone();
             let preview = preview.clone();
+            let unchanged = unchanged.clone();
             let syncing = syncing.clone();
             let error = error.clone();
             error.set(String::new());
@@ -284,13 +289,17 @@ pub fn history_view(props: &HistoryProps) -> Html {
                     let text = (is_textual(&mime) && bytes.len() < 2_000_000)
                         .then(|| String::from_utf8(bytes).ok())
                         .flatten();
-                    Ok::<_, String>(Some(OpenFile {
+                    let file = OpenFile {
                         path: path.clone(),
                         mime,
                         url,
                         text,
                         rev: 0,
-                    }))
+                    };
+                    // Unknown on failure: Restore stays offered and
+                    // re-checks on click.
+                    let same = v.is_unchanged(path.clone()).await.ok();
+                    Ok::<_, String>(Some((file, same)))
                 }
                 .await;
                 if !current() {
@@ -298,7 +307,10 @@ pub fn history_view(props: &HistoryProps) -> Html {
                 }
                 syncing.set(None);
                 match loaded {
-                    Ok(Some(f)) => preview.set(Some(f)),
+                    Ok(Some((f, same))) => {
+                        unchanged.set(same);
+                        preview.set(Some(f));
+                    }
                     Ok(None) => {}
                     Err(e) => error.set(e),
                 }
@@ -309,6 +321,7 @@ pub fn history_view(props: &HistoryProps) -> Html {
     let restore = {
         let snap = snap.clone();
         let selected = selected.clone();
+        let unchanged = unchanged.clone();
         let syncing = syncing.clone();
         let error = error.clone();
         let on_restore = props.on_restore.clone();
@@ -317,19 +330,32 @@ pub fn history_view(props: &HistoryProps) -> Html {
                 return;
             };
             let snap = snap.clone();
+            let unchanged = unchanged.clone();
             let syncing = syncing.clone();
             let error = error.clone();
             let on_restore = on_restore.clone();
+            error.set(String::new());
             yew::platform::spawn_local(async move {
                 // The user asked for this restore; it waits out a syncing
                 // blob rather than being abandoned by later navigation.
-                let bytes = match snapshot(&snap) {
-                    Ok(v) => {
-                        let pending = || syncing.set(Some(path.clone()));
-                        cat_synced(&v, &path, || true, pending).await
+                let bytes = async {
+                    let v = snapshot(&snap)?;
+                    // Re-check against the head *now*: the file may have
+                    // changed (or been reverted) since it was opened. A
+                    // file that is still this revision has nothing to
+                    // restore — never write a no-op version.
+                    if v.is_unchanged(path.clone())
+                        .await
+                        .map_err(|e| jserr(e.into()))?
+                    {
+                        unchanged.set(Some(true));
+                        return Ok(None);
                     }
-                    Err(e) => Err(e),
-                };
+                    unchanged.set(Some(false));
+                    let pending = || syncing.set(Some(path.clone()));
+                    cat_synced(&v, &path, || true, pending).await
+                }
+                .await;
                 syncing.set(None);
                 match bytes {
                     Ok(None) => {}
@@ -395,7 +421,7 @@ pub fn history_view(props: &HistoryProps) -> Html {
                     }
                     {
                         match &*preview {
-                            Some(f) => file_preview(f, &restore),
+                            Some(f) => file_preview(f, *unchanged, picked.map(|v| v.height), &restore),
                             None => match &*syncing {
                                 Some(path) => html! {
                                     <div class="doc-empty">

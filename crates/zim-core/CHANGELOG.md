@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/krondor-corp/zim/compare/zim-core-v0.2.0...zim-core-v0.3.0) - 2026-10-28
+
+### Added
+
+- *(hub)* version history view with per-file restore (KRO-209) ([#53](https://github.com/krondor-corp/zim/pull/53))
+- *(core)* genesis shares carry their own reach
+
+### Fixed
+
+- *(log)* head links round-trip with the manifest's CBOR codec (KRO-258) ([#45](https://github.com/krondor-corp/zim/pull/45))
+- refuse sealing a vault to the hub; hide the hub from peers list (KRO-229) ([#41](https://github.com/krondor-corp/zim/pull/41))
+- *(hub)* browser blob store tells a 404 apart from other failures
+
 ## [0.2.0](https://github.com/krondor-corp/zim/compare/zim-core-v0.1.1...zim-core-v0.2.0) - 2026-10-06
 
 ### Added

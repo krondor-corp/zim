@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3](https://github.com/krondor-corp/zim/compare/zim-peer-v0.1.2...zim-peer-v0.1.3) - 2026-10-28
+
+### Fixed
+
+- *(log)* head links round-trip with the manifest's CBOR codec (KRO-258) ([#45](https://github.com/krondor-corp/zim/pull/45))
+
 ## [0.1.2](https://github.com/krondor-corp/zim/compare/zim-peer-v0.1.1...zim-peer-v0.1.2) - 2026-10-06
 
 ### Added

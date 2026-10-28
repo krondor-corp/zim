@@ -1586,3 +1586,67 @@ button.app-menu__item {
  * no card-in-panel double-wrap). */
 .gate { display: flex; flex-direction: column; }
 .gate h3 { margin: 0 0 0.5rem; font-size: 1.15rem; }
+
+/* Version history — a read-only view, tinted so it can't be mistaken for
+ * the live editor: violet-washed panes under a dashed banner. */
+.app-header__btn--on {
+  color: hsl(var(--primary));
+  border-color: hsl(var(--primary) / 0.5);
+}
+.history-layout { background: hsl(var(--primary) / 0.04); }
+.history-layout .tree-pane { width: 13rem; }
+.history-pane__title {
+  padding: 0.6rem 0.75rem 0.25rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.history-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.75rem 1rem 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px dashed hsl(var(--primary) / 0.6);
+  border-radius: var(--radius);
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--foreground));
+  font-size: 0.82rem;
+}
+.history-version, .history-entry {
+  width: calc(100% - 0.5rem);
+  background: none;
+  border: 0;
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+}
+.history-version__height { font-weight: 600; min-width: 2.5rem; }
+.history-version__author {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.history-version--sealed { opacity: 0.45; cursor: not-allowed; }
+.history-version--unavailable .history-version__author { color: hsl(var(--destructive)); font-style: italic; }
+.history-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: hsl(var(--foreground));
+}
+.history-unchanged {
+  font-size: 0.78rem;
+  color: hsl(var(--muted-foreground));
+  padding: 0.3rem 0.65rem;
+  border: 1px dashed hsl(var(--border));
+  border-radius: var(--radius);
+  white-space: nowrap;
+}

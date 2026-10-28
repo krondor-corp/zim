@@ -180,6 +180,31 @@ impl<B: BlobStore, L: VaultLog> Vault<B, L> {
         Self::open_with_head(id, head.link, blobs, log, secret_key).await
     }
 
+    /// Open the vault as it was at `height` — the canonical head the
+    /// log holds there.
+    ///
+    /// Every manifest pins its whole tree, so a historical head fully
+    /// reconstructs that version. Decryption uses the share sealed into
+    /// *that* manifest: a key granted later has no share in earlier
+    /// versions and gets [`ShareError::NotFound`] — a grant is "from this
+    /// version onward" by construction. History before a revocation stays
+    /// readable to the remaining holders, whose old shares travel with
+    /// the old manifests.
+    ///
+    /// The handle is a normal `Vault`; callers that only browse history
+    /// must not `save` it (it would chain off a stale head). Restoring is
+    /// a read here plus a write on the live handle.
+    pub async fn open_at(
+        id: VaultId,
+        height: u64,
+        blobs: B,
+        log: L,
+        secret_key: &PrivateKey,
+    ) -> Result<Self, VaultError<L::Error>> {
+        let head = log.head(id, Some(height)).await?;
+        Self::open_with_head(id, head.link, blobs, log, secret_key).await
+    }
+
     /// Open a vault from a known head link, bypassing the log
     /// lookup.
     ///

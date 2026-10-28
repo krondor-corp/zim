@@ -3232,7 +3232,7 @@ dependencies = [
 
 [[package]]
 name = "zim-api"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "base64",
@@ -3250,7 +3250,7 @@ dependencies = [
 
 [[package]]
 name = "zim-core"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3281,7 +3281,7 @@ dependencies = [
 
 [[package]]
 name = "zim-crypto"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aes-gcm",
  "aes-kw",
@@ -3308,7 +3308,7 @@ dependencies = [
 
 [[package]]
 name = "zim-did"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "hex",
@@ -3331,6 +3331,7 @@ dependencies = [
  "blake3",
  "bytes",
  "console_error_panic_hook",
+ "futures",
  "getrandom 0.3.4",
  "hex",
  "ipld-core",

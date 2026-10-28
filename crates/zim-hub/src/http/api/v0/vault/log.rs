@@ -1,9 +1,9 @@
 //! `GET /api/v0/vaults/{vault_id}/log?from=N&limit=M` — paginated chain
 //! walk, newest first.
 //!
-//! Walks heights `from` down to `max(0, from-limit)`. Each entry is
-//! `(height, link)` where `link` is the canonical (lexicographically
-//! greatest) head at that height. The browser uses this to drive a
+//! Walks heights `from` down to `max(0, from-limit+1)` — at most `limit`
+//! entries. Each entry is `(height, link)` where `link` is the canonical
+//! (lexicographically greatest) head at that height. The browser uses this to drive a
 //! history view; each link points to a ciphertext Manifest blob it
 //! fetches via the `blob` endpoint and decrypts client-side.
 
@@ -50,7 +50,11 @@ pub async fn handler(
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
 
     let mut entries = Vec::with_capacity(limit as usize);
-    let stop = top.saturating_sub(limit);
+    if limit == 0 {
+        return (StatusCode::OK, Json(LogResponse { entries })).into_response();
+    }
+    // `limit` heights, inclusive of `top`.
+    let stop = top.saturating_sub(limit - 1);
     let mut h = top;
     while h >= stop {
         match log.heads(vault_id, h).await {

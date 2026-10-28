@@ -33,6 +33,8 @@ serde_ipld_dagcbor = { workspace = true }
 ipld-core = { workspace = true }
 anyhow = { workspace = true }
 async-trait = "0.1"
+# Fetch a history page's manifests concurrently.
+futures = { workspace = true }
 blake3 = "1"
 bytes = { workspace = true }
 # wasm is single-threaded; SendWrapper lets the !Send `fetch` future

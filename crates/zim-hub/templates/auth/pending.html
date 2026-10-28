@@ -1,0 +1,7 @@
+{% extends "auth/base.html" %}
+{% block body %}
+<p>You're signed in as <strong>{{ email }}</strong>, but your account hasn't been authorized for this hub yet. An admin needs to approve you.</p>
+<form method="post" action="/auth/logout">
+  <button type="submit" class="btn" style="width:100%;">Sign out</button>
+</form>
+{% endblock %}

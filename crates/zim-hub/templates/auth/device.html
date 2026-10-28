@@ -1,0 +1,35 @@
+{% extends "auth/base.html" %}
+{% block body %}
+{% match view %}
+{% when View::NoCode %}
+<p>Open the link <code>zim hub login</code> printed — it ends with <code>?code=…</code>.</p>
+{% when View::NotFound %}
+<p>No login is waiting on this code. Run <code>zim hub login</code> again for a new one.</p>
+{% when View::Expired %}
+<p>This login code expired. Run <code>zim hub login</code> again for a new one.</p>
+{% when View::Taken %}
+<p>This login code was already approved. Run <code>zim hub login</code> again for a new one.</p>
+{% when View::Failed %}
+<p>The hub couldn't process this code. Reload to try again.</p>
+{% when View::Approved %}
+<p>Return to your terminal — <code>zim hub login</code> finishes on its own in a few seconds.</p>
+{% when View::Pending with { code, label, pubkey } %}
+<p>A device wants to enroll with your account. Check the code and key match what your terminal shows, then approve.</p>
+<form method="post" action="/auth/device/approve">
+  <input type="hidden" name="code" value="{{ code }}">
+  <div class="field">
+    <label>Device</label>
+    <input type="text" value="{% if label.trim().is_empty() %}Unnamed device{% else %}{{ label }}{% endif %}" readonly>
+  </div>
+  <div class="field">
+    <label>Code</label>
+    <input type="text" class="mono" value="{{ code }}" readonly>
+  </div>
+  <div class="field">
+    <label>Public key</label>
+    <input type="text" class="mono" value="{{ pubkey }}" readonly>
+  </div>
+  <button type="submit" class="btn btn-primary" style="width:100%;">Approve</button>
+</form>
+{% endmatch %}
+{% endblock %}

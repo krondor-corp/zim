@@ -3,11 +3,13 @@
 //! session): one button per enabled provider, always — even when there
 //! is only one — each carrying `?next=` to where the visitor was headed.
 //! Providers with their own step (dev trust's email form) render it on
-//! their own page through [`shell`]. Markup mirrors the SPA's
-//! `OnboardingShell` (`.onb`, `.gate`, `.btn`) so both share `style.css`.
+//! their own page. Every `/auth/*` page is an askama template extending
+//! `templates/auth/base.html`, which mirrors the SPA's `OnboardingShell`
+//! (`.onb`, `.gate`, `.btn`) so both share `style.css`.
 
+use askama::Template;
 use axum::extract::{Query, State};
-use axum::response::{Html, IntoResponse, Redirect, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
 use crate::config::AuthProvider;
@@ -40,7 +42,7 @@ pub async fn handler(
         .error
         .as_deref()
         .map(|code| LoginError::from_query(code, query.used.as_deref(), query.tried.as_deref()));
-    Html(chooser(&state.auth.providers, next, error)).into_response()
+    chooser(&state.auth.providers, next, error).into_response()
 }
 
 /// Why the visitor is back at the chooser. Carried as a fixed code plus
@@ -123,70 +125,41 @@ impl From<&SessionError> for LoginError {
     }
 }
 
-fn chooser(providers: &[AuthProvider], next: &str, error: Option<LoginError>) -> String {
-    let banner = error
-        .map(|e| {
-            format!(
-                r#"<div class="error" style="margin-bottom:0.75rem;">{}</div>"#,
-                e.message()
-            )
-        })
-        .unwrap_or_default();
-    let next = urlencoding::encode(next);
-    let buttons: String = providers
-        .iter()
-        .map(|p| {
-            let (path, label) = entry(p);
-            format!(
-                r#"<a class="btn btn-primary" href="{path}?next={next}" style="width:100%;text-align:center;margin-bottom:0.5rem;">{label}</a>"#
-            )
-        })
-        .collect();
-    shell("Sign in", &format!("{banner}{buttons}"))
+/// `templates/auth/login.html`: one button per enabled provider.
+#[derive(Template)]
+#[template(path = "auth/login.html")]
+struct Chooser {
+    heading: &'static str,
+    error: Option<String>,
+    providers: Vec<Entry>,
+    /// URL-encoded: a query value in every button's href.
+    next: String,
 }
 
 /// Where a provider's sign-in starts, and its button label.
-fn entry(provider: &AuthProvider) -> (&'static str, &'static str) {
-    match provider {
-        AuthProvider::Google(_) => ("/auth/google/login", "Sign in with Google"),
-        #[cfg(feature = "dev-login")]
-        AuthProvider::DevTrust => ("/auth/dev/login", "Dev login"),
+struct Entry {
+    path: &'static str,
+    label: &'static str,
+}
+
+impl From<&AuthProvider> for Entry {
+    fn from(provider: &AuthProvider) -> Self {
+        let (path, label) = match provider {
+            AuthProvider::Google(_) => ("/auth/google/login", "Sign in with Google"),
+            #[cfg(feature = "dev-login")]
+            AuthProvider::DevTrust => ("/auth/dev/login", "Dev login"),
+        };
+        Entry { path, label }
     }
 }
 
-/// Page frame shared by every `/auth/*` page: the SPA's onboarding look.
-pub(super) fn shell(heading: &str, body: &str) -> String {
-    format!(
-        r#"<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{heading} — zim</title>
-  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-  <div class="onb">
-    <header class="onb__bar"><span class="onb__brand">zim</span></header>
-    <main class="onb__main"><div class="onb__inner">
-      <div class="gate" style="max-width:440px;margin:0 auto;">
-        <h3 style="margin-top:0;">{heading}</h3>
-        {body}
-      </div>
-    </div></main>
-  </div>
-</body>
-</html>"#
-    )
-}
-
-/// Escape untrusted text for an HTML attribute or element body.
-pub(super) fn escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('"', "&quot;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+fn chooser(providers: &[AuthProvider], next: &str, error: Option<LoginError>) -> Chooser {
+    Chooser {
+        heading: "Sign in",
+        error: error.map(LoginError::message),
+        providers: providers.iter().map(Entry::from).collect(),
+        next: urlencoding::encode(next).into_owned(),
+    }
 }
 
 #[cfg(test)]
@@ -196,7 +169,9 @@ mod tests {
 
     #[test]
     fn a_single_provider_still_gets_a_chooser() {
-        let html = chooser(&[google()], "/auth/device?code=XYZ", None);
+        let html = chooser(&[google()], "/auth/device?code=XYZ", None)
+            .render()
+            .unwrap();
         assert!(html.contains(r#"href="/auth/google/login?next=%2Fauth%2Fdevice%3Fcode%3DXYZ""#));
         assert!(!html.contains(r#"class="error""#));
     }
@@ -204,7 +179,9 @@ mod tests {
     #[cfg(feature = "dev-login")]
     #[test]
     fn dev_hub_lists_every_provider_in_configured_order() {
-        let html = chooser(&[AuthProvider::DevTrust, google()], "/", None);
+        let html = chooser(&[AuthProvider::DevTrust, google()], "/", None)
+            .render()
+            .unwrap();
         let dev = html.find(r#"href="/auth/dev/login?next=%2F""#).unwrap();
         let google = html.find(r#"href="/auth/google/login?next=%2F""#).unwrap();
         assert!(dev < google);
@@ -217,9 +194,12 @@ mod tests {
 
     #[test]
     fn a_wrong_provider_bounce_says_which_method_to_use() {
-        let html = chooser(&[google()], "/", Some(DEV_INTO_GOOGLE));
-        assert!(html
-            .contains("You signed up with Google. Use that — you can't sign in with Dev login."));
+        let html = chooser(&[google()], "/", Some(DEV_INTO_GOOGLE))
+            .render()
+            .unwrap();
+        assert!(html.contains(
+            "You signed up with Google. Use that — you can&#x27;t sign in with Dev login."
+        ));
     }
 
     #[test]
@@ -240,7 +220,7 @@ mod tests {
     fn nothing_from_the_url_reaches_the_page() {
         let forged = LoginError::from_query("wrong-provider", Some("<script>"), Some("google"));
         assert_eq!(forged, LoginError::Failed);
-        let html = chooser(&[google()], "/", Some(forged));
+        let html = chooser(&[google()], "/", Some(forged)).render().unwrap();
         assert!(!html.contains("<script>"));
         assert_eq!(
             LoginError::from_query("<b>", None, None),

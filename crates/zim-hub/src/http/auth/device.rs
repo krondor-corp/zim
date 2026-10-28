@@ -12,14 +12,14 @@
 //! - `GET /device?code=…` — where codes minted before this page moved
 //!   pointed. Redirects here so in-flight logins survive.
 
+use askama::Template;
 use axum::extract::{Query, RawQuery, State};
 use axum::http::StatusCode;
-use axum::response::{Html, IntoResponse, Redirect, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::Form;
 use serde::Deserialize;
 
 use crate::database::models::DeviceCodeGrant;
-use crate::http::auth::login::{escape, shell};
 use crate::http::auth::{return_to, OptionalUser, RequireUser, PENDING_PATH};
 use crate::state::AppState;
 use crate::Database;
@@ -159,75 +159,46 @@ impl View {
         }
     }
 
-    fn render(&self) -> String {
-        const RERUN: &str = "Run <code>zim hub login</code> again for a new one.";
+    fn heading(&self) -> &'static str {
         match self {
-            View::NoCode => shell(
-                "Approve a device",
-                r#"<p>Open the link <code>zim hub login</code> printed — it ends with <code>?code=…</code>.</p>"#,
-            ),
-            View::NotFound => shell(
-                "Code not found",
-                &format!("<p>No login is waiting on this code. {RERUN}</p>"),
-            ),
-            View::Expired => shell(
-                "Code expired",
-                &format!("<p>This login code expired. {RERUN}</p>"),
-            ),
-            View::Taken => shell(
-                "Code already used",
-                &format!("<p>This login code was already approved. {RERUN}</p>"),
-            ),
-            View::Failed => shell(
-                "Something went wrong",
-                "<p>The hub couldn't process this code. Reload to try again.</p>",
-            ),
-            View::Approved => shell(
-                "Device approved",
-                "<p>Return to your terminal — <code>zim hub login</code> finishes on its own in a few seconds.</p>",
-            ),
-            View::Pending {
-                code,
-                label,
-                pubkey,
-            } => {
-                let label = match label.trim() {
-                    "" => "Unnamed device".to_string(),
-                    l => escape(l),
-                };
-                shell(
-                    "Approve a device",
-                    &format!(
-                        r#"<p>A device wants to enroll with your account. Check the code and key match what your terminal shows, then approve.</p>
-        <form method="post" action="{DEVICE_PATH}/approve">
-          <input type="hidden" name="code" value="{code}">
-          <div class="field">
-            <label>Device</label>
-            <input type="text" value="{label}" readonly>
-          </div>
-          <div class="field">
-            <label>Code</label>
-            <input type="text" class="mono" value="{code}" readonly>
-          </div>
-          <div class="field">
-            <label>Public key</label>
-            <input type="text" class="mono" value="{pubkey}" readonly>
-          </div>
-          <button type="submit" class="btn btn-primary" style="width:100%;">Approve</button>
-        </form>"#,
-                        code = escape(code),
-                        pubkey = escape(pubkey),
-                    ),
-                )
-            }
+            View::NoCode | View::Pending { .. } => "Approve a device",
+            View::NotFound => "Code not found",
+            View::Expired => "Code expired",
+            View::Taken => "Code already used",
+            View::Failed => "Something went wrong",
+            View::Approved => "Device approved",
         }
     }
 }
 
+/// `templates/auth/device.html`: one page, a body per [`View`].
+#[derive(Template)]
+#[template(path = "auth/device.html")]
+struct DevicePage {
+    heading: &'static str,
+    view: View,
+}
+
 impl IntoResponse for View {
     fn into_response(self) -> Response {
-        (self.status(), Html(self.render())).into_response()
+        let status = self.status();
+        let page = DevicePage {
+            heading: self.heading(),
+            view: self,
+        };
+        (status, page).into_response()
     }
+}
+
+/// The page as HTML, for tests.
+#[cfg(test)]
+fn render(view: View) -> String {
+    DevicePage {
+        heading: view.heading(),
+        view,
+    }
+    .render()
+    .unwrap()
 }
 
 #[cfg(test)]
@@ -249,8 +220,7 @@ mod tests {
         let grant = laptop_login(&db, "alices-laptop").await;
 
         // The page shows what the terminal shows.
-        let view = lookup(grant.code(), &db).await.unwrap();
-        let html = view.render();
+        let html = render(lookup(grant.code(), &db).await.unwrap());
         assert!(html.contains("alices-laptop"));
         assert!(html.contains(grant.code()));
         assert!(html.contains(grant.pubkey_hex()));
@@ -307,7 +277,7 @@ mod tests {
     async fn mallorys_device_label_cannot_inject_markup() {
         let db = Database::in_memory().await;
         let grant = laptop_login(&db, r#""><script>alert(1)</script>"#).await;
-        let html = lookup(grant.code(), &db).await.unwrap().render();
+        let html = render(lookup(grant.code(), &db).await.unwrap());
         assert!(!html.contains("<script>"));
         assert!(html.contains("&quot;&gt;&lt;script&gt;"));
     }

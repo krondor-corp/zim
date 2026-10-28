@@ -241,8 +241,8 @@ async fn mv_and_save(fs: &FsHandle, from: String, to: String) -> Result<(), Stri
 
 /// How long a file whose blob is still syncing to the hub is retried
 /// before giving up: `SYNC_RETRIES` attempts, `SYNC_RETRY_MS` apart.
-const SYNC_RETRIES: u32 = 30;
-const SYNC_RETRY_MS: i32 = 2_000;
+pub(crate) const SYNC_RETRIES: u32 = 30;
+pub(crate) const SYNC_RETRY_MS: i32 = 2_000;
 
 /// Load `path` into an [`OpenFile`] (decrypt, object-URL, decode text).
 async fn load_file(fs: &FsHandle, path: String) -> Result<OpenFile, LoadError> {

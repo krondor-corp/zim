@@ -10,15 +10,15 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use yew::prelude::*;
-use zim_wasm::WasmVersion;
+use zim_wasm::{WasmVersion, BLOB_PENDING};
 
 use crate::api::{Device, FsEntry};
-use crate::pages::vault::{guess_mime, is_textual, object_url};
+use crate::pages::vault::{guess_mime, is_textual, object_url, SYNC_RETRIES, SYNC_RETRY_MS};
 use crate::pages::vault_editor::OpenFile;
 use crate::pages::vault_history_view::{
     author_label, file_preview, tree_list, version_row, VersionMeta,
 };
-use crate::util::{jserr, origin};
+use crate::util::{jserr, origin, sleep};
 
 /// Versions fetched per page of the chain walk.
 const PAGE: u32 = 20;
@@ -48,6 +48,34 @@ fn snapshot(snap: &Snapshot) -> Result<Rc<WasmVersion>, String> {
         .ok_or_else(|| "no version open".into())
 }
 
+/// Read `path` from the snapshot, riding out a blob the hub hasn't
+/// mirrored yet (the version was written by another device moments ago):
+/// `on_pending` fires and the read is retried, as the live editor does.
+/// `Ok(None)` when `still_wanted` turns false mid-wait.
+async fn cat_synced(
+    v: &WasmVersion,
+    path: &str,
+    still_wanted: impl Fn() -> bool,
+    on_pending: impl Fn(),
+) -> Result<Option<Vec<u8>>, String> {
+    for attempt in 0..SYNC_RETRIES {
+        if attempt > 0 {
+            sleep(SYNC_RETRY_MS).await;
+        }
+        if !still_wanted() {
+            return Ok(None);
+        }
+        match v.cat(path.to_string()).await {
+            Ok(bytes) => return Ok(Some(bytes)),
+            Err(e) if js_sys::Error::from(e.clone()).name() == BLOB_PENDING => on_pending(),
+            Err(e) => return Err(jserr(e)),
+        }
+    }
+    Err(format!(
+        "{path} hasn't reached the hub yet \u{2014} try again in a moment"
+    ))
+}
+
 async fn ls(v: &WasmVersion, dir: &str) -> Result<Vec<FsEntry>, String> {
     let json = v.ls(dir.to_string()).await.map_err(|e| jserr(e.into()))?;
     let mut entries: Vec<FsEntry> = serde_json::from_str(&json).map_err(|e| e.to_string())?;
@@ -65,10 +93,16 @@ pub fn history_view(props: &HistoryProps) -> Html {
     let snap: Snapshot = use_mut_ref(|| None);
     // Bumped per pick; a load holding an older ticket drops its result.
     let seq = use_mut_ref(|| 0u32);
+    // Bumped per file open and by navigation, which abandons a file read
+    // still waiting on the hub.
+    let file_seq = use_mut_ref(|| 0u32);
     let dir = use_state(|| "/".to_string());
     let entries = use_state(|| None::<Vec<FsEntry>>);
     let preview = use_state(|| None::<OpenFile>);
     let error = use_state(String::new);
+    // A file whose blob is still on its way to the hub; shown as
+    // "syncing" while the read retries.
+    let syncing = use_state(|| None::<String>);
 
     let load_page = {
         let versions = versions.clone();
@@ -135,10 +169,14 @@ pub fn history_view(props: &HistoryProps) -> Html {
         let seq = seq.clone();
         let dir = dir.clone();
         let entries = entries.clone();
+        let file_seq = file_seq.clone();
         let preview = preview.clone();
+        let syncing = syncing.clone();
         let error = error.clone();
         Callback::from(move |to: String| {
             let ticket = *seq.borrow();
+            *file_seq.borrow_mut() += 1;
+            syncing.set(None);
             let snap = snap.clone();
             let seq = seq.clone();
             let dir = dir.clone();
@@ -170,6 +208,7 @@ pub fn history_view(props: &HistoryProps) -> Html {
         let selected = selected.clone();
         let entries = entries.clone();
         let preview = preview.clone();
+        let syncing = syncing.clone();
         let error = error.clone();
         let browse = browse.clone();
         let vault_id = props.vault_id.clone();
@@ -182,6 +221,7 @@ pub fn history_view(props: &HistoryProps) -> Html {
             selected.set(Some(height));
             entries.set(None);
             preview.set(None);
+            syncing.set(None);
             error.set(String::new());
             *snap.borrow_mut() = None;
             let snap = snap.clone();
@@ -207,39 +247,57 @@ pub fn history_view(props: &HistoryProps) -> Html {
 
     let open_file = {
         let snap = snap.clone();
-        let seq = seq.clone();
+        let file_seq = file_seq.clone();
         let preview = preview.clone();
+        let syncing = syncing.clone();
         let error = error.clone();
         Callback::from(move |path: String| {
-            let ticket = *seq.borrow();
+            // Each open takes a fresh ticket so a slow (syncing) read of
+            // another file can't land over this one.
+            let ticket = {
+                let mut s = file_seq.borrow_mut();
+                *s += 1;
+                *s
+            };
             let snap = snap.clone();
-            let seq = seq.clone();
+            let file_seq = file_seq.clone();
             let preview = preview.clone();
+            let syncing = syncing.clone();
             let error = error.clone();
+            error.set(String::new());
             yew::platform::spawn_local(async move {
+                let current = || *file_seq.borrow() == ticket;
                 let loaded = async {
                     let v = snapshot(&snap)?;
-                    let bytes = v.cat(path.clone()).await.map_err(jserr)?;
+                    let pending = || {
+                        preview.set(None);
+                        syncing.set(Some(path.clone()));
+                    };
+                    let Some(bytes) = cat_synced(&v, &path, current, pending).await? else {
+                        return Ok(None);
+                    };
                     let name = path.rsplit('/').next().unwrap_or_default();
                     let mime = guess_mime(name);
                     let url = object_url(&bytes, &mime)?;
                     let text = (is_textual(&mime) && bytes.len() < 2_000_000)
                         .then(|| String::from_utf8(bytes).ok())
                         .flatten();
-                    Ok::<_, String>(OpenFile {
-                        path,
+                    Ok::<_, String>(Some(OpenFile {
+                        path: path.clone(),
                         mime,
                         url,
                         text,
                         rev: 0,
-                    })
+                    }))
                 }
                 .await;
-                if *seq.borrow() != ticket {
+                if !current() {
                     return;
                 }
+                syncing.set(None);
                 match loaded {
-                    Ok(f) => preview.set(Some(f)),
+                    Ok(Some(f)) => preview.set(Some(f)),
+                    Ok(None) => {}
                     Err(e) => error.set(e),
                 }
             });
@@ -249,6 +307,7 @@ pub fn history_view(props: &HistoryProps) -> Html {
     let restore = {
         let snap = snap.clone();
         let selected = selected.clone();
+        let syncing = syncing.clone();
         let error = error.clone();
         let on_restore = props.on_restore.clone();
         Callback::from(move |path: String| {
@@ -256,15 +315,23 @@ pub fn history_view(props: &HistoryProps) -> Html {
                 return;
             };
             let snap = snap.clone();
+            let syncing = syncing.clone();
             let error = error.clone();
             let on_restore = on_restore.clone();
             yew::platform::spawn_local(async move {
+                // The user asked for this restore; it waits out a syncing
+                // blob rather than being abandoned by later navigation.
                 let bytes = match snapshot(&snap) {
-                    Ok(v) => v.cat(path.clone()).await.map_err(jserr),
+                    Ok(v) => {
+                        let pending = || syncing.set(Some(path.clone()));
+                        cat_synced(&v, &path, || true, pending).await
+                    }
                     Err(e) => Err(e),
                 };
+                syncing.set(None);
                 match bytes {
-                    Ok(bytes) => on_restore.emit(Restore {
+                    Ok(None) => {}
+                    Ok(Some(bytes)) => on_restore.emit(Restore {
                         path,
                         bytes,
                         height,
@@ -324,7 +391,14 @@ pub fn history_view(props: &HistoryProps) -> Html {
                     {
                         match &*preview {
                             Some(f) => file_preview(f, &restore),
-                            None => html! { <div class="doc-empty">{ "Pick a file to see it as it was." }</div> },
+                            None => match &*syncing {
+                                Some(path) => html! {
+                                    <div class="doc-empty">
+                                        { format!("Syncing {path}\u{2026} this version is still on its way to the hub.") }
+                                    </div>
+                                },
+                                None => html! { <div class="doc-empty">{ "Pick a file to see it as it was." }</div> },
+                            },
                         }
                     }
                 </div>

@@ -62,7 +62,7 @@ To add a node: add a `ports.services.<nick>` lane (10 from the others) and a `<n
 ./bin/dev kill [-f|--force]     # kill the tmux session; -f also frees this worktree's ports
 ```
 
-`make dev` is just `./bin/dev`, and subcommand words pass straight through: `make dev hub up`, `make dev status`, `make dev cli alice vault list`. Flags need the `ARGS` form (`make dev run ARGS="-b --fuse"`) because make claims leading dashes for itself; the "overriding commands" warning on colliding words (clean, hub, e2e) is expected and harmless.
+`make dev` is `./bin/dev --hub` with FUSE on: the whole stack. For anything finer (daemons only, status, a node's CLI), call `./bin/dev` directly.
 
 `make e2e` runs the `zim-e2e` crate: a hermetic one-shot verdict — it spawns its own daemons on free ports picked at boot (bind `127.0.0.1:0`, read the port, release it), with fresh homes under `data/e2e/`, so it never touches the interactive dev env and runs in several worktrees at once, wires peers with direct NodeAddrs (`/api/v0/peers/{addr,introduce}`, no DHT), applies `bin/dev_/fixtures.toml` through the real CLI, and polls cross-node convergence to a deadline (`--deadline`, default 60s). `--keep` leaves the throwaway env running; `--skip-fuse` forces the FUSE block off. Exit code is the verdict. The harness is a crate (not a script) so the hub repo can reuse it against released `zim-cli` binaries after the split.
 
@@ -157,7 +157,7 @@ Runs `docker.io/rustfs/rustfs` (MinIO pulled its public images; RustFS speaks th
 
 ## FUSE mounting
 
-FUSE is opt-in in dev. `./bin/dev run --fuse` (or `export ZIM_DEV_FUSE=1`) builds the daemon with the `fuse` feature so `zim mount` works; without it the daemons build plain and `zim mount` 404s. The flag errors loudly if no native lib is found (install macFUSE on macOS, `libfuse3-dev` on Linux).
+FUSE is always on under `make dev`; with `./bin/dev` directly it's opt-in. `./bin/dev run --fuse` (or `export ZIM_DEV_FUSE=1`) builds the daemon with the `fuse` feature so `zim mount` works; without it the daemons build plain and `zim mount` 404s. The flag errors loudly if no native lib is found (install macFUSE on macOS, `libfuse3-dev` on Linux).
 
 FUSE correctness is exercised by the fixture system: `./bin/dev seed` (or `./bin/dev fixtures apply`) runs the declarative `fuse_*` fixtures in `bin/dev_/fixtures.toml` — mount, read/write/mv/rm through the mountpoint, each write cross-checked against the vault via `vault_read` — and auto-skips them when FUSE is unavailable (`./bin/dev fuse-check` reports which). Fixture failures are real failures; skips are not.
 
@@ -190,5 +190,8 @@ The hub's app state (users, devices, escrow) is separate, at `data/zim-hub/state
 ./bin/dev clean        # remove each node's data dir
 ./bin/dev kill         # kill the tmux session
 ./bin/dev kill --force # also kill orphaned processes on dev ports
-make cleanup-all       # nuke cargo target + dev data + minio
+make dev-kill          # kill the session + free its ports
+make dev-clean         # dev-kill + wipe dev data (./data) + minio
+make rust-clean        # cargo clean
+make clean             # everything: dev-clean + rust-clean + site build artifacts
 ```

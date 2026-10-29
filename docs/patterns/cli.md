@@ -214,6 +214,8 @@ Spinners and progress bars are the one thing that must happen *during* execution
 
 This is a controlled leak — the op knows it *might* show progress, but doesn't decide *how* or *whether* to render it. The boundary decides that when it constructs the context.
 
+The same exception covers a single mid-run *prompt* the user must act on before the op can finish. `zim hub login` is the case: the device-code pairing instructions have to be on screen while the op polls. The flow itself lives in the library (`crate::hub::login`: `start()` returns a `PendingLogin`, `complete()` polls and persists) and never prints; the op writes one typed `PairInstructions` value — formatting in its `Display` — to stderr between the two calls, keeping stdout for the op's result. A non-CLI front end (e.g. a desktop app) drives the same two calls and shows the instructions in its own UI.
+
 ## Bucket Resolution
 
 Every command that operates on a bucket accepts a single positional `<BUCKET>` argument that can be either a name or a UUID. The `resolve_bucket()` helper in `client.rs` handles this:

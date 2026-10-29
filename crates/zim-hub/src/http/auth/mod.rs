@@ -28,6 +28,7 @@ pub mod login;
 // so they can't drift; re-exported here to keep the old import path.
 pub use zim_api::hub::jwt;
 pub mod logout;
+pub mod mobile;
 pub mod return_to;
 pub mod session;
 
@@ -61,7 +62,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/logout", post(logout::handler))
         .route("/pending", get(pending_page))
         .route("/device", get(device::page))
-        .route("/device/approve", post(device::approve));
+        .route("/device/approve", post(device::approve))
+        .route("/mobile/complete", get(mobile::complete));
     // Each enabled provider mounts its own routes; disabled ones 404.
     for provider in &state.auth.providers {
         r = match provider {

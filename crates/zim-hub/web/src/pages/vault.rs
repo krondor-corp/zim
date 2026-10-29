@@ -13,8 +13,11 @@ use yew::prelude::*;
 use yew_router::prelude::*;
 use zim_hub_web::save_queue::SaveQueue;
 
+use zim_core::vault::VaultId;
+use zim_wasm::VaultInfo;
+
 use crate::api::{fetch_devices, fetch_me, fetch_vaults, Device, VaultItem};
-use crate::backend::{BackendState, ReadError, VaultBackend, VaultMeta};
+use crate::backend::{BackendState, ReadError, VaultBackend};
 use crate::components::dialog::{ConfirmDialog, PromptDialog};
 use crate::components::icon::{icon, Icon};
 use crate::layouts::{menu_icon, HeaderMenu, SignOutItem};
@@ -41,7 +44,7 @@ enum Dialog {
 
 #[derive(Properties, PartialEq)]
 pub struct Props {
-    pub vault_id: String,
+    pub vault_id: VaultId,
     /// Signed-in user id — the switcher's "+ New vault" shares new
     /// vaults with all the account's devices.
     pub user_id: String,
@@ -117,7 +120,7 @@ pub fn vault_tree(props: &Props) -> Html {
     // Bumped per keystroke; a debounce timer only flushes if it's still
     // the latest when it fires.
     let debounce = use_mut_ref(|| 0u32);
-    let meta = use_state(|| None::<VaultMeta>);
+    let meta = use_state(|| None::<VaultInfo>);
     let devices = use_state(Vec::<Device>::new);
     let web_did = use_state(String::new);
     let show_details = use_state(|| false);
@@ -264,8 +267,8 @@ pub fn vault_tree(props: &Props) -> Html {
         let syncing = syncing.clone();
         let open_seq = open_seq.clone();
         let show_history = show_history.clone();
-        let vault_id = props.vault_id.clone();
-        use_effect_with(vault_id.clone(), move |_| {
+        let vault_id = props.vault_id;
+        use_effect_with(vault_id, move |_| {
             // Fresh vault, fresh view state: expansion paths and the
             // open file belong to the PREVIOUS vault.
             expanded.set(BTreeSet::new());
@@ -414,7 +417,7 @@ pub fn vault_tree(props: &Props) -> Html {
     let (follow_tick, follow) = use_tick();
     let follow_stale = use_mut_ref(|| false);
     {
-        use_effect_with(props.vault_id.clone(), move |_| {
+        use_effect_with(props.vault_id, move |_| {
             let alive = Rc::new(Cell::new(true));
             {
                 let alive = alive.clone();
@@ -782,7 +785,7 @@ pub fn vault_tree(props: &Props) -> Html {
 
     let vault_title = match &*meta {
         Some(m) if !m.name.is_empty() => m.name.clone(),
-        _ => short_id(&props.vault_id),
+        _ => short_id(&props.vault_id.to_string()),
     };
     let active = open_file
         .0
@@ -797,10 +800,10 @@ pub fn vault_tree(props: &Props) -> Html {
             <HeaderMenu class={classes!("vault-switch")}
                 trigger_class={classes!("app-header__crumb", "app-header__crumb--current", "vault-switch__trigger")}
                 trigger={html! { <>{ vault_title.clone() }{ icon(Icon::Chevron, None) }</> }}>
-                { for vaults.iter().map(|v| {
+                { for vaults.iter().filter_map(|v| Some((v.vault_id.parse::<VaultId>().ok()?, v))).map(|(id, v)| {
                     let name = if v.name.is_empty() { short_id(&v.vault_id) } else { v.name.clone() };
                     html! {
-                        <Link<Route> to={Route::Vault { id: v.vault_id.clone() }} classes="app-menu__item">
+                        <Link<Route> to={Route::Vault { id }} classes="app-menu__item">
                             { name }
                         </Link<Route>>
                     }
@@ -949,7 +952,7 @@ pub fn vault_tree(props: &Props) -> Html {
             </header>
 
             if *show_history {
-                <HistoryView vault_id={props.vault_id.clone()} devices={(*devices).clone()}
+                <HistoryView vault_id={props.vault_id} devices={(*devices).clone()}
                     restore_error={(*restore_error).clone()}
                     on_close={{
                         let show_history = show_history.clone();

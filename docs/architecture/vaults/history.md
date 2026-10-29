@@ -47,9 +47,9 @@ time; a fetch failure during the check is an error, never "changed".
 
 The browser exposes this as a read-only `WasmVersion` (no `save`) plus
 `WasmVersion::history`, which pages `/api/v0/vaults/{id}/log` and fetches
-each manifest's plaintext header for its author and an `access` of
-`readable`, `sealed` (no share for this browser — permanent), or
-`unavailable` (the manifest fetch failed — transient, says nothing about
+each manifest's plaintext header for its author and an `Access` of
+`Readable`, `Sealed` (no share for this browser — permanent), or
+`Unavailable` (the manifest fetch failed — transient, says nothing about
 access; the UI keeps it clickable to retry). The web workspace autosaves notes, so every pause in typing (1.5s) writes a version; expect dense history from browser edits. Its History view restores per file —
 whole-vault restore would clobber concurrent work in unrelated paths.
 

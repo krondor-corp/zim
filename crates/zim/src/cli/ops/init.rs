@@ -14,7 +14,7 @@
 //! identity).
 
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use clap::Args;
@@ -57,33 +57,41 @@ impl Op for Init {
 
     async fn run(&self, _ctx: ()) -> Result<Self::Output, Self::Error> {
         let home = paths::home_dir(None)?;
-        paths::ensure_dirs(&home)?;
-
-        let id_path = paths::identity_file(&home);
-        let (secret, identity_was_new) = if id_path.exists() {
-            let hex = tokio::fs::read_to_string(&id_path).await?;
-            let secret =
-                PrivateKey::from_hex(hex.trim()).map_err(|e| InitError::Identity(e.to_string()))?;
-            (secret, false)
-        } else {
-            let secret = PrivateKey::generate();
-            tokio::fs::write(&id_path, secret.to_hex()).await?;
-            (secret, true)
-        };
-
-        let cfg_path = paths::config_file(&home);
-        let config_was_new = !cfg_path.exists();
-        if config_was_new {
-            AppConfig::default().save(&home)?;
-        }
-
-        Ok(InitOutput {
-            home,
-            identity_hex: secret.public().to_hex(),
-            identity_was_new,
-            config_was_new,
-        })
+        init_home(&home).await
     }
+}
+
+/// Bootstrap `home`: dirs, identity, default config. Idempotent — an
+/// initialised home is left as-is and its existing identity reported.
+/// The body of `zim init`, callable by other front ends (the desktop
+/// app's first run).
+pub async fn init_home(home: &Path) -> Result<InitOutput, InitError> {
+    paths::ensure_dirs(home)?;
+
+    let id_path = paths::identity_file(home);
+    let (secret, identity_was_new) = if id_path.exists() {
+        let hex = tokio::fs::read_to_string(&id_path).await?;
+        let secret =
+            PrivateKey::from_hex(hex.trim()).map_err(|e| InitError::Identity(e.to_string()))?;
+        (secret, false)
+    } else {
+        let secret = PrivateKey::generate();
+        tokio::fs::write(&id_path, secret.to_hex()).await?;
+        (secret, true)
+    };
+
+    let cfg_path = paths::config_file(home);
+    let config_was_new = !cfg_path.exists();
+    if config_was_new {
+        AppConfig::default().save(home)?;
+    }
+
+    Ok(InitOutput {
+        home: home.to_path_buf(),
+        identity_hex: secret.public().to_hex(),
+        identity_was_new,
+        config_was_new,
+    })
 }
 
 impl fmt::Display for InitOutput {

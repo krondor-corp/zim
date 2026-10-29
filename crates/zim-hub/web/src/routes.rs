@@ -5,6 +5,7 @@ use yew::prelude::*;
 use yew_router::prelude::*;
 
 use crate::api::Me;
+use crate::backend::is_desktop;
 use crate::layouts::PackChrome;
 use crate::pages;
 
@@ -26,6 +27,12 @@ pub enum Route {
 /// Render the page for `route`. `me` is threaded in from the authenticated
 /// `App` so pages don't each re-fetch it.
 pub fn switch(route: Route, me: &Me) -> Html {
+    // The desktop device is its own account: there are no settings or
+    // admin pages to show, so those URLs fall back to the vaults.
+    let route = match route {
+        Route::Settings | Route::Admin if is_desktop() => Route::Workspace,
+        other => other,
+    };
     match route {
         Route::Workspace => html! {
             <PackChrome crumb="vaults">

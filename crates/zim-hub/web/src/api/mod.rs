@@ -24,6 +24,8 @@ pub use zim_api::hub::{
 pub struct FsEntry {
     pub name: String,
     pub kind: String, // "file" | "dir"
+    /// Absent from the desktop daemon's listing.
+    #[serde(default)]
     pub hash: String,
     pub mime: Option<String>,
 }

@@ -4,6 +4,22 @@ User-facing local development guide (build, run daemon, run hub, hot reload) liv
 
 This file covers contributor-specific multi-peer dev tooling that doesn't belong in end-user docs.
 
+## Desktop app (`crates/zim-desktop`)
+
+A Tauri 2 window around the hub SPA, backed by the local daemon instead of a hub. It lives outside the root workspace (its own `Cargo.lock`), so `cargo build` never pulls Tauri. Needs `cargo install tauri-cli --version '^2'` and `trunk`.
+
+```bash
+export ZIM_HOME=$(mktemp -d)     # optional: a throwaway identity (default: the CLI's home)
+make desktop                     # builds the zim sidecar, then `cargo tauri dev`
+```
+
+On launch the app probes `$ZIM_HOME/daemon.lock`: a running daemon is used as-is; otherwise it starts the bundled `zim daemon run` as a detached process (it keeps running after the app quits, so the CLI and mounts keep working) and waits for `/_status/livez`. An empty home is initialised first, then the app offers `zim hub login` (verification URL + code shown in the window, system browser opened); skipping is fine.
+
+- **Sidecar binary.** Tauri's `externalBin` wants `crates/zim-desktop/binaries/zim-<target-triple>`. `make desktop-sidecar` builds `zim-cli --features hub` and copies it there (`PROFILE=release make desktop-sidecar` for a bundle, then `cargo tauri build`). At run time `$ZIM_BIN` overrides the lookup (next to the app, then `binaries/`, then `PATH`).
+- **Ports.** The daemon binds `api_port` from `$ZIM_HOME/config.toml` (default 17171). Running the app on a throwaway home while another daemon holds that port fails to start ("Address already in use", reported in the window); set a different `api_port` in the throwaway home first. The same applies to the CLI: it falls back to `config.api_port` when the home's daemon isn't running, so it can end up talking to a *different* daemon.
+- **Default home differs by profile.** Debug builds nest the default home under `debug/` (see `paths::home_dir`); the app passes its resolved home to the sidecar explicitly. Use `ZIM_HOME` to share a home with a release CLI.
+- **What's hidden.** Hub-only surfaces (Google sign-in gate, web-key gate, Settings/devices, Admin, sign-out), vault History and the Details panel are not shown in desktop mode. The SPA detects the shell at runtime (`window.__TAURI_INTERNALS__`), so the same Trunk build serves both; `Trunk.desktop.toml` additionally bundles the hub's `static/` assets.
+
 ## Multi-peer dev environment (`bin/dev`)
 
 `bin/dev` spins up a multi-node P2P network in tmux so you can exercise sync, sharing, mounting, and the hub locally. It builds the workspace's debug binary once (`cargo build -p zim` → `target/debug/zim`) and runs that same binary for every peer — **not** `cargo run`, and **not** an installed `~/.cargo/bin/zim`. Peers are isolated purely by `ZIM_HOME`.

@@ -3,6 +3,7 @@
 //! through `api`.
 
 pub mod admin;
+pub mod desktop;
 pub mod devices;
 pub mod gate;
 pub mod not_found;

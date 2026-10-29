@@ -4,17 +4,16 @@
 //! vaults it renders the one vestige of the old list page: a
 //! "create your first vault" empty state. Creation itself goes through
 //! `WasmFs::init` (browser key as owner) and is also reachable from
-//! the vault switcher's "+ New vault".
+//! the vault switcher's "+ New vault". (Both go through `backend`, so
+//! the desktop shell lists and creates vaults on the local daemon.)
 
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 use yew_router::prelude::*;
-use zim_wasm::WasmFs;
 
-use crate::api::fetch_vaults;
+use crate::backend;
 use crate::components::dialog::PromptDialog;
 use crate::routes::Route;
-use crate::util::{jserr, origin};
 
 const LAST_VAULT_KEY: &str = "zim.last_vault";
 
@@ -37,13 +36,12 @@ fn last_vault() -> Option<String> {
 /// empty-state dialog here and the switcher's "+ New vault" dialog.
 pub fn create_vault(name: String, user_id: String, navigator: Navigator, error: Callback<String>) {
     spawn_local(async move {
-        match WasmFs::init(name, origin(), user_id).await {
-            Ok(fs) => {
-                let id = fs.vault_id();
+        match backend::create_vault(name, user_id).await {
+            Ok(id) => {
                 remember_vault(&id);
                 navigator.push(&Route::Vault { id });
             }
-            Err(e) => error.emit(jserr(e.into())),
+            Err(e) => error.emit(e),
         }
     });
 }
@@ -67,7 +65,7 @@ pub fn workspace(props: &Props) -> Html {
         let navigator = navigator.clone();
         use_effect_with((), move |_| {
             spawn_local(async move {
-                match fetch_vaults().await {
+                match backend::list_vaults().await {
                     Ok(list) if list.is_empty() => empty.set(Some(true)),
                     Ok(list) => {
                         // Last-opened when it still exists, else first.

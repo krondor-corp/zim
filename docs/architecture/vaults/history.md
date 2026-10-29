@@ -53,6 +53,16 @@ each manifest's plaintext header for its author and an `access` of
 access; the UI keeps it clickable to retry). The web workspace's History view restores per file —
 whole-vault restore would clobber concurrent work in unrelated paths.
 
+The daemon exposes the same two reads locally (no hub, no auth beyond the
+loopback API): `POST /api/v0/vaults/{id}/log` pages the chain newest first
+(`from`, `limit`; default 20, max 100) returning `{height, link, author}` per
+version, and `ls` / `cat` take an optional `at` height that routes through
+`Peer::vault_at` → `Vault::open_at`. `at` omitted means the head; a height the
+log has no entry for is a 404. Versions are addressed by height only — the log
+is keyed by height, so a manifest hash isn't a lookup key. CLI:
+`zim vault log <vault>`, `zim vault ls|cat <vault> … --at <height>`. Change
+notification is out of scope: callers poll `/head`.
+
 Manifests carry height and author but no wall-clock time, so history lists
 versions by height. A signed timestamp would need a clock passed in from
 the caller (zim-core is wasm-clean and cannot read one itself).

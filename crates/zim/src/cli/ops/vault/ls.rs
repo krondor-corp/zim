@@ -20,6 +20,9 @@ pub struct Ls {
     /// Recurse into subdirectories and render as a tree.
     #[arg(long)]
     pub deep: bool,
+    /// List the vault as it was at this height (see `zim vault log`).
+    #[arg(long)]
+    pub at: Option<u64>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -59,9 +62,9 @@ impl Op for Ls {
     async fn run(&self, ctx: ApiContext) -> Result<Self::Output, Self::Error> {
         let vault_id = ctx.client.resolve_vault(&self.target).await?;
         let path = super::normalize_path(&self.path);
-        let items = ls_one(&ctx.client, vault_id, &path).await?;
+        let items = ls_one(&ctx.client, vault_id, &path, self.at).await?;
         let items = if self.deep {
-            expand(&ctx.client, vault_id, &path, items).await?
+            expand(&ctx.client, vault_id, &path, self.at, items).await?
         } else {
             items
         };
@@ -74,11 +77,13 @@ async fn ls_one(
     client: &ApiClient,
     vault_id: VaultId,
     path: &str,
+    at: Option<u64>,
 ) -> Result<Vec<TreeNode>, ApiError> {
     let r = client
         .call(LsRequest {
             vault_id,
             path: path.to_string(),
+            at,
         })
         .await?;
     Ok(r.items
@@ -98,6 +103,7 @@ fn expand<'a>(
     client: &'a ApiClient,
     vault_id: VaultId,
     parent: &'a str,
+    at: Option<u64>,
     siblings: Vec<TreeNode>,
 ) -> Pin<Box<dyn std::future::Future<Output = Result<Vec<TreeNode>, ApiError>> + Send + 'a>> {
     Box::pin(async move {
@@ -105,8 +111,8 @@ fn expand<'a>(
         for node in siblings {
             let kids = if matches!(node.kind, EntryKind::Dir) {
                 let sub = join_path(parent, &node.name);
-                let raw = ls_one(client, vault_id, &sub).await?;
-                expand(client, vault_id, &sub, raw).await?
+                let raw = ls_one(client, vault_id, &sub, at).await?;
+                expand(client, vault_id, &sub, at, raw).await?
             } else {
                 Vec::new()
             };

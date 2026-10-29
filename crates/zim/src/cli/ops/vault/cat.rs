@@ -14,6 +14,9 @@ pub struct Cat {
     /// Vault id or name.
     pub target: String,
     pub path: String,
+    /// Read the vault as it was at this height (see `zim vault log`).
+    #[arg(long)]
+    pub at: Option<u64>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -44,6 +47,7 @@ impl Op for Cat {
             .call(CatRequest {
                 vault_id,
                 path: super::normalize_path(&self.path),
+                at: self.at,
             })
             .await?;
         Ok(CatOutput(r.bytes))

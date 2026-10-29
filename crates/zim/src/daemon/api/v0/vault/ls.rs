@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use axum::extract::State;
 use axum::response::IntoResponse;
 use axum::Json;
 use reqwest::{Client, RequestBuilder, Url};
@@ -8,7 +9,7 @@ use zim_core::fs::AbsPath;
 
 use crate::daemon::api::client::ApiRequest;
 use crate::daemon::api::v0::vault::extractor::VaultHandle;
-use crate::daemon::state::vault_lookup_response;
+use crate::daemon::state::{vault_lookup_response, ServiceState};
 use zim_peer::VaultLookupError;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -16,6 +17,9 @@ pub struct LsRequest {
     #[serde(skip)]
     pub vault_id: zim_core::vault::VaultId,
     pub path: String,
+    /// Read the vault as it was at this height. Defaults to the head.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,9 +42,11 @@ pub enum EntryKind {
 }
 
 pub async fn handler(
-    VaultHandle { vault, .. }: VaultHandle,
+    handle: VaultHandle,
+    State(state): State<ServiceState>,
     Json(req): Json<LsRequest>,
 ) -> Result<impl IntoResponse, LsError> {
+    let vault = handle.at(&state, req.at).await?;
     let abs = AbsPath::new(&req.path).ok_or_else(|| LsError::BadPath(req.path.clone()))?;
     let entries = vault
         .fs()

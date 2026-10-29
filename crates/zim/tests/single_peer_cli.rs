@@ -261,3 +261,87 @@ fn an_unpaired_daemon_seals_new_vaults_to_itself_only() {
     run(&home, &["vault", "create", "diary", "--private"]);
     assert_eq!(share_dids(&home, "diary").len(), 1);
 }
+
+/// Alice's daemon with a `notes` vault holding `/todo.md` at three
+/// versions: heights 1 ("monday"), 2 ("tuesday"), 3 ("wednesday").
+fn alice_with_a_rewritten_note(home: &TempDir, port: u16) -> DaemonGuard {
+    write_config(home, port);
+    let daemon = spawn_daemon(home, port);
+    wait_for_port(port, Duration::from_secs(10));
+    run(home, &["vault", "create", "notes"]);
+    for day in ["monday", "tuesday", "wednesday"] {
+        run_with_stdin(home, &["vault", "add", "notes", "/todo.md"], day.as_bytes());
+    }
+    daemon
+}
+
+#[test]
+fn alice_reads_yesterdays_note_after_overwriting_it() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let _daemon = alice_with_a_rewritten_note(&home, 17193);
+
+    // The head holds the latest text.
+    let (now, _) = run(&home, &["vault", "cat", "notes", "/todo.md"]);
+    let now: Vec<u8> = serde_json::from_str(now.trim()).expect("cat json");
+    assert_eq!(now, b"wednesday");
+
+    // `--at` reads the same path as of an earlier height.
+    let (then, _) = run(&home, &["vault", "cat", "notes", "/todo.md", "--at", "2"]);
+    let then: Vec<u8> = serde_json::from_str(then.trim()).expect("cat json");
+    assert_eq!(then, b"tuesday");
+
+    // Before the note existed, the tree was empty.
+    let (genesis, _) = run(&home, &["vault", "ls", "notes", "/", "--at", "0"]);
+    let genesis: serde_json::Value = serde_json::from_str(genesis.trim()).expect("ls json");
+    assert!(genesis["items"].as_array().unwrap().is_empty());
+    let (v1, _) = run(&home, &["vault", "ls", "notes", "/", "--at", "1"]);
+    let v1: serde_json::Value = serde_json::from_str(v1.trim()).expect("ls json");
+    assert_eq!(v1["items"][0]["name"], "todo.md");
+}
+
+#[test]
+fn reading_a_height_the_vault_never_reached_is_not_found() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let _daemon = alice_with_a_rewritten_note(&home, 17194);
+
+    let output = Command::new(bin())
+        .env("ZIM_HOME", home.path())
+        .env("ZIM_LOG", "warn")
+        .arg("--plain")
+        .args(["vault", "cat", "notes", "/todo.md", "--at", "99"])
+        .output()
+        .expect("spawn cli");
+    assert!(!output.status.success());
+}
+
+#[test]
+fn log_pages_newest_first() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let _daemon = alice_with_a_rewritten_note(&home, 17195);
+    let me: String = serde_json::from_str(run(&home, &["id"]).0.trim()).expect("id json");
+
+    let heights = |out: &str| -> Vec<u64> {
+        let json: serde_json::Value = serde_json::from_str(out.trim()).expect("log json");
+        json["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["height"].as_u64().unwrap())
+            .collect()
+    };
+
+    // Whole chain, newest first, each version signed by Alice's device.
+    let (all, _) = run(&home, &["vault", "log", "notes"]);
+    assert_eq!(heights(&all), [3, 2, 1, 0]);
+    let json: serde_json::Value = serde_json::from_str(all.trim()).unwrap();
+    assert_eq!(json["entries"][0]["author"], me.as_str(), "log: {all}");
+
+    // A page of two, then the next page picks up where it stopped.
+    let (page1, _) = run(&home, &["vault", "log", "notes", "--limit", "2"]);
+    assert_eq!(heights(&page1), [3, 2]);
+    let (page2, _) = run(
+        &home,
+        &["vault", "log", "notes", "--from", "1", "--limit", "2"],
+    );
+    assert_eq!(heights(&page2), [1, 0]);
+}

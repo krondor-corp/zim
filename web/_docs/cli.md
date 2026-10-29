@@ -26,9 +26,11 @@ zim vault create notes                    # create a vault (shared with your dev
 zim vault create diary --private          # create a vault on this device only
 zim vault list                            # list vaults this device holds
 zim vault head notes                      # current version + height
+zim vault log notes --limit 10            # past versions, newest first
 
 zim vault ls notes /                      # list a directory
 zim vault cat notes /readme.md            # read a file to stdout
+zim vault cat notes /readme.md --at 3     # ...as it was at version 3 (also on ls)
 echo "hi" | zim vault add notes /hi.md    # write a file (content from stdin)
 zim vault mkdir notes /docs               # create a directory
 zim vault mv notes /a.md /docs/a.md       # move a path

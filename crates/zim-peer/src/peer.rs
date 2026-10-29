@@ -195,6 +195,28 @@ where
         Ok(self.0.coord.open_vault(vault_id).await?)
     }
 
+    /// Like [`Self::vault`], but as the vault was at `height`.
+    /// [`VaultLookupError::NotFound`] covers an unknown vault *and* a
+    /// height the log has no entry for.
+    pub async fn vault_at(
+        &self,
+        vault_id: VaultId,
+        height: u64,
+    ) -> Result<Vault<L>, VaultLookupError> {
+        let log = self.0.coord.log();
+        let exists = log.exists(vault_id).await.map_err(anyhow::Error::from)?;
+        if !exists
+            || log
+                .heads(vault_id, height)
+                .await
+                .map_err(anyhow::Error::from)?
+                .is_empty()
+        {
+            return Err(VaultLookupError::NotFound(vault_id));
+        }
+        Ok(self.0.coord.open_vault_at(vault_id, height).await?)
+    }
+
     /// Every vault known to this peer, with its display name and an
     /// optional per-row error when the manifest can't be opened
     /// (share bootstrap left the log populated but the head blob is

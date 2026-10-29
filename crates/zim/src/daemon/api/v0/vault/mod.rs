@@ -14,6 +14,7 @@ pub mod create;
 pub mod extractor;
 pub mod head;
 pub mod list;
+pub mod log;
 pub mod ls;
 pub mod mkdir;
 pub mod mv;
@@ -36,6 +37,7 @@ pub fn router(state: ServiceState) -> Router<ServiceState> {
 fn per_vault(state: ServiceState) -> Router<ServiceState> {
     Router::new()
         .route("/head", post(head::handler))
+        .route("/log", post(log::handler))
         .route("/ls", post(ls::handler))
         .route("/cat", post(cat::handler))
         .route("/add", post(add::handler))

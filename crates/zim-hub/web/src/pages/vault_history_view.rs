@@ -3,32 +3,21 @@
 //! Restore affordance. Pure render — state lives in
 //! [`HistoryView`](super::vault_history::HistoryView).
 
-use serde::Deserialize;
 use yew::prelude::*;
+use zim_crypto::PublicKey;
+use zim_wasm::{Access, DirEntry, EntryKind, VersionSummary};
 
-use crate::api::{Device, FsEntry};
+use crate::api::Device;
 use crate::pages::vault::short_id;
-use crate::pages::vault_details::own_label;
+use crate::pages::vault_details::{device_for, own_label};
 use crate::pages::vault_editor::{media_preview, OpenFile};
 
-/// One version as [`WasmVersion::history`] serializes it.
-#[derive(Clone, PartialEq, Deserialize)]
-pub(crate) struct VersionMeta {
-    pub height: u64,
-    pub manifest_hash: String,
-    pub author: Option<String>,
-    /// This browser's key holds a share in this version.
-    /// `"readable"` | `"sealed"` (no share for this browser — permanent) |
-    /// `"unavailable"` (the hub didn't serve its manifest — maybe transient).
-    pub access: String,
-}
-
-pub(crate) fn author_label(author: Option<&str>, devices: &[Device]) -> String {
+pub(crate) fn author_label(author: Option<&PublicKey>, devices: &[Device]) -> String {
     match author {
         None => "unknown author".to_string(),
-        Some(a) => match devices.iter().find(|d| d.pubkey == a) {
+        Some(a) => match device_for(devices, a) {
             Some(d) => own_label(d),
-            None => short_id(a),
+            None => short_id(&a.to_hex()),
         },
     }
 }
@@ -49,7 +38,7 @@ fn child(dir: &str, name: &str) -> String {
 }
 
 pub(crate) fn version_row(
-    v: &VersionMeta,
+    v: &VersionSummary,
     head: Option<u64>,
     selected: Option<u64>,
     devices: &[Device],
@@ -60,14 +49,14 @@ pub(crate) fn version_row(
         let pick = pick.clone();
         Callback::from(move |_: MouseEvent| pick.emit(height))
     };
-    let sealed = v.access == "sealed";
-    let unavailable = v.access == "unavailable";
+    let sealed = v.access == Access::Sealed;
+    let unavailable = v.access == Access::Unavailable;
     let title = if sealed {
         "Sealed before this browser was granted access".to_string()
     } else if unavailable {
         "Couldn't load this version from the hub \u{2014} click to try again".to_string()
     } else {
-        format!("manifest {}", v.manifest_hash)
+        format!("manifest {}", v.manifest)
     };
     html! {
         <button type="button" {title} disabled={sealed} {onclick}
@@ -79,7 +68,7 @@ pub(crate) fn version_row(
             )}>
             <span class="history-version__height">{ format!("v{height}") }</span>
             <span class="history-version__author">
-                { if unavailable { "couldn't load".to_string() } else { author_label(v.author.as_deref(), devices) } }
+                { if unavailable { "couldn't load".to_string() } else { author_label(v.author.as_ref(), devices) } }
             </span>
             if head == Some(height) {
                 <span class="device-row__badge">{ "current" }</span>
@@ -90,7 +79,7 @@ pub(crate) fn version_row(
 
 pub(crate) fn tree_list(
     dir: &str,
-    entries: Option<&Vec<FsEntry>>,
+    entries: Option<&Vec<DirEntry>>,
     active: Option<&str>,
     browse: &Callback<String>,
     open_file: &Callback<String>,
@@ -114,7 +103,7 @@ pub(crate) fn tree_list(
             }
             { for entries.iter().map(|e| {
                 let path = child(dir, &e.name);
-                let is_dir = e.kind == "dir";
+                let is_dir = e.kind == EntryKind::Dir;
                 let onclick = {
                     let browse = browse.clone();
                     let open_file = open_file.clone();

@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use web_sys::DragEvent;
 use yew::prelude::*;
 
-use crate::api::FsEntry;
+use zim_wasm::{DirEntry, EntryKind};
 
 /// One rendered row. The tree is a FLAT vec — depth is presentation.
 #[derive(Clone, PartialEq)]
@@ -21,25 +21,11 @@ pub struct TreeNode {
     pub expanded: bool,
 }
 
-fn sorted(entries: &[FsEntry]) -> Vec<FsEntry> {
-    let mut v = entries.to_vec();
-    v.sort_by(|a, b| {
-        if a.kind == b.kind {
-            a.name.cmp(&b.name)
-        } else if a.kind == "dir" {
-            std::cmp::Ordering::Less
-        } else {
-            std::cmp::Ordering::Greater
-        }
-    });
-    v
-}
-
 /// Build the flat row list by walking root + every expanded dir.
 pub async fn build_rows<F, Fut>(ls: F, expanded: &BTreeSet<String>) -> Result<Vec<TreeNode>, String>
 where
     F: Fn(String) -> Fut,
-    Fut: std::future::Future<Output = Result<Vec<FsEntry>, String>>,
+    Fut: std::future::Future<Output = Result<Vec<DirEntry>, String>>,
 {
     walk(&ls, "/", 0, expanded).await
 }
@@ -52,22 +38,22 @@ fn walk<'a, F, Fut>(
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<TreeNode>, String>> + 'a>>
 where
     F: Fn(String) -> Fut,
-    Fut: std::future::Future<Output = Result<Vec<FsEntry>, String>>,
+    Fut: std::future::Future<Output = Result<Vec<DirEntry>, String>>,
 {
     Box::pin(async move {
         let mut rows = Vec::new();
         let entries = ls(dir.to_string()).await?;
-        for e in sorted(&entries) {
+        for e in entries {
             let path = if dir == "/" {
                 format!("/{}", e.name)
             } else {
                 format!("{dir}/{}", e.name)
             };
-            let is_dir = e.kind == "dir";
+            let is_dir = e.kind == EntryKind::Dir;
             let is_expanded = is_dir && expanded.contains(&path);
             rows.push(TreeNode {
                 path: path.clone(),
-                name: e.name.clone(),
+                name: e.name,
                 is_dir,
                 depth,
                 expanded: is_expanded,

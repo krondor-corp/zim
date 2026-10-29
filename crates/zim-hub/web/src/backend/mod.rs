@@ -12,31 +12,10 @@
 use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
 
-use serde::Deserialize;
-use zim_wasm::{WasmFs, BLOB_PENDING};
+use zim_core::vault::VaultId;
+use zim_wasm::{DirEntry, VaultInfo, WasmFs, BLOB_PENDING};
 
-use crate::api::FsEntry;
 use crate::util::{jserr, origin, sleep};
-
-/// Vault manifest metadata for the Details panel — parsed from
-/// [`WasmFs::manifest_info`].
-#[derive(Clone, PartialEq, Deserialize)]
-pub struct VaultMeta {
-    pub vault_id: String,
-    pub name: String,
-    pub height: u64,
-    pub manifest_hash: String,
-    pub author: String,
-    pub shares: Vec<ShareMeta>,
-}
-
-#[derive(Clone, PartialEq, Deserialize)]
-pub struct ShareMeta {
-    pub pubkey: String,
-    pub did: String,
-    #[serde(default)]
-    pub via: Option<String>,
-}
 
 /// Why a read came back without bytes.
 pub enum ReadError {
@@ -82,8 +61,8 @@ impl VaultBackend {
     }
 
     /// Open `vault_id`, replacing whichever vault was open.
-    pub async fn open(&self, vault_id: String) -> Result<(), String> {
-        let opened = WasmFs::open(vault_id, origin())
+    pub async fn open(&self, id: VaultId) -> Result<(), String> {
+        let opened = WasmFs::open(id, &origin())
             .await
             .map_err(|e| jserr(e.into()))?;
         *self.lock_mut().await = Some(opened);
@@ -92,18 +71,16 @@ impl VaultBackend {
 
     /// The open vault's manifest metadata (synchronous — no network).
     /// `None` while closed or busy.
-    pub fn meta(&self) -> Option<VaultMeta> {
+    pub fn meta(&self) -> Option<VaultInfo> {
         let guard = self.fs.try_borrow().ok()?;
-        let json = guard.as_ref()?.manifest_info().ok()?;
-        serde_json::from_str::<VaultMeta>(&json).ok()
+        Some(guard.as_ref()?.info())
     }
 
     #[allow(clippy::await_holding_refcell_ref)] // see module docs
-    pub async fn ls(&self, path: String) -> Result<Vec<FsEntry>, String> {
+    pub async fn ls(&self, path: String) -> Result<Vec<DirEntry>, String> {
         let guard = self.lock().await;
         let f = guard.as_ref().ok_or("vault not open")?;
-        let json = f.ls(path).await.map_err(|e| jserr(e.into()))?;
-        serde_json::from_str::<Vec<FsEntry>>(&json).map_err(|e| e.to_string())
+        f.ls(&path).await.map_err(|e| jserr(e.into()))
     }
 
     #[allow(clippy::await_holding_refcell_ref)] // see module docs

@@ -14,7 +14,6 @@ use std::str::FromStr;
 use async_trait::async_trait;
 use bytes::Bytes;
 use reqwest::{Client, StatusCode};
-use serde::Serialize;
 use url::Url;
 use wasm_bindgen::prelude::*;
 
@@ -22,9 +21,12 @@ use zim_core::blobs::{BlobError, BlobStore};
 use zim_core::linked_data::{Hash, Link};
 use zim_core::vault::log::{Head, VaultLog, VaultLogError};
 use zim_core::vault::{Vault, VaultId};
+use zim_crypto::PublicKey;
+use zim_did::Did;
 
 use crate::api::{self, GetBlob, GetHead, GetLog, PostHead, PutBlob};
-use crate::{read, SESSION_KEY};
+use crate::read::{self, DirEntry};
+use crate::SESSION_KEY;
 
 fn blob_err(e: String) -> BlobError {
     BlobError::Store(anyhow::anyhow!(e))
@@ -227,16 +229,86 @@ pub(crate) fn session_key() -> Result<zim_crypto::PrivateKey, JsError> {
     })
 }
 
-pub(crate) fn parse_vault_id(hex: &str) -> Result<VaultId, JsError> {
-    Ok(VaultId::from_hash(
-        Hash::from_str(hex).map_err(|e| JsError::new(&format!("vault id: {e}")))?,
-    ))
-}
-
 pub(crate) fn parse_base(hub_base: &str) -> Result<Url, JsError> {
     hub_base
         .parse()
         .map_err(|e| JsError::new(&format!("invalid hub url: {e}")))
+}
+
+/// The open vault's manifest header and shareholders.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VaultInfo {
+    pub id: VaultId,
+    pub name: String,
+    pub height: u64,
+    /// The manifest this view was read from.
+    pub manifest: Link,
+    /// The key that signed that manifest.
+    pub author: PublicKey,
+    pub shares: Vec<ShareInfo>,
+}
+
+/// One shareholder of a vault.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShareInfo {
+    /// The key the vault secret is sealed to.
+    pub key: PublicKey,
+    /// Who holds it.
+    pub identity: Did,
+    /// The host announces route through, when the holder isn't dialed
+    /// directly (a browser key reached through its hub).
+    pub via: Option<Did>,
+}
+
+// Rust-only surface: the SPA links this crate directly, so these hand it
+// typed values instead of JSON for JS.
+impl WasmFs {
+    /// Open an existing vault. Fetches the head from the hub, pulls the
+    /// manifest blob, recovers the local share, and materialises the
+    /// tree. Blobs are fetched lazily thereafter.
+    pub async fn open(id: VaultId, hub_base: &str) -> Result<WasmFs, JsError> {
+        let pk = session_key()?;
+        let base = parse_base(hub_base)?;
+        let vault = Vault::open(
+            id,
+            HubBlobStore::new(base.clone()),
+            HubVaultLog::new(base),
+            &pk,
+        )
+        .await
+        .map_err(|e| JsError::new(&format!("open: {e}")))?;
+        Ok(WasmFs { vault })
+    }
+
+    pub fn id(&self) -> VaultId {
+        self.vault.id()
+    }
+
+    /// The open manifest's header and shareholders. No network.
+    pub fn info(&self) -> VaultInfo {
+        let manifest = self.vault.manifest();
+        VaultInfo {
+            id: self.vault.id(),
+            name: manifest.name().to_string(),
+            height: manifest.height(),
+            manifest: self.vault.manifest_link().clone(),
+            author: *manifest.author(),
+            shares: manifest
+                .shares()
+                .iter()
+                .map(|(key, share)| ShareInfo {
+                    key: *key,
+                    identity: share.identity().clone(),
+                    via: share.via().cloned(),
+                })
+                .collect(),
+        }
+    }
+
+    /// List a directory, directories first.
+    pub async fn ls(&self, path: &str) -> Result<Vec<DirEntry>, JsError> {
+        read::ls(self.vault.fs(), path).await
+    }
 }
 
 #[wasm_bindgen]
@@ -294,76 +366,6 @@ impl WasmFs {
             .into(),
         );
         Ok(WasmFs { vault })
-    }
-
-    /// Open an existing vault by id. Fetches the head from the hub, pulls
-    /// the manifest blob, recovers the local share, and materialises the
-    /// tree. Blobs are fetched lazily thereafter.
-    pub async fn open(vault_id_hex: String, hub_base: String) -> Result<WasmFs, JsError> {
-        let pk = session_key()?;
-        let base = parse_base(&hub_base)?;
-        let vault = Vault::open(
-            parse_vault_id(&vault_id_hex)?,
-            HubBlobStore::new(base.clone()),
-            HubVaultLog::new(base),
-            &pk,
-        )
-        .await
-        .map_err(|e| JsError::new(&format!("open: {e}")))?;
-        Ok(WasmFs { vault })
-    }
-
-    #[wasm_bindgen(getter)]
-    pub fn vault_id(&self) -> String {
-        self.vault.id().to_string()
-    }
-
-    /// Vault metadata + shareholders for the Details panel, as JSON:
-    /// `{vault_id, name, height, manifest_hash, author, shares: [{pubkey, did, via}]}`.
-    /// Reads the already-open manifest — no network.
-    pub fn manifest_info(&self) -> Result<String, JsError> {
-        let manifest = self.vault.manifest();
-
-        #[derive(Serialize)]
-        struct ShareView {
-            pubkey: String,
-            did: String,
-            via: Option<String>,
-        }
-        #[derive(Serialize)]
-        struct Info {
-            vault_id: String,
-            name: String,
-            height: u64,
-            manifest_hash: String,
-            author: String,
-            shares: Vec<ShareView>,
-        }
-
-        let shares: Vec<ShareView> = manifest
-            .shares()
-            .iter()
-            .map(|(pk, share)| ShareView {
-                pubkey: pk.to_hex(),
-                did: share.identity().to_string(),
-                via: share.via().map(|v| v.to_string()),
-            })
-            .collect();
-
-        let info = Info {
-            vault_id: self.vault.id().to_string(),
-            name: manifest.name().to_string(),
-            height: manifest.height(),
-            manifest_hash: self.vault.manifest_link().hash().to_string(),
-            author: manifest.author().to_hex(),
-            shares,
-        };
-        serde_json::to_string(&info).map_err(|e| JsError::new(&format!("manifest_info: {e}")))
-    }
-
-    /// List a directory. Returns JSON: `[{name, kind, hash, mime}]`.
-    pub async fn ls(&self, path: String) -> Result<String, JsError> {
-        read::ls(self.vault.fs(), &path).await
     }
 
     /// Read and decrypt a file's plaintext bytes. When the tree points at
@@ -428,26 +430,12 @@ impl WasmFs {
 
     /// Persist staged mutations. `Vault::save` uploads the new manifest
     /// blob and any new file blobs via `HubBlobStore`, then `POST`s the new
-    /// head via `HubVaultLog` — all inline. Returns JSON
-    /// `{vault_id, height, manifest_hash}`.
-    pub async fn save(&mut self) -> Result<String, JsError> {
-        let link = self
-            .vault
+    /// head via `HubVaultLog` — all inline.
+    pub async fn save(&mut self) -> Result<(), JsError> {
+        self.vault
             .save()
             .await
-            .map_err(|e| JsError::new(&format!("save: {e}")))?;
-
-        #[derive(Serialize)]
-        struct Saved {
-            vault_id: String,
-            height: u64,
-            manifest_hash: String,
-        }
-        serde_json::to_string(&Saved {
-            vault_id: self.vault.id().to_string(),
-            height: self.vault.height(),
-            manifest_hash: link.hash().to_hex(),
-        })
-        .map_err(|e| JsError::new(&format!("json: {e}")))
+            .map(|_| ())
+            .map_err(|e| JsError::new(&format!("save: {e}")))
     }
 }

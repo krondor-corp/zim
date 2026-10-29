@@ -7,7 +7,8 @@ use serde::Deserialize;
 use yew::prelude::*;
 
 use crate::api::{Device, FsEntry};
-use crate::pages::vault::{own_label, short_id};
+use crate::pages::vault::short_id;
+use crate::pages::vault_details::own_label;
 use crate::pages::vault_editor::{media_preview, OpenFile};
 
 /// One version as [`WasmVersion::history`] serializes it.

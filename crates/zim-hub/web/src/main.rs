@@ -6,12 +6,14 @@
 //! it only serves this app to signed-in, approved users. The app owns key
 //! custody (the web-key gate) and the vault UI.
 //!
-//! Structure: `api/` (typed backend client) · `util/` (helpers) ·
+//! Structure: `api/` (typed backend client) · `backend/` (the vault
+//! page's storage seam over `WasmFs`) · `util/` (helpers) ·
 //! `components/` (presentational lib) · `layouts/` (page shells) ·
 //! `pages/` (route targets) · `routes.rs` (URL → page). `main.rs` only
 //! loads the user, runs the web-key gate, and mounts the router.
 
 mod api;
+mod backend;
 mod components;
 mod layouts;
 mod pages;

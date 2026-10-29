@@ -888,6 +888,18 @@ a.app-header__crumb:hover {
     font-size: 0.75rem;
     white-space: nowrap;
 }
+/* Autosave: "Saved" lingers, then fades; a failed save stays put. */
+.app-header__status--fade {
+    animation: app-header-status-fade 2.5s ease-in forwards;
+}
+@keyframes app-header-status-fade {
+    0%, 60% { opacity: 1; }
+    100% { opacity: 0; }
+}
+.app-header__status--error {
+    color: hsl(var(--destructive));
+    cursor: help;
+}
 .app-header__kbd {
     font-family: var(--font-mono, monospace);
     font-size: 0.68rem;
@@ -1422,7 +1434,7 @@ button.app-menu__item {
 .tree-pane__dock { display: flex; gap: 0.4rem; padding: 0 0.5rem 0.5rem; }
 .tree-pane__dock .tree-pane__new { flex: 1; margin: 0; }
 
-/* Header Save — the one loud affordance, violet like the app's primary. */
+/* Header primary action (version restore) — violet like the app's primary. */
 .app-header__btn--save {
   color: hsl(var(--primary));
   border-color: hsl(var(--primary) / 0.5);

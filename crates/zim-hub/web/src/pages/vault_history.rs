@@ -13,10 +13,10 @@ use yew::prelude::*;
 use zim_wasm::{WasmVersion, BLOB_PENDING};
 
 use crate::api::{Device, FsEntry};
-use crate::pages::vault::{
+use crate::pages::vault_editor::OpenFile;
+use crate::pages::vault_file::{
     digest, guess_mime, is_textual, object_url, SYNC_RETRIES, SYNC_RETRY_MS,
 };
-use crate::pages::vault_editor::OpenFile;
 use crate::pages::vault_history_view::{
     author_label, file_preview, tree_list, version_row, VersionMeta,
 };

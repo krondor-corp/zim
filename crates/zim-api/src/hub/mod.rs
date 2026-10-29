@@ -29,9 +29,7 @@ pub use auth::{
     DeviceCodeStartBody, DeviceCodeStartRequest, Me, MeRequest,
 };
 pub use client::HubClient;
-pub use devices::{
-    device_did, device_nick, Device, DevicesRequest, DevicesResponse, RemoveDeviceRequest,
-};
+pub use devices::{Device, DeviceKind, DevicesRequest, DevicesResponse, RemoveDeviceRequest};
 pub use did_doc::{DidDoc, DidDocRequest};
 pub use resolver::HttpDidResolver;
 pub use vaults::{VaultItem, VaultsRequest, VaultsResponse};

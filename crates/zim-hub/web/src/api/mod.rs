@@ -15,8 +15,8 @@ use zim_api::{ApiError, ApiRequest, Client, Url};
 
 // One definition per endpoint — server serializes, CLI + SPA deserialize.
 pub use zim_api::hub::{
-    AdminActionRequest, AdminUser, AdminUsers, AdminUsersRequest, Device, DevicesRequest, Me,
-    MeRequest, RemoveDeviceRequest, VaultItem, VaultsRequest,
+    AdminActionRequest, AdminUser, AdminUsers, AdminUsersRequest, Device, DeviceKind,
+    DevicesRequest, Me, MeRequest, RemoveDeviceRequest, VaultItem, VaultsRequest,
 };
 
 /// One entry as `WasmFs::ls` serializes it.

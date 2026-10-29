@@ -19,7 +19,7 @@ use yew::prelude::*;
 use yew_router::prelude::*;
 use zim_wasm::{WasmFs, BLOB_PENDING};
 
-use crate::api::{fetch_devices, fetch_me, fetch_vaults, Device, FsEntry, VaultItem};
+use crate::api::{fetch_devices, fetch_me, fetch_vaults, Device, DeviceKind, FsEntry, VaultItem};
 use crate::components::dialog::{ConfirmDialog, PromptDialog};
 use crate::layouts::{HeaderMenu, SignOutItem};
 use crate::pages::vault_editor::{EditorPane, OpenFile};
@@ -1003,9 +1003,9 @@ pub fn vault_tree(props: &Props) -> Html {
                 trigger_class={classes!("app-header__crumb", "app-header__crumb--current", "vault-switch__trigger")}
                 trigger={html! { <>{ vault_title.clone() }{ " \u{25BE}" }</> }}>
                 { for vaults.iter().map(|v| {
-                    let name = if v.name.is_empty() { short_id(&v.vault_id) } else { v.name.clone() };
+                    let name = if v.name.is_empty() { short_id(&v.vault_id.to_string()) } else { v.name.clone() };
                     html! {
-                        <Link<Route> to={Route::Vault { id: v.vault_id.clone() }} classes="app-menu__item">
+                        <Link<Route> to={Route::Vault { id: v.vault_id.to_string() }} classes="app-menu__item">
                             { name }
                         </Link<Route>>
                     }
@@ -1309,12 +1309,12 @@ fn details_panel(meta: &VaultMeta, devices: &[Device], web_did: &str) -> Html {
 }
 
 fn share_row(s: &ShareMeta, devices: &[Device], web_did: &str, author: &str) -> Html {
-    let mine = devices.iter().find(|d| d.pubkey == s.pubkey);
+    let mine = devices.iter().find(|d| d.pubkey.to_hex() == s.pubkey);
     let is_author = s.pubkey == author;
     // The web key's proper identity is the account `did:web` (reached via the
     // hub), not the `did:key` sealed into the manifest. Only swap when we can
     // confirm this share *is* our web key (its pubkey matches the web device).
-    let is_web_key = mine.is_some_and(|d| d.kind == "web");
+    let is_web_key = mine.is_some_and(|d| d.kind == DeviceKind::Web);
     let did = if is_web_key && !web_did.is_empty() {
         web_did.to_string()
     } else {
@@ -1339,7 +1339,7 @@ fn share_row(s: &ShareMeta, devices: &[Device], web_did: &str, author: &str) -> 
 pub(crate) fn own_label(d: &Device) -> String {
     match &d.label {
         Some(l) if !l.is_empty() => l.clone(),
-        _ if d.kind == "web" => "your web key".to_string(),
+        _ if d.kind == DeviceKind::Web => "your web key".to_string(),
         _ => "your daemon".to_string(),
     }
 }

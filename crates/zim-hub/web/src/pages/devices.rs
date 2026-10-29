@@ -8,7 +8,7 @@
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 
-use crate::api::{delete_device, fetch_devices, fetch_me, Device};
+use crate::api::{delete_device, fetch_devices, fetch_me, Device, DeviceKind};
 use crate::components::copy_button;
 use crate::components::dialog::ConfirmDialog;
 
@@ -135,7 +135,7 @@ pub fn devices() -> Html {
 }
 
 fn device_row(d: &Device, web_did: &str, on_delete: &Callback<String>) -> Html {
-    let is_web = d.kind == "web";
+    let is_web = d.kind == DeviceKind::Web;
     let label = d.label.clone().unwrap_or_else(|| {
         if is_web {
             "web key".to_string()
@@ -143,17 +143,18 @@ fn device_row(d: &Device, web_did: &str, on_delete: &Callback<String>) -> Html {
             "daemon".to_string()
         }
     });
-    let enrolled = d.created_at.get(..10).unwrap_or(&d.created_at).to_string();
-    let pubkey = d.pubkey.clone();
+    let enrolled = d
+        .created_at
+        .map(|t| t.format("%Y-%m-%d").to_string())
+        .unwrap_or_default();
+    let pubkey = d.pubkey.to_hex();
     // The web key's proper identity is the account `did:web` (reached via the
     // hub) — that's what you share with, not its raw `did:key`. Daemons are
     // dialed directly, so they show their `did:key` (or hex on an older hub).
     let did = if is_web && !web_did.is_empty() {
         web_did.to_string()
-    } else if d.did.is_empty() {
-        d.pubkey.clone()
     } else {
-        d.did.clone()
+        d.did().to_string()
     };
     let on_del = {
         let pubkey = pubkey.clone();
@@ -167,7 +168,7 @@ fn device_row(d: &Device, web_did: &str, on_delete: &Callback<String>) -> Html {
             <div class="device-row__main">
                 <div class="device-row__title">
                     <span class="device-row__label">{ label }</span>
-                    <span class="device-row__badge">{ d.kind.clone() }</span>
+                    <span class="device-row__badge">{ d.kind.as_str() }</span>
                     if is_web {
                         <span class="device-row__badge device-row__badge--master">{ "master" }</span>
                     }

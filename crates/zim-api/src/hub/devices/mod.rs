@@ -7,39 +7,77 @@ pub use list::DevicesRequest;
 pub use list::DevicesResponse;
 pub use remove::RemoveDeviceRequest;
 
+mod wire;
+
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use zim_crypto::PublicKey;
+use zim_did::Did;
+
+/// Device class. Same lowercase tags the hub stores (`web` | `daemon`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceKind {
+    /// Browser-resident key; reached via the hub (no iroh endpoint).
+    Web,
+    /// A `zim` daemon identity; dialed directly.
+    Daemon,
+}
+
+impl DeviceKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DeviceKind::Web => "web",
+            DeviceKind::Daemon => "daemon",
+        }
+    }
+}
+
+impl std::fmt::Display for DeviceKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 /// One device the hub reports for an account. Shared wire type: the hub
 /// server serializes it, the daemon CLI and the web SPA deserialize it.
 /// `PartialEq` so the web SPA can hold it in Yew state/props.
+///
+/// The JSON is unchanged from the old all-`String` shape: `pubkey` is
+/// lowercase hex, `did` is `""` when absent, `created_at` is RFC 3339
+/// (`""` when absent).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Device {
-    pub pubkey: String,
-    /// `did:key:z…` for the device. May be empty on older hubs; callers
-    /// fall back to [`device_did`].
-    #[serde(default)]
-    pub did: String,
+    #[serde(with = "wire::pubkey_hex")]
+    pub pubkey: PublicKey,
+    /// `did:key:z…` for the device. Older hubs send `""` (or omit it);
+    /// that is `None`, and `None` goes back out as `""`.
+    #[serde(default, with = "wire::empty_is_none")]
+    pub did: Option<Did>,
     pub label: Option<String>,
-    pub kind: String,
-    #[serde(default)]
-    pub created_at: String,
+    pub kind: DeviceKind,
+    #[serde(default, with = "wire::timestamp")]
+    pub created_at: Option<DateTime<Utc>>,
 }
 
-/// `did:key:z…` for a device — its `did` field when present, else
-/// synthesised from the pubkey hex. `None` if neither yields a key.
-pub fn device_did(d: &Device) -> Option<String> {
-    if !d.did.is_empty() {
-        return Some(d.did.clone());
+impl Device {
+    /// The device's DID — the hub's `did` when sent, else derived from
+    /// the key (they are the same `did:key`).
+    pub fn did(&self) -> Did {
+        self.did
+            .clone()
+            .unwrap_or_else(|| Did::from_key(&self.pubkey))
     }
-    let pk = zim_crypto::PublicKey::from_hex(&d.pubkey).ok()?;
-    Some(format!("did:key:{}", zim_did::did_key_encode(&pk)))
+
+    /// Stable address-book nick: its label if set, else
+    /// `hub-<first 8 of pubkey hex>` so re-syncing is idempotent.
+    pub fn nick(&self) -> String {
+        match &self.label {
+            Some(l) if !l.trim().is_empty() => l.trim().to_string(),
+            _ => format!("hub-{}", &self.pubkey.to_hex()[..8]),
+        }
+    }
 }
 
-/// Stable address-book nick for a device: its label if set, else
-/// `hub-<first 8 of pubkey>` so re-syncing is idempotent.
-pub fn device_nick(d: &Device) -> String {
-    match &d.label {
-        Some(l) if !l.trim().is_empty() => l.trim().to_string(),
-        _ => format!("hub-{}", &d.pubkey[..d.pubkey.len().min(8)]),
-    }
-}
+#[cfg(test)]
+mod tests;

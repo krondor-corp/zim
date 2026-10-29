@@ -5,7 +5,7 @@
 //! folded into the address book. Daemons are dialed directly; web keys
 //! have no iroh endpoint, so they're reached *via* the hub's key.
 
-use zim_api::hub::{device_did, Device, HubClient};
+use zim_api::hub::{Device, DeviceKind, HubClient};
 use zim_crypto::PublicKey;
 use zim_did::Did;
 
@@ -56,19 +56,18 @@ pub async fn account_devices(state: &ServiceState) -> Result<Vec<DeviceShare>, R
 }
 
 fn is_web(d: &Device) -> bool {
-    d.kind == "web"
+    d.kind == DeviceKind::Web
 }
 
 /// Map roster rows to genesis shares. A web device is reached via
-/// `hub_key`; rows whose key doesn't decode are skipped.
+/// `hub_key`.
 fn device_shares(devices: &[Device], hub_key: Option<PublicKey>) -> Vec<DeviceShare> {
     let via = hub_key.map(|k| Did::from_key(&k));
     devices
         .iter()
-        .filter_map(|d| {
-            let pk = Did::parse(&device_did(d)?).ok()?.pubkey()?;
+        .map(|d| {
             let reach = if is_web(d) { via.clone() } else { None };
-            Some((pk, reach))
+            (d.pubkey, reach)
         })
         .collect()
 }
@@ -79,13 +78,13 @@ mod tests {
 
     use super::*;
 
-    fn device(key: &PublicKey, kind: &str) -> Device {
+    fn device(key: &PublicKey, kind: DeviceKind) -> Device {
         Device {
-            pubkey: key.to_hex(),
-            did: String::new(),
+            pubkey: *key,
+            did: None,
             label: None,
-            kind: kind.to_string(),
-            created_at: String::new(),
+            kind,
+            created_at: None,
         }
     }
 
@@ -98,9 +97,9 @@ mod tests {
 
         // Alice's account roster: two daemons and a browser key.
         let roster = [
-            device(&laptop, "daemon"),
-            device(&desktop, "daemon"),
-            device(&browser, "web"),
+            device(&laptop, DeviceKind::Daemon),
+            device(&desktop, DeviceKind::Daemon),
+            device(&browser, DeviceKind::Web),
         ];
 
         let shares = device_shares(&roster, Some(hub));
@@ -113,14 +112,5 @@ mod tests {
                 (browser, Some(Did::from_key(&hub))),
             ]
         );
-    }
-
-    #[test]
-    fn a_roster_row_without_a_usable_key_is_skipped() {
-        let laptop = PrivateKey::generate().public();
-        let mut garbled = device(&laptop, "daemon");
-        garbled.pubkey = "not-hex".to_string();
-
-        assert!(device_shares(&[garbled], None).is_empty());
     }
 }

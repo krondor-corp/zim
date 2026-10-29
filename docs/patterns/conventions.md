@@ -601,6 +601,10 @@ pub struct CacheEntry {
 
 When adding a new domain type that needs SQLite storage, create a wrapper in `database/types/` following the `DCid`/`DUuid` pattern: implement `Encode`, `Decode`, `Type` for `Sqlite`, plus `From` conversions to/from the inner type.
 
+### Wire Types Carry Domain Types
+
+The same rule holds for the shared HTTP wire types in `zim-api` (e.g. `hub::Device`, `hub::VaultItem`): fields are domain types (`PublicKey`, `Did`, `VaultId`, an enum for a closed set of tags), not `String`. When the domain type's default serde is not the established JSON, give the field an explicit `#[serde(with = ...)]` module (see `zim-api/src/hub/devices/wire.rs`) so the JSON stays byte-identical, and pin it with a round-trip test.
+
 ### D-Wrappers Are for Ser/De Only
 
 Database wrapper types (`DUuid`, `DbHash`, `DMime`, etc.) handle SQLite encoding/decoding. They should **never** appear on public struct fields. Public structs use the unwrapped domain types; conversion happens internally:

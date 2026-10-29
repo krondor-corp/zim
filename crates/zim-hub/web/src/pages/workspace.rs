@@ -72,8 +72,8 @@ pub fn workspace(props: &Props) -> Html {
                     Ok(list) => {
                         // Last-opened when it still exists, else first.
                         let target = last_vault()
-                            .filter(|id| list.iter().any(|v| &v.vault_id == id))
-                            .unwrap_or_else(|| list[0].vault_id.clone());
+                            .filter(|id| list.iter().any(|v| &v.vault_id.to_string() == id))
+                            .unwrap_or_else(|| list[0].vault_id.to_string());
                         navigator.replace(&Route::Vault { id: target });
                     }
                     Err(e) => {

@@ -25,7 +25,7 @@ pub(crate) struct VersionMeta {
 pub(crate) fn author_label(author: Option<&str>, devices: &[Device]) -> String {
     match author {
         None => "unknown author".to_string(),
-        Some(a) => match devices.iter().find(|d| d.pubkey == a) {
+        Some(a) => match devices.iter().find(|d| d.pubkey.to_hex() == a) {
             Some(d) => own_label(d),
             None => short_id(a),
         },

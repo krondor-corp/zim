@@ -4,7 +4,7 @@
 //! instead of this.
 
 use reqwest::Url;
-use zim_crypto::PrivateKey;
+use zim_crypto::{PrivateKey, PublicKey};
 
 use crate::{ApiError, Client};
 
@@ -14,7 +14,7 @@ use super::jwt;
 
 pub struct HubClient {
     client: Client,
-    self_pubkey_hex: String,
+    self_pubkey: PublicKey,
     hub_url: String,
 }
 
@@ -27,7 +27,7 @@ impl HubClient {
         let token = jwt::mint(&secret, &hub_url);
         Ok(Self {
             client: Client::with_bearer(&base, &token)?,
-            self_pubkey_hex: secret.public().to_hex(),
+            self_pubkey: secret.public(),
             hub_url,
         })
     }
@@ -36,9 +36,9 @@ impl HubClient {
         &self.hub_url
     }
 
-    /// This identity's pubkey hex.
-    pub fn self_pubkey_hex(&self) -> String {
-        self.self_pubkey_hex.clone()
+    /// This identity's public key.
+    pub fn self_pubkey(&self) -> PublicKey {
+        self.self_pubkey
     }
 
     /// `GET /api/v0/devices` — the account's device roster.

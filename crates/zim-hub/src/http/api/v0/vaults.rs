@@ -32,7 +32,7 @@ pub async fn handler(
             continue;
         }
         vaults.push(VaultItem {
-            vault_id: v.id.to_string(),
+            vault_id: v.id,
             name: meta.name,
         });
     }

@@ -13,7 +13,7 @@ use std::fmt;
 
 use async_trait::async_trait;
 use clap::Args;
-use zim_api::hub::{device_did, device_nick};
+use zim_api::hub::DeviceKind;
 use zim_did::Did;
 use zim_peer::{PeerStore, SqlitePeerStore};
 
@@ -58,7 +58,7 @@ impl Op for Sync {
 
     async fn run(&self, _ctx: ()) -> Result<SyncOutput, SyncError> {
         let client = load_hub_client()?;
-        let self_hex = client.self_pubkey_hex();
+        let self_pk = client.self_pubkey();
         let devices = client.devices().await?;
 
         // The hub's own DID — the `via` we stamp on browser/web devices so
@@ -86,18 +86,16 @@ impl Op for Sync {
         let mut already = 0usize;
         for d in &devices {
             // Never add ourselves to our own address book.
-            if d.pubkey == self_hex {
+            if d.pubkey == self_pk {
                 continue;
             }
-            let Some(did) = device_did(d) else { continue };
-            let Ok(identity) = Did::parse(&did) else {
-                continue;
-            };
-            let nick = device_nick(d);
+            let identity = d.did();
+            let did = identity.to_string();
+            let nick = d.nick();
             // Web/browser devices are reached *via the hub*; daemons are
             // dialed directly. Your own enrolled devices are trusted, so
             // they auto-share into the vaults you own.
-            let via = if d.kind == "web" {
+            let via = if d.kind == DeviceKind::Web {
                 hub_via.clone()
             } else {
                 None

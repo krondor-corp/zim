@@ -27,6 +27,7 @@ use crate::pages::vault_details::details_panel;
 use crate::pages::vault_editor::EditorPane;
 use crate::pages::vault_file::{load_file, OpenAction, OpenState, SYNC_RETRIES, SYNC_RETRY_MS};
 use crate::pages::vault_history::{HistoryView, Restore};
+use crate::pages::vault_palette::{use_palette_shortcut, Palette, PaletteAction};
 use crate::pages::vault_tree::{build_rows, CtxMenu, CtxTarget, TreeNode, TreePane};
 use crate::routes::Route;
 use crate::util::{jserr, sleep};
@@ -123,6 +124,7 @@ pub fn vault_tree(props: &Props) -> Html {
     let web_did = use_state(String::new);
     let show_details = use_state(|| false);
     let show_history = use_state(|| false);
+    let show_palette = use_state(|| false);
     // A failed restore, shown inside the history view (the live error
     // banner is hidden under it) — the view stays open to retry.
     let restore_error = use_state(String::new);
@@ -835,6 +837,43 @@ pub fn vault_tree(props: &Props) -> Html {
         })
     };
 
+    // Cmd/Ctrl+K (or the header button) opens the palette; its choices
+    // run through the same paths as the tree and header.
+    {
+        let show_palette = show_palette.setter();
+        use_palette_shortcut(Callback::from(move |_: ()| show_palette.set(true)));
+    }
+    let on_palette_action = {
+        let dialog = dialog.clone();
+        let flush = flush.clone();
+        let show_history = show_history.clone();
+        let restore_error = restore_error.clone();
+        let show_details = show_details.clone();
+        let navigator = navigator.clone();
+        let open_path = open_file.0.as_ref().map(|f| f.path.clone());
+        Callback::from(move |action: PaletteAction| match action {
+            PaletteAction::NewNote => dialog.set(Some(Dialog::NewNote {
+                dir: "/".to_string(),
+            })),
+            PaletteAction::NewFolder => dialog.set(Some(Dialog::NewFolder {
+                dir: "/".to_string(),
+            })),
+            PaletteAction::DeleteOpenFile => {
+                if let Some(path) = open_path.clone() {
+                    dialog.set(Some(Dialog::Delete { path }));
+                }
+            }
+            PaletteAction::SaveNow => flush.emit(()),
+            PaletteAction::History => {
+                flush.emit(());
+                restore_error.set(String::new());
+                show_history.set(true);
+            }
+            PaletteAction::Details => show_details.set(true),
+            PaletteAction::SwitchVault(id) => navigator.push(&Route::Vault { id }),
+        })
+    };
+
     // Restore = write the historical bytes forward as a normal save (the
     // chain only ever grows), then return to the live tree on that file.
     let on_restore = {
@@ -915,6 +954,14 @@ pub fn vault_tree(props: &Props) -> Html {
                 <div class="app-header__slot app-header__slot--right">
                     <span id="save-status" class="app-header__status">{ (*status).clone() }</span>
                     { save_indicator(&save_state) }
+                    <button type="button" class="app-header__btn app-header__btn--palette"
+                        title="Command palette (Ctrl/Cmd+K)" aria-label="Command palette"
+                        onclick={{
+                            let show_palette = show_palette.clone();
+                            Callback::from(move |_: MouseEvent| show_palette.set(true))
+                        }}>
+                        { "\u{2315}" }
+                    </button>
                     <button type="button"
                         class={classes!("app-header__btn", show_history.then_some("app-header__btn--on"))}
                         title="Version history" onclick={toggle_history}>
@@ -1005,6 +1052,17 @@ pub fn vault_tree(props: &Props) -> Html {
 
             { ctx_menu_html.unwrap_or_default() }
             { details_modal }
+            if *show_palette {
+                <Palette backend={backend.clone()} vault_id={props.vault_id}
+                    vaults={(*vaults).clone()}
+                    open_path={open_file.0.as_ref().map(|f| f.path.clone())}
+                    on_action={on_palette_action}
+                    on_open={on_open.clone()}
+                    on_close={{
+                        let show_palette = show_palette.clone();
+                        Callback::from(move |_: ()| show_palette.set(false))
+                    }} />
+            }
             {
                 match &*dialog {
                     None => html! {},

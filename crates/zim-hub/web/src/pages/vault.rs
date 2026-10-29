@@ -21,7 +21,7 @@ use zim_wasm::{WasmFs, BLOB_PENDING};
 
 use crate::api::{fetch_devices, fetch_me, fetch_vaults, Device, FsEntry, VaultItem};
 use crate::components::dialog::{ConfirmDialog, PromptDialog};
-use crate::layouts::{HeaderMenu, SignOutItem};
+use crate::layouts::{menu_icon, HeaderMenu, SignOutItem};
 use crate::pages::vault_editor::{EditorPane, OpenFile};
 use crate::pages::vault_history::{HistoryView, Restore};
 use crate::pages::vault_tree::{build_rows, CtxMenu, CtxTarget, TreeNode, TreePane};
@@ -1106,7 +1106,7 @@ pub fn vault_tree(props: &Props) -> Html {
     html! {
         <>
             <header class="app-header">
-                <HeaderMenu trigger={html! { "\u{2630}" }}>
+                <HeaderMenu trigger={menu_icon()}>
                     <Link<Route> to={Route::Settings} classes="app-menu__item">{ "Settings" }</Link<Route>>
                     <SignOutItem />
                 </HeaderMenu>

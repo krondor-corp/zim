@@ -33,7 +33,7 @@ pub struct OpContext {
 }
 ```
 
-The context is constructed once in `main()` and passed to every op. It contains everything an op needs to talk to the daemon. The remote URL is resolved from: explicit `--remote` flag > config file `api_port` > hardcoded default. The `MultiProgress` handle is hidden when stdout is not a TTY.
+The context is constructed once in `main()` and passed to every op. It contains everything an op needs to talk to the daemon. The remote URL is resolved from: explicit `--remote` flag > the port recorded in `$ZIM_HOME/daemon.lock` by the daemon currently holding the home (`context::daemon_lock::probe`) > config file `api_port` > hardcoded default. The `MultiProgress` handle is hidden when stdout is not a TTY.
 
 ### Anatomy of an Op
 
@@ -213,6 +213,8 @@ All presentation logic lives in `Display` impls on the output types. The boundar
 Spinners and progress bars are the one thing that must happen *during* execution, not after. The approach: pass an `indicatif::MultiProgress` handle through `OpContext`. Ops that need progress create bars on it. When stdout is not a TTY, the handle is a no-op (indicatif supports this natively with `ProgressDrawTarget::hidden()`).
 
 This is a controlled leak — the op knows it *might* show progress, but doesn't decide *how* or *whether* to render it. The boundary decides that when it constructs the context.
+
+The same exception covers a single mid-run *prompt* the user must act on before the op can finish. `zim hub login` is the case: the device-code pairing instructions have to be on screen while the op polls. The flow itself lives in the library (`crate::hub::login`: `start()` returns a `PendingLogin`, `complete()` polls and persists) and never prints; the op writes one typed `PairInstructions` value — formatting in its `Display` — to stderr between the two calls, keeping stdout for the op's result. A non-CLI front end (e.g. a desktop app) drives the same two calls and shows the instructions in its own UI.
 
 ## Bucket Resolution
 

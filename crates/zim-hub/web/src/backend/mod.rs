@@ -1,7 +1,8 @@
 //! The vault page's storage seam: every read and write the editor makes
-//! goes through [`VaultBackend`], never a `WasmFs` directly. Today the
-//! only backend is the hub — the SDK's `WasmFs`, with all blob crypto
-//! inside it.
+//! goes through [`VaultBackend`], never a `WasmFs` directly. Two
+//! backends sit behind it, chosen at runtime: the hub — the SDK's
+//! `WasmFs`, with all blob crypto inside it — and, inside the Tauri
+//! desktop shell, the local daemon via [`desktop`].
 //!
 //! The handle lives in a `RefCell` shared by user actions, autosave, and
 //! the background follow loop. Async methods wait out an in-flight borrow
@@ -15,8 +16,11 @@ use std::rc::Rc;
 use serde::Deserialize;
 use zim_wasm::{WasmFs, BLOB_PENDING};
 
-use crate::api::FsEntry;
+use crate::api::{FsEntry, VaultItem};
 use crate::util::{jserr, origin, sleep};
+
+pub mod desktop;
+pub use desktop::is_desktop;
 
 /// Vault manifest metadata for the Details panel — parsed from
 /// [`WasmFs::manifest_info`].
@@ -58,9 +62,46 @@ pub enum BackendState {
 }
 
 /// The open vault, shared by every task on the page.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct VaultBackend {
     fs: Rc<RefCell<Option<WasmFs>>>,
+    /// The open vault when running in the desktop shell. Only read
+    /// briefly (never held across an await): the daemon serializes
+    /// writes itself.
+    desktop: Rc<RefCell<Option<desktop::Opened>>>,
+    is_desktop: bool,
+}
+
+impl Default for VaultBackend {
+    fn default() -> Self {
+        Self {
+            fs: Rc::default(),
+            desktop: Rc::default(),
+            is_desktop: is_desktop(),
+        }
+    }
+}
+
+/// The vaults to offer: the hub's mirror, or the local daemon's.
+pub async fn list_vaults() -> Result<Vec<VaultItem>, String> {
+    if is_desktop() {
+        desktop::list_vaults().await
+    } else {
+        crate::api::fetch_vaults().await
+    }
+}
+
+/// Create a vault named `name`, returning its id. On the hub the
+/// browser key is the owner and shares with all of `user_id`'s devices;
+/// on the desktop the daemon creates it (and shares per its hub link).
+pub async fn create_vault(name: String, user_id: String) -> Result<String, String> {
+    if is_desktop() {
+        return desktop::create_vault(name).await;
+    }
+    let fs = WasmFs::init(name, origin(), user_id)
+        .await
+        .map_err(|e| jserr(e.into()))?;
+    Ok(fs.vault_id())
 }
 
 impl PartialEq for VaultBackend {
@@ -74,6 +115,12 @@ const LOCK_RETRY_MS: i32 = 25;
 
 impl VaultBackend {
     pub fn state(&self) -> BackendState {
+        if self.is_desktop {
+            return match self.desktop.try_borrow() {
+                Ok(g) if g.is_some() => BackendState::Idle,
+                _ => BackendState::Closed,
+            };
+        }
         match self.fs.try_borrow() {
             Ok(g) if g.is_some() => BackendState::Idle,
             Ok(_) => BackendState::Closed,
@@ -83,6 +130,9 @@ impl VaultBackend {
 
     /// Open `vault_id`, replacing whichever vault was open.
     pub async fn open(&self, vault_id: String) -> Result<(), String> {
+        if self.is_desktop {
+            return self.desktop_open(vault_id).await;
+        }
         let opened = WasmFs::open(vault_id, origin())
             .await
             .map_err(|e| jserr(e.into()))?;
@@ -93,6 +143,10 @@ impl VaultBackend {
     /// The open vault's manifest metadata (synchronous — no network).
     /// `None` while closed or busy.
     pub fn meta(&self) -> Option<VaultMeta> {
+        // The daemon API has no manifest endpoint yet.
+        if self.is_desktop {
+            return None;
+        }
         let guard = self.fs.try_borrow().ok()?;
         let json = guard.as_ref()?.manifest_info().ok()?;
         serde_json::from_str::<VaultMeta>(&json).ok()
@@ -100,6 +154,9 @@ impl VaultBackend {
 
     #[allow(clippy::await_holding_refcell_ref)] // see module docs
     pub async fn ls(&self, path: String) -> Result<Vec<FsEntry>, String> {
+        if self.is_desktop {
+            return self.desktop_ls(path).await;
+        }
         let guard = self.lock().await;
         let f = guard.as_ref().ok_or("vault not open")?;
         let json = f.ls(path).await.map_err(|e| jserr(e.into()))?;
@@ -108,6 +165,9 @@ impl VaultBackend {
 
     #[allow(clippy::await_holding_refcell_ref)] // see module docs
     pub async fn cat(&self, path: String) -> Result<Vec<u8>, ReadError> {
+        if self.is_desktop {
+            return self.desktop_cat(path).await;
+        }
         let guard = self.lock().await;
         let f = guard
             .as_ref()
@@ -126,6 +186,9 @@ impl VaultBackend {
     /// transient) keeps the current view rather than breaking navigation.
     #[allow(clippy::await_holding_refcell_ref)] // see module docs
     pub async fn refresh(&self) -> bool {
+        if self.is_desktop {
+            return self.desktop_refresh().await;
+        }
         let mut guard = self.lock_mut().await;
         match guard.as_mut() {
             Some(f) => f.refresh().await.unwrap_or(false),
@@ -135,6 +198,9 @@ impl VaultBackend {
 
     /// Write `bytes` at `path` (create or replace) as a new version.
     pub async fn write(&self, path: String, bytes: Vec<u8>) -> Result<(), String> {
+        if self.is_desktop {
+            return self.desktop_write(path, bytes).await;
+        }
         self.save_with_retry(async |f: &mut WasmFs| {
             f.add_file(path.clone(), bytes.clone())
                 .await
@@ -144,6 +210,15 @@ impl VaultBackend {
     }
 
     pub async fn mkdir(&self, path: String) -> Result<(), String> {
+        if self.is_desktop {
+            let id = self.vault_arg()?;
+            return self
+                .desktop_mutate(
+                    "vault_mkdir",
+                    serde_json::json!({ "vaultId": id, "path": path }),
+                )
+                .await;
+        }
         self.save_with_retry(async |f: &mut WasmFs| {
             f.mkdir(path.clone()).await.map_err(|e| jserr(e.into()))
         })
@@ -151,6 +226,15 @@ impl VaultBackend {
     }
 
     pub async fn rm(&self, path: String) -> Result<(), String> {
+        if self.is_desktop {
+            let id = self.vault_arg()?;
+            return self
+                .desktop_mutate(
+                    "vault_rm",
+                    serde_json::json!({ "vaultId": id, "path": path }),
+                )
+                .await;
+        }
         self.save_with_retry(async |f: &mut WasmFs| {
             f.rm(path.clone()).await.map_err(|e| jserr(e.into()))
         })
@@ -158,6 +242,15 @@ impl VaultBackend {
     }
 
     pub async fn mv(&self, from: String, to: String) -> Result<(), String> {
+        if self.is_desktop {
+            let id = self.vault_arg()?;
+            return self
+                .desktop_mutate(
+                    "vault_mv",
+                    serde_json::json!({ "vaultId": id, "from": from, "to": to }),
+                )
+                .await;
+        }
         self.save_with_retry(async |f: &mut WasmFs| {
             f.mv(from.clone(), to.clone())
                 .await

@@ -11,6 +11,9 @@ Dependencies point inward:
 ```text
 zim-hub/web -> zim-hub/wasm -> zim-api, zim-core, zim-crypto, zim-did
 
+zim-desktop -> zim (lib: typed daemon client, init, hub login); spawns the zim binary as a sidecar
+zim-desktop (webview) -> zim-hub/web (same SPA; `backend::desktop` over Tauri invoke)
+
 zim-hub -> zim-peer, zim-api, zim-core, zim-crypto, zim-did
 zim     -> zim-peer, zim-api, zim-core, zim-crypto, zim-did
 
@@ -25,6 +28,10 @@ zim-did  -> zim-crypto
 - `zim-peer` owns native storage, iroh transport, synchronization, and service
   lifecycle.
 - `zim` and `zim-hub` compose those libraries into deployable processes.
+- `zim-desktop` is a Tauri shell, outside the root workspace. It runs no peer
+  of its own: it connects to (or launches, as a detached sidecar) the `zim`
+  daemon for `$ZIM_HOME` and proxies vault operations to its HTTP API, so the
+  app and the CLI share one device identity.
 - `zim-hub/wasm` and `zim-hub/web` keep plaintext vault operations in the
   browser.
 

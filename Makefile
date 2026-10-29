@@ -57,6 +57,15 @@ e2e: ## One-shot hermetic e2e run (zim-e2e crate; free ports, own data)
 hub: ## Start the hub in this worktree's dev tmux session (minio + dev-trust login: any email is admin)
 	./bin/dev hub up
 
+.PHONY: desktop-sidecar
+desktop-sidecar: ## Build the `zim` binary the desktop app launches, into crates/zim-desktop/binaries/ (PROFILE=release for a bundle)
+	cargo build -p zim-cli --features hub $(if $(filter release,$(PROFILE)),--release)
+	cp "$${CARGO_TARGET_DIR:-target}/$(or $(PROFILE),debug)/zim" "crates/zim-desktop/binaries/zim-$$(rustc -vV | sed -n 's/host: //p')"
+
+.PHONY: desktop
+desktop: desktop-sidecar ## Run the desktop app (Tauri dev window over the local daemon; ZIM_HOME selects the identity)
+	cd crates/zim-desktop && cargo tauri dev
+
 .PHONY: check
 check: ## Run the quality gate: fmt-check, clippy, cargo check (what CI runs)
 	cargo fmt --all -- --check

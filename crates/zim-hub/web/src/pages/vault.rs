@@ -13,8 +13,8 @@ use yew::prelude::*;
 use yew_router::prelude::*;
 use zim_hub_web::save_queue::SaveQueue;
 
-use crate::api::{fetch_devices, fetch_me, fetch_vaults, Device, VaultItem};
-use crate::backend::{BackendState, ReadError, VaultBackend, VaultMeta};
+use crate::api::{fetch_devices, fetch_me, Device, VaultItem};
+use crate::backend::{self, is_desktop, BackendState, ReadError, VaultBackend, VaultMeta};
 use crate::components::dialog::{ConfirmDialog, PromptDialog};
 use crate::layouts::{HeaderMenu, SignOutItem};
 use crate::pages::vault_autosave::{
@@ -284,13 +284,17 @@ pub fn vault_tree(props: &Props) -> Html {
                     Ok(()) => rebuild.emit(()),
                     Err(e) => error.set(e),
                 }
-                if let Ok(d) = fetch_devices().await {
-                    devices.set(d);
+                // Devices and the account DID are hub concepts; the
+                // desktop device is its own identity.
+                if !is_desktop() {
+                    if let Ok(d) = fetch_devices().await {
+                        devices.set(d);
+                    }
+                    if let Ok(Some(me)) = fetch_me().await {
+                        web_did.set(me.did);
+                    }
                 }
-                if let Ok(Some(me)) = fetch_me().await {
-                    web_did.set(me.did);
-                }
-                if let Ok(v) = fetch_vaults().await {
+                if let Ok(v) = backend::list_vaults().await {
                     vaults.set(v);
                 }
             });
@@ -875,6 +879,8 @@ pub fn vault_tree(props: &Props) -> Html {
         })
     };
 
+    let desktop = is_desktop();
+
     let details_modal = if *show_details {
         let close = {
             let show_details = show_details.clone();
@@ -907,21 +913,29 @@ pub fn vault_tree(props: &Props) -> Html {
         <>
             <header class="app-header">
                 <HeaderMenu trigger={html! { "\u{2630}" }}>
-                    <Link<Route> to={Route::Settings} classes="app-menu__item">{ "Settings" }</Link<Route>>
-                    <SignOutItem />
+                    if !desktop {
+                        <Link<Route> to={Route::Settings} classes="app-menu__item">{ "Settings" }</Link<Route>>
+                        <SignOutItem />
+                    } else {
+                        <Link<Route> to={Route::Workspace} classes="app-menu__item">{ "Vaults" }</Link<Route>>
+                    }
                 </HeaderMenu>
                 <div class="app-header__slot app-header__slot--left">{ crumbs }</div>
                 <div class="app-header__slot app-header__slot--right">
                     <span id="save-status" class="app-header__status">{ (*status).clone() }</span>
                     { save_indicator(&save_state) }
-                    <button type="button"
-                        class={classes!("app-header__btn", show_history.then_some("app-header__btn--on"))}
-                        title="Version history" onclick={toggle_history}>
-                        { "History" }
-                    </button>
-                    <button type="button" class="app-header__btn" title="Vault details" onclick={toggle_details}>
-                        { "\u{24D8}" }
-                    </button>
+                    // Desktop: no history (the daemon's log endpoints aren't
+                    // wired yet) and no manifest details to show.
+                    if !desktop {
+                        <button type="button"
+                            class={classes!("app-header__btn", show_history.then_some("app-header__btn--on"))}
+                            title="Version history" onclick={toggle_history}>
+                            { "History" }
+                        </button>
+                        <button type="button" class="app-header__btn" title="Vault details" onclick={toggle_details}>
+                            { "\u{24D8}" }
+                        </button>
+                    }
                 </div>
             </header>
 

@@ -4,7 +4,9 @@
 //! `WasmFs` / crypto called directly as Rust). The hub owns sign-in (its
 //! server-rendered `/auth/*` pages), the session cookie, and the JSON API —
 //! it only serves this app to signed-in, approved users. The app owns key
-//! custody (the web-key gate) and the vault UI.
+//! custody (the web-key gate) and the vault UI. Inside the Tauri desktop
+//! shell the same UI runs against the local daemon instead (`backend::desktop`,
+//! `pages::desktop`).
 //!
 //! Structure: `api/` (typed backend client) · `backend/` (the vault
 //! page's storage seam over `WasmFs`) · `util/` (helpers) ·
@@ -28,6 +30,17 @@ use routes::{switch, Route};
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 use yew_router::prelude::*;
+
+/// Picks the shell: inside Tauri the app is the local device (no hub
+/// sign-in, no web-key gate); in a browser it's the hub flow below.
+#[function_component(Root)]
+fn root() -> Html {
+    if backend::is_desktop() {
+        html! { <pages::desktop::DesktopApp /> }
+    } else {
+        html! { <App /> }
+    }
+}
 
 #[function_component(App)]
 fn app() -> Html {
@@ -92,5 +105,5 @@ fn app() -> Html {
 
 fn main() {
     console_error_panic_hook::set_once();
-    yew::Renderer::<App>::new().render();
+    yew::Renderer::<Root>::new().render();
 }

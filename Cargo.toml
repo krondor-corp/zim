@@ -15,6 +15,8 @@ members = [
 exclude = [
     # wasm32-only Yew app, built by Trunk (not the host `cargo build --workspace`).
     "crates/zim-hub/web",
+    # Tauri desktop shell: pulls webkit/GTK deps; built with `cargo tauri`.
+    "crates/zim-desktop",
 ]
 
 [workspace.package]

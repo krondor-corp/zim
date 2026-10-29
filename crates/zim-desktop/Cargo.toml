@@ -1,0 +1,32 @@
+[package]
+name = "zim-desktop"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Tauri 2 desktop shell: the hub SPA over the local zim daemon's HTTP API."
+
+# Standalone (own workspace + Cargo.lock): Tauri pulls webkit/GTK deps that
+# `cargo build --workspace` shouldn't. Excluded from the root workspace.
+[workspace]
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+url = "2.5"
+
+# The daemon's typed client + the library halves of `zim init` /
+# `zim hub login`. The daemon itself is NOT linked in-process — it runs
+# as the bundled sidecar binary.
+zim-cli = { path = "../zim", features = ["hub"] }
+zim-core = { path = "../zim-core" }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dev-dependencies]
+tempfile = "3.8"

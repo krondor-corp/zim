@@ -4,6 +4,7 @@
 use yew::prelude::*;
 use yew_router::prelude::*;
 
+use crate::backend::is_desktop;
 use crate::routes::Route;
 
 /// "Sign out" as a header-menu item. Logout is POST-only (a GET link
@@ -110,8 +111,11 @@ pub fn pack_chrome(props: &PackChromeProps) -> Html {
             <header class="app-header">
                 <HeaderMenu trigger={html! { "\u{2630}" }}>
                     <Link<Route> to={Route::Workspace} classes="app-menu__item">{ "Open a vault" }</Link<Route>>
-                    <Link<Route> to={Route::Settings} classes="app-menu__item">{ "Settings" }</Link<Route>>
-                    <SignOutItem />
+                    // Settings (devices, hub account) and sign-out are hub-only.
+                    if !is_desktop() {
+                        <Link<Route> to={Route::Settings} classes="app-menu__item">{ "Settings" }</Link<Route>>
+                        <SignOutItem />
+                    }
                 </HeaderMenu>
                 <div class="app-header__slot app-header__slot--left">
                     <span class="app-header__crumb app-header__crumb--current">{ props.crumb.clone() }</span>

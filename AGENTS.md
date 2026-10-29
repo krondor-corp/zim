@@ -31,6 +31,7 @@ crates/
 ├── zim-peer/      # Peer machinery: sync coordinator, blob/log/contact stores, iroh transport, runtime
 ├── zim/           # Daemon binary `zim` + CLI + HTTP API + FUSE mounts (feature `fuse`)
 ├── zim-hub/       # Hub server: ciphertext mirror + did:web identity (+ wasm/ browser SDK, web/ Yew SPA)
+├── zim-desktop/   # Tauri 2 desktop shell: the hub SPA over the local daemon's HTTP API (excluded from the workspace)
 └── zim-e2e/       # E2E harness bin: hermetic daemons + fixtures + convergence verdicts (never published)
 
 docs/              # Contributor/agent documentation

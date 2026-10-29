@@ -1,0 +1,12 @@
+# Trunk config for the desktop shell (crates/zim-desktop): same SPA, plus
+# the hub's `static/` assets. In the browser the hub serves `/static/*`
+# itself; inside Tauri there is no hub, so they ship in the bundle.
+[build]
+target = "index.html"
+dist = "dist"
+public_url = "/"
+
+[[hooks]]
+stage = "post_build"
+command = "sh"
+command_arguments = ["-c", "mkdir -p \"$TRUNK_STAGING_DIR/static\" && cp -R ../static/. \"$TRUNK_STAGING_DIR/static/\""]

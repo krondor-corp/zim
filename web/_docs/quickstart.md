@@ -40,8 +40,10 @@ Inside a vault you can:
 
 - **Browse** the file tree — expand folders, click a file to view it.
 - **Upload** files and create folders.
-- **Write notes** — create a markdown file, edit it in the browser,
-  and save. Each save commits a new version to the vault's history.
+- **Write notes** — create a markdown file and edit it in the browser.
+  Changes save automatically a moment after you stop typing (or right
+  away with Cmd/Ctrl+S); each save commits a new version to the
+  vault's history.
 - **Inspect** the vault's details — its id, current version, and the
   devices it's shared with.
 - **Go back in time** — **History** lists every version, newest first.

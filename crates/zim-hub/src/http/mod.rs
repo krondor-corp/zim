@@ -22,11 +22,15 @@ use crate::state::AppState;
 /// `script-src` is `'self'` plus `'wasm-unsafe-eval'` (the Yew/WASM bundle
 /// instantiates its module) and `'unsafe-inline'` for the small inline
 /// theme-init script. No `'unsafe-eval'` — Datastar (which needed it) is gone.
+/// `frame-src`/`media-src` allow `blob:` so the vault page can preview
+/// decrypted PDFs (`<iframe>`), video and audio from object URLs.
 const CSP: &str = "default-src 'self'; \
                    script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'; \
                    style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; \
                    font-src 'self' https://fonts.gstatic.com; \
                    img-src 'self' data: blob:; \
+                   frame-src 'self' blob:; \
+                   media-src 'self' blob:; \
                    object-src 'none'; \
                    base-uri 'self'; \
                    frame-ancestors 'none'";

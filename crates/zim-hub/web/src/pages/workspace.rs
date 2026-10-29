@@ -9,6 +9,7 @@
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 use yew_router::prelude::*;
+use zim_core::vault::VaultId;
 use zim_wasm::WasmFs;
 
 use crate::api::fetch_vaults;
@@ -20,17 +21,17 @@ const LAST_VAULT_KEY: &str = "zim.last_vault";
 
 /// Remember the vault the user is working in (read back by the
 /// workspace resolver on next sign-in).
-pub fn remember_vault(id: &str) {
+pub fn remember_vault(id: &VaultId) {
     if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
-        let _ = storage.set_item(LAST_VAULT_KEY, id);
+        let _ = storage.set_item(LAST_VAULT_KEY, &id.to_string());
     }
 }
 
-fn last_vault() -> Option<String> {
+fn last_vault() -> Option<VaultId> {
     web_sys::window()
         .and_then(|w| w.local_storage().ok().flatten())
         .and_then(|s| s.get_item(LAST_VAULT_KEY).ok().flatten())
-        .filter(|v| !v.is_empty())
+        .and_then(|v| v.parse().ok())
 }
 
 /// Create a vault with `name` and navigate into it. Shared by the
@@ -39,7 +40,7 @@ pub fn create_vault(name: String, user_id: String, navigator: Navigator, error: 
     spawn_local(async move {
         match WasmFs::init(name, origin(), user_id).await {
             Ok(fs) => {
-                let id = fs.vault_id();
+                let id = fs.id();
                 remember_vault(&id);
                 navigator.push(&Route::Vault { id });
             }
@@ -71,10 +72,18 @@ pub fn workspace(props: &Props) -> Html {
                     Ok(list) if list.is_empty() => empty.set(Some(true)),
                     Ok(list) => {
                         // Last-opened when it still exists, else first.
+                        let ids: Vec<VaultId> = list
+                            .iter()
+                            .filter_map(|v| v.vault_id.parse().ok())
+                            .collect();
                         let target = last_vault()
-                            .filter(|id| list.iter().any(|v| &v.vault_id == id))
-                            .unwrap_or_else(|| list[0].vault_id.clone());
-                        navigator.replace(&Route::Vault { id: target });
+                            .filter(|id| ids.contains(id))
+                            .or_else(|| ids.first().copied());
+                        if let Some(id) = target {
+                            navigator.replace(&Route::Vault { id });
+                        } else {
+                            empty.set(Some(true));
+                        }
                     }
                     Err(e) => {
                         error.set(e);

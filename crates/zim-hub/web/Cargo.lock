@@ -3361,14 +3361,15 @@ dependencies = [
  "hex",
  "js-sys",
  "pulldown-cmark",
- "serde",
- "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
  "yew",
  "yew-router",
  "zim-api",
+ "zim-core",
+ "zim-crypto",
+ "zim-did",
  "zim-hub-wasm",
 ]
 

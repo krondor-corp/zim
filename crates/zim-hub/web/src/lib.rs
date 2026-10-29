@@ -2,4 +2,5 @@
 //! binary so `cargo test --lib` runs them natively.
 
 pub mod markdown;
+pub mod nav;
 pub mod save_queue;

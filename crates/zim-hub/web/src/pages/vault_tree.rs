@@ -10,6 +10,7 @@ use web_sys::DragEvent;
 use yew::prelude::*;
 
 use crate::api::FsEntry;
+use crate::components::icon::{icon, Icon};
 
 /// One rendered row. The tree is a FLAT vec — depth is presentation.
 #[derive(Clone, PartialEq)]
@@ -160,7 +161,7 @@ pub fn tree_pane(props: &TreePaneProps) -> Html {
                     { "+ New note" }
                 </button>
                 <button type="button" class="tree-pane__new" onclick={upload}>
-                    { "\u{2191} Upload" }
+                    { icon(Icon::Upload, None) }{ " Upload" }
                 </button>
             </div>
         </aside>
@@ -259,7 +260,7 @@ fn row(n: &TreeNode, props: &TreePaneProps) -> Html {
                 {ondragstart} {ondragend} {ondragover} {ondrop}>
                 <button type="button" class="tree-item__chev" tabindex="-1"
                     aria-label={if n.expanded { "Collapse folder" } else { "Expand folder" }}>
-                    <span class="chev-glyph">{ "\u{25BE}" }</span>
+                    <span class="chev-glyph">{ icon(Icon::Chevron, None) }</span>
                 </button>
                 <span class="tree-item__name">{ n.name.clone() }</span>
             </div>

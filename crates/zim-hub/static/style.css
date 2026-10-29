@@ -1750,3 +1750,119 @@ button.app-menu__item {
     outline: none !important;
     box-shadow: none !important;
 }
+
+/* === Icons + base rules shared by every width ========================= */
+
+.icon { display: block; flex-shrink: 0; }
+html { background-color: hsl(var(--background)); }
+.workspace-empty { min-height: 60vh; flex-direction: column; gap: 1rem; }
+.workspace-empty__cta { padding: 0.5rem 1.2rem; }
+/* Hidden until the narrow-screen block below shows it. */
+.app-header__back { display: none; }
+.app-header__btn .icon { font-size: 1.1em; }
+.vault-switch__trigger .icon { display: inline-block; vertical-align: middle; margin-left: 0.2em; }
+
+/* === Narrow screens (phones) — keep in step with docs/dx/local.md =====
+ * Everything at <=700px lives here so the desktop rules above stay
+ * untouched. The vault page is list -> detail: the tree fills the screen
+ * until a file opens (`.editor-layout--detail`), then the editor does. */
+@media (max-width: 700px) {
+  html { font-size: 16px; }
+
+  /* Safe areas (notch, home indicator). */
+  .app-header {
+    height: calc(var(--header-h) + env(safe-area-inset-top));
+    padding: env(safe-area-inset-top) calc(0.5rem + env(safe-area-inset-right)) 0
+             calc(0.5rem + env(safe-area-inset-left));
+    gap: 0.25rem;
+  }
+  .editor-layout {
+    top: calc(var(--header-h) + env(safe-area-inset-top));
+    width: 100%;
+    height: calc(100vh - var(--header-h) - env(safe-area-inset-top));
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+  .pack-main {
+    padding: calc(var(--header-h) + env(safe-area-inset-top) + 1rem)
+             calc(1rem + env(safe-area-inset-right)) calc(2rem + env(safe-area-inset-bottom))
+             calc(1rem + env(safe-area-inset-left));
+  }
+  .tree-pane__list, .editor-body { padding-bottom: env(safe-area-inset-bottom); }
+  .tree-pane__dock { padding-bottom: calc(0.5rem + env(safe-area-inset-bottom)); }
+
+  /* Header: compact, crumbs ellipsize, save status stays visible. */
+  .app-header__slot--left { flex: 1 1 0; }
+  .app-header__crumb { max-width: 9rem; }
+  .app-header__slot--right { flex-shrink: 0; gap: 0.15rem; }
+  .app-header__btn { padding: 0.3rem 0.5rem; min-height: 36px; }
+  .app-header__status { max-width: 6rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .app-menu__trigger, .app-header__back {
+    min-width: 40px; min-height: 40px; align-items: center; justify-content: center;
+  }
+  .app-header--detail .app-header__back {
+    display: inline-flex;
+    background: none; border: none; cursor: pointer;
+    color: hsl(var(--muted-foreground));
+  }
+  .app-header--detail .app-header__back .icon { font-size: 1.25em; }
+
+  /* Vault: list -> detail, full width. */
+  .tree-pane, .history-layout .tree-pane {
+    position: static;
+    width: 100%;
+    border-right: none;
+    box-shadow: none;
+  }
+  .editor-layout--detail > .tree-pane { display: none; }
+  .editor-layout:not(.editor-layout--detail) > .editor-main { display: none; }
+  .tree-item { min-height: 44px; }
+  .tree-pane__new { min-height: 44px; }
+  .editor-container { padding: 1rem 1rem 6rem; }
+  .editor-body .error { margin-left: 1rem !important; margin-right: 1rem !important; }
+  .doc-empty { padding: 1rem; text-align: center; }
+
+  /* History: versions, then folder, then the viewer — stacked. */
+  .history-layout { flex-direction: column; overflow-y: auto; }
+  .history-layout .tree-pane { flex-shrink: 0; max-height: 30vh; border-bottom: 1px solid hsl(var(--border)); }
+  .history-layout .editor-main { flex: 1 0 auto; min-height: 50vh; }
+  .history-banner { flex-wrap: wrap; margin: 0.5rem 0.75rem 0; }
+
+  /* Onboarding / gate: top-aligned, full-width, thumb-sized. */
+  .onb__bar {
+    padding: calc(0.75rem + env(safe-area-inset-top)) calc(1rem + env(safe-area-inset-right))
+             0.75rem calc(1rem + env(safe-area-inset-left));
+  }
+  .onb__who { gap: 0.6rem; min-width: 0; }
+  .onb__who .dim { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 9rem; }
+  .onb__main {
+    align-items: flex-start;
+    padding: 1.5rem calc(1rem + env(safe-area-inset-right))
+             calc(2rem + env(safe-area-inset-bottom)) calc(1rem + env(safe-area-inset-left));
+  }
+  .onb__inner { max-width: none; }
+  .gate .btn, .gate button, .gate input, .onb .field input,
+  .btn, .dialog__btn, .dialog__input {
+    min-height: 44px;
+  }
+  .gate .btn, .gate button:not(.onb__signout) { width: 100%; }
+  .onb__signout { min-height: 44px; padding: 0 0.25rem; }
+  .field-copy__btn { min-width: 44px; }
+
+  /* Workspace empty state: top-aligned, not floating in 60vh. */
+  .workspace-empty { min-height: 0; height: auto; justify-content: flex-start; padding: 2rem 0.5rem; }
+  .workspace-empty__cta { width: 100%; padding: 0.75rem 1rem; }
+
+  /* Menus + dialogs fit the screen. */
+  .ctx-menu { max-width: calc(100vw - 1rem); }
+  .ctx-menu__item { min-height: 44px; }
+  .app-menu__list { max-width: calc(100vw - 1rem); }
+  .app-menu__item { min-height: 44px; display: flex; align-items: center; }
+  .dialog, .dialog--wide {
+    width: calc(100vw - 2rem);
+    max-height: calc(100vh - 2rem - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    overflow-y: auto;
+  }
+  .dialog__form { padding: 1.1rem; }
+  .dialog__actions { flex-wrap: wrap; }
+}

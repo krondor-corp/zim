@@ -1,7 +1,7 @@
 //! Autosave bookkeeping, free of timers and I/O so it tests natively.
 //!
 //! The editor reports every change with [`SaveQueue::edit`]; the page
-//! asks for a write with [`SaveQueue::flush`] (after the debounce, or
+//! asks for a write with [`SaveQueue::flush`] (when the autosave timer fires, or
 //! right away on a file switch / tab hide / Cmd+S) and drives writes with
 //! [`SaveQueue::start`] + [`SaveQueue::finish`]. At most one write is in
 //! flight; edits made meanwhile coalesce into the next one, and nothing
@@ -100,7 +100,7 @@ mod tests {
     fn alice_keeps_typing_while_save_in_flight_and_nothing_is_lost() {
         let mut q = SaveQueue::default();
 
-        // Alice types, pauses; the debounce flushes.
+        // Alice types; the autosave timer fires and flushes.
         q.edit(NOTE, "hello".into());
         q.flush();
         let write = q.start().expect("a write starts");
@@ -127,7 +127,7 @@ mod tests {
     }
 
     #[test]
-    fn nothing_is_written_until_the_debounce_flushes() {
+    fn nothing_is_written_until_the_timer_flushes() {
         let mut q = SaveQueue::default();
 
         q.edit(NOTE, "h".into());

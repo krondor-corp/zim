@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5](https://github.com/krondor-corp/zim/compare/zim-v0.1.4...zim-v0.1.5) - 2026-10-29
+
+### Added
+
+- *(daemon)* version history endpoints — vault log and read-at-height ([#61](https://github.com/krondor-corp/zim/pull/61))
+- *(daemon)* exclusive $ZIM_HOME/daemon.lock with discoverable port ([#56](https://github.com/krondor-corp/zim/pull/56))
+
+### Other
+
+- *(api)* type the hub wire (Device, VaultItem) with domain types ([#65](https://github.com/krondor-corp/zim/pull/65))
+- *(hub)* extract device-code login into a non-printing library flow ([#57](https://github.com/krondor-corp/zim/pull/57))
+
 ## [0.1.4](https://github.com/krondor-corp/zim/compare/zim-v0.1.3...zim-v0.1.4) - 2026-10-28
 
 ### Added

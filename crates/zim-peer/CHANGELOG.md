@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4](https://github.com/krondor-corp/zim/compare/zim-peer-v0.1.3...zim-peer-v0.1.4) - 2026-10-29
+
+### Added
+
+- *(daemon)* version history endpoints — vault log and read-at-height ([#61](https://github.com/krondor-corp/zim/pull/61))
+
 ## [0.1.3](https://github.com/krondor-corp/zim/compare/zim-peer-v0.1.2...zim-peer-v0.1.3) - 2026-10-28
 
 ### Fixed

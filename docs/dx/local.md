@@ -155,6 +155,37 @@ ZIM_HUB_HOME=data/zim-hub ZIM_DEV_SEED_EMAIL=dev@example.com \
 
 Runs `docker.io/rustfs/rustfs` (MinIO pulled its public images; RustFS speaks the same S3 API on the same ports). Credentials `minioadmin:minioadmin`. One container serves every worktree; each worktree's hub gets its own bucket (`zim-blobs` on `main`, `zim-blobs-<slug>` elsewhere). Works with podman or docker: prefers whichever is running, podman first; force with `ZIM_CONTAINER_RUNTIME`. Bucket setup is a SigV4 `curl` from the host, so nothing is exec'd inside the container.
 
+## iOS app (`crates/zim-ios`)
+
+A Tauri 2 shell that loads the hub in a webview — a hosted device like the
+browser tab, same Google sign-in and passphrase-unlocked browser key. It is
+its own Cargo workspace (excluded from the root `cargo build`) and needs Xcode
+plus `rustup target add aarch64-apple-ios-sim` and `cargo install tauri-cli`.
+
+```bash
+make hub                                  # a dev hub (dev-trust login)
+./bin/dev ports                           # note this worktree's hub port
+cd crates/zim-ios
+export CARGO_TARGET_DIR=…                 # iOS builds are large; share one dir
+cargo tauri ios dev "iPhone 17 Pro" --no-dev-server-wait \
+  --config '{"plugins":{"zim-hub":{"url":"http://127.0.0.1:<hub port>"}}}'
+```
+
+The hub URL comes from `plugins.zim-hub.url`; default is the production hub
+in release builds and `http://127.0.0.1:17190` in debug. The simulator shares
+the host's loopback, so a local hub works; debug sign-in goes through the
+dev-trust form in the system sheet, exercising the same handoff as Google.
+Tap "Sign in" in the app, finish in the sheet, and the webview lands on the
+passphrase unlock screen.
+
+Checks for the crate (not in CI): from `crates/zim-ios`, `cargo clippy -- -D
+warnings`, `cargo fmt -- --check`, `cargo test`.
+
+Physical device: set `bundle.iOS.developmentTeam` in `tauri.conf.json` (or
+`APPLE_DEVELOPMENT_TEAM`) to your Apple team id, keep bundle id
+`org.krondor.zim` (or change `identifier`), and let Xcode provision it. No
+signing is configured in the repo.
+
 ## FUSE mounting
 
 FUSE is always on under `make dev`; with `./bin/dev` directly it's opt-in. `./bin/dev run --fuse` (or `export ZIM_DEV_FUSE=1`) builds the daemon with the `fuse` feature so `zim mount` works; without it the daemons build plain and `zim mount` 404s. The flag errors loudly if no native lib is found (install macFUSE on macOS, `libfuse3-dev` on Linux).

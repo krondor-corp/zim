@@ -15,6 +15,11 @@ export async function mount(el, markdown, onChange) {
     defaultValue: markdown,
     // No side `+` / drag handle (BlockEdit also owns the `/` menu).
     features: { [Crepe.Feature.BlockEdit]: false },
+    // Crepe's default shows "Please enter..." on every empty line under
+    // the caret; only hint on an empty note.
+    featureConfigs: {
+      [Crepe.Feature.Placeholder]: { text: "Start writing…", mode: "doc" },
+    },
   });
   crepe.on((l) => l.markdownUpdated((_ctx, md) => onChange(md)));
   await crepe.create();

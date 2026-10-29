@@ -23,6 +23,7 @@
 //! ├── log.sqlite       # vault log + contacts book (SqliteVaultLog, SqlitePeerStore)
 //! ├── blob-index.sqlite # SQLite index for the object-store blobs
 //! ├── blobs/           # object-store blob bodies (BlobsProvider::local)
+//! ├── daemon.lock      # held by the running daemon; JSON {pid, api_port, started_at}
 //! └── state/
 //!     └── daemon.log   # daemon process log (future)
 //! ```
@@ -106,6 +107,12 @@ pub fn blobs_dir(home: &Path) -> PathBuf {
 /// SQLite index for the object-store blobs in [`blobs_dir`].
 pub fn blob_index_file(home: &Path) -> PathBuf {
     home.join("blob-index.sqlite")
+}
+
+/// Exclusive lock held by the running daemon for its whole lifetime;
+/// also records its pid + bound API port. See `context::daemon_lock`.
+pub fn daemon_lock_file(home: &Path) -> PathBuf {
+    home.join("daemon.lock")
 }
 
 pub fn state_dir(home: &Path) -> PathBuf {

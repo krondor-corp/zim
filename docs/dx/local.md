@@ -172,6 +172,7 @@ data/alice/
 ├── log.sqlite       # SqliteVaultLog — every known vault head
 ├── peers.toml       # address book (TomlPeerStore)
 ├── blobs/           # content store
+├── daemon.lock      # held while the daemon runs; {pid, api_port, started_at}
 └── state/daemon.log
 ```
 

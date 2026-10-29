@@ -31,13 +31,15 @@ pub const MAX_UPLOAD_SIZE_BYTES: usize = 500 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum HttpServerError {
-    #[error("listener bind: {0}")]
-    Bind(#[from] std::io::Error),
+    #[error("http server: {0}")]
+    Io(#[from] std::io::Error),
 }
 
-/// Run the API HTTP server. Returns when `shutdown_rx` fires or the
-/// listener errors.
+/// Run the API HTTP server on an already-bound `listener` (the caller
+/// binds so it can record the actual port). Returns when `shutdown_rx`
+/// fires or the listener errors.
 pub async fn run_api(
+    listener: tokio::net::TcpListener,
     config: Config,
     state: ServiceState,
     mut shutdown_rx: watch::Receiver<()>,
@@ -62,7 +64,6 @@ pub async fn run_api(
         .layer(trace_layer);
 
     tracing::info!(addr = %config.listen_addr, "API server listening");
-    let listener = tokio::net::TcpListener::bind(config.listen_addr).await?;
 
     axum::serve(listener, router)
         .with_graceful_shutdown(async move {

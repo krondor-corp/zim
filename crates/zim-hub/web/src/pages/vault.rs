@@ -17,7 +17,7 @@ use crate::api::{fetch_devices, fetch_me, fetch_vaults, Device, VaultItem};
 use crate::backend::{BackendState, ReadError, VaultBackend, VaultMeta};
 use crate::components::dialog::{ConfirmDialog, PromptDialog};
 use crate::components::icon::{icon, Icon};
-use crate::layouts::{HeaderMenu, SignOutItem};
+use crate::layouts::{menu_icon, HeaderMenu, SignOutItem};
 use crate::pages::vault_autosave::{
     drain, settled, use_lifecycle_flush, Queue, SaveEvent, SaveState, AUTOSAVE_MS,
 };

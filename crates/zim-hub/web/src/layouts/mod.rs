@@ -56,7 +56,7 @@ pub fn onboarding_shell(props: &OnboardingShellProps) -> Html {
 /// backs on the bubbled click).
 #[derive(Properties, PartialEq)]
 pub struct HeaderMenuProps {
-    /// The trigger's content (hamburger glyph, crumb text, …).
+    /// The trigger's content (the menu icon, crumb text, …).
     pub trigger: Html,
     /// Extra classes on the wrapper (e.g. `vault-switch`).
     #[prop_or_default]
@@ -90,6 +90,17 @@ pub fn header_menu(props: &HeaderMenuProps) -> Html {
                 </nav>
             }
         </div>
+    }
+}
+
+/// The header menu's hamburger icon. Inline SVG, not the U+2630 glyph:
+/// iOS system fonts lack that codepoint and render a missing-glyph box.
+pub fn menu_icon() -> Html {
+    html! {
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+            stroke-width="1.5" stroke-linecap="round" role="img" aria-label="Menu">
+            <path d="M2.5 4h11M2.5 8h11M2.5 12h11" />
+        </svg>
     }
 }
 

@@ -36,8 +36,10 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
-use serde::{Deserialize, Serialize};
 use zim_crypto::PublicKey;
+// Shared wire types — mirrored by `zim_api::hub::{DeviceCodeStartRequest,
+// DeviceCodePollRequest}`. Field semantics are documented there.
+use zim_api::hub::{DeviceCodePollBody, DeviceCodePollOk, DeviceCodeStart, DeviceCodeStartBody};
 
 use crate::database::models::{DeviceCodeGrant, PeerKind, UserPeer};
 use crate::http::auth::device::DEVICE_PATH;
@@ -50,33 +52,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         .with_state(state)
 }
 
-#[derive(Debug, Deserialize)]
-pub struct StartBody {
-    /// 64-char lowercase hex of the daemon's ed25519 public key. The
-    /// daemon commits to it here so the approve page can render it
-    /// for the user and the poll signature has a fixed target.
-    pub pubkey: String,
-    /// Free-form display label for the device. Shown on the approve
-    /// page next to the pubkey. Hostname is a good default.
-    #[serde(default)]
-    pub label: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct StartResponse {
-    /// 9-char human-typable code (`ABCD-EFGH`). The daemon prints
-    /// it for the user to verify on the approve page.
-    pub code: String,
-    /// Full URL the daemon prints / opens for the user.
-    pub verification_url: String,
-    pub expires_at: String,
-    /// Suggested poll interval. The hub doesn't currently rate
-    /// limit, but daemons should still back off if servers grow
-    /// strict later.
-    pub poll_interval_secs: u64,
-}
-
-async fn device_code_start(State(state): State<AppState>, Json(body): Json<StartBody>) -> Response {
+async fn device_code_start(
+    State(state): State<AppState>,
+    Json(body): Json<DeviceCodeStartBody>,
+) -> Response {
     // Validate the pubkey here so a malformed daemon gets a clear
     // 400 instead of a silent mismatch at poll time.
     if PublicKey::from_hex(body.pubkey.trim()).is_err() {
@@ -87,7 +66,7 @@ async fn device_code_start(State(state): State<AppState>, Json(body): Json<Start
         Ok(grant) => {
             let base = state.auth.host_name.trim_end_matches('/');
             let url = format!("{base}{DEVICE_PATH}?code={}", grant.code());
-            Json(StartResponse {
+            Json(DeviceCodeStart {
                 code: grant.code().to_string(),
                 verification_url: url,
                 expires_at: grant.expires_at().to_string(),
@@ -102,27 +81,10 @@ async fn device_code_start(State(state): State<AppState>, Json(body): Json<Start
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct PollBody {
-    pub code: String,
-    /// 128-char lowercase hex of the ed25519 signature over
-    /// `code_bytes || pubkey_bytes`. Optional: when omitted, this
-    /// is treated as a "status check" poll and the response is
-    /// 202 pending / 410 gone, without ever enrolling.
-    #[serde(default)]
-    pub signature: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PollOk {
-    pub ok: bool,
-    /// Echoes the pubkey that was just enrolled. Lets the daemon
-    /// double-check the hub agrees on identity before persisting
-    /// session state.
-    pub pubkey: String,
-}
-
-async fn device_code_poll(State(state): State<AppState>, Json(body): Json<PollBody>) -> Response {
+async fn device_code_poll(
+    State(state): State<AppState>,
+    Json(body): Json<DeviceCodePollBody>,
+) -> Response {
     let code = body.code.trim();
     let grant = match DeviceCodeGrant::find(code, &state.db).await {
         Ok(Some(g)) => g,
@@ -176,7 +138,7 @@ async fn device_code_poll(State(state): State<AppState>, Json(body): Json<PollBo
     match UserPeer::user_owns_pubkey(user_id, &pubkey, &state.db).await {
         Ok(true) => {
             let _ = DeviceCodeGrant::consume(code, &state.db).await;
-            return Json(PollOk {
+            return Json(DeviceCodePollOk {
                 ok: true,
                 pubkey: grant.pubkey_hex().to_string(),
             })
@@ -211,7 +173,7 @@ async fn device_code_poll(State(state): State<AppState>, Json(body): Json<PollBo
         pubkey = grant.pubkey_hex(),
         "device enrolled via device-code"
     );
-    Json(PollOk {
+    Json(DeviceCodePollOk {
         ok: true,
         pubkey: grant.pubkey_hex().to_string(),
     })

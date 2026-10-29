@@ -90,8 +90,14 @@ Data lives in `$ZIM_HOME` (release default `~/.config/zim`):
 ├── log.sqlite
 ├── blob-index.sqlite
 ├── blobs/
+├── daemon.lock
 └── state/
 ```
+
+`daemon.lock` is held (OS advisory lock) by the running daemon and records
+its pid and bound API port; the CLI reads it to find a daemon started with
+`--port`. A leftover file after a crash is harmless — the lock, not the file,
+means "running".
 
 Override the location:
 
@@ -150,5 +156,10 @@ The daemon isn't running on the endpoint you're pointing at. Start it with
 
 **Two daemons on the same port**
 
-Use `./bin/dev`; it assigns isolated homes and per-worktree ports from
+A second `zim daemon run` on the same `$ZIM_HOME` is refused with
+`a daemon is already running for <home> (pid N, port P)` — stop that one
+first.
+
+Two daemons with *different* homes still need different ports. Use
+`./bin/dev`; it assigns isolated homes and per-worktree ports from
 `confit.toml` (`./bin/dev ports`).

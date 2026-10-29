@@ -131,7 +131,7 @@ The server-rendered `/auth/*` pages (sign-in chooser, dev login, pending, device
 
 **Hub coupling is opt-in.** All hub commands live under `zim hub` (`zim hub login`, `zim hub peers sync`, `zim hub peers ls`). A daemon that only syncs with your own devices over p2p never needs any of them — the base `zim peers add|list|rm|ping` manage the address book directly with no hub involved. The hub is, at this point, mostly device management: it tracks your account's device roster (a `did:web` document at `/u/<user>/did.json`, one verification method per enrolled key), and `zim hub peers sync` folds that roster into the local `peers.toml` so all your devices know each other without manual cross-adds.
 
-**Device-code approval.** `zim hub login` prints the hub's `verification_url`, `/auth/device?code=…`: a server-rendered page (`http/auth/device.rs`), not part of the wasm app, so approving a daemon never asks for a web key or passphrase. Signed-out visitors go through `/auth/login?next=…` and come back. Approve POSTs `/auth/device/approve` (a same-origin form; the `SameSite=Lax` session cookie keeps other sites from submitting it), and the daemon's next signed poll enrolls it. `/device?code=…`, the URL older hubs minted, redirects to `/auth/device`. To try it by hand against the dev hub: `./bin/dev cli alice hub login --hub <hub url>` and open the printed link.
+**Device-code approval.** `zim hub login` prints the hub's `verification_url`, `/auth/device?code=…`: a server-rendered page (`http/auth/device.rs`), not part of the wasm app, so approving a daemon never asks for a web key or passphrase. Signed-out visitors go through `/auth/login?next=…` and come back. Approve POSTs `/auth/device/approve` (a same-origin form; the `SameSite=Lax` session cookie keeps other sites from submitting it), and the daemon's next signed poll enrolls it. The daemon side is a library flow (`zim::hub::login`: `start` → `PendingLogin::complete`, wire types in `zim_api::hub::auth::device_code`, shared with the hub handler) that never prints, so a desktop app sharing `$ZIM_HOME` can drive the same login with its own UI; the CLI op only renders the pairing instructions between the two calls. `/device?code=…`, the URL older hubs minted, redirects to `/auth/device`. To try it by hand against the dev hub: `./bin/dev cli alice hub login --hub <hub url>` and open the printed link.
 
 **Enrollment without the device-code dance.** A daemon normally pairs via `zim hub login` (browser device-code approval). For dev, `hub enroll` skips that: it calls the `zim-hub-devseed` binary to write the rows a successful login would have produced directly into the hub DB (`$ZIM_HUB_HOME/state/hub.db`):
 
@@ -176,6 +176,7 @@ data/alice/
 ├── log.sqlite       # SqliteVaultLog — every known vault head
 ├── peers.toml       # address book (TomlPeerStore)
 ├── blobs/           # content store
+├── daemon.lock      # held while the daemon runs; {pid, api_port, started_at}
 └── state/daemon.log
 ```
 

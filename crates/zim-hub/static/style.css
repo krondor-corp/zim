@@ -69,7 +69,14 @@
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
 /* === Base === */
-html { font-size: 15px; -webkit-text-size-adjust: 100%; }
+/* `manipulation` drops double-tap-to-zoom (pinch zoom still works). */
+html { font-size: 15px; -webkit-text-size-adjust: 100%; touch-action: manipulation; }
+
+/* iOS zooms the page when a focused field's text is under 16px. Touch
+   screens get 16px fields so typing never jumps the viewport. */
+@media (pointer: coarse) {
+  input, textarea, select, [contenteditable="true"] { font-size: 16px; }
+}
 body {
   font-family: var(--font-sans);
   line-height: 1.6;

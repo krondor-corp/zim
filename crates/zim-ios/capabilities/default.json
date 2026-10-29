@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "default",
+  "description": "The hub is remote content and is granted nothing: sign-in is driven natively from navigation events, so no command is exposed to the page.",
+  "windows": [],
+  "permissions": []
+}

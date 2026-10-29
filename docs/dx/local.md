@@ -189,6 +189,14 @@ sqlite3 data/alice/log.sqlite 'SELECT * FROM vault_log ORDER BY height DESC LIMI
 
 The hub's app state (users, devices, escrow) is separate, at `data/zim-hub/state/hub.db`.
 
+## Checking the SPA on a phone
+
+The hub SPA has one narrow-screen breakpoint: `@media (max-width: 700px)` at the end of `crates/zim-hub/static/style.css`. Everything above it is the desktop layout and must not change. Below it the vault page is list → detail: the tree fills the screen until a file opens, then the editor does, with a back arrow in the header (state in `VaultTree`, class `editor-layout--detail`; the pure rule is `nav::shows_detail`). Safe-area insets (`viewport-fit=cover` in `index.html`) keep the header and bottom docks clear of the notch and home indicator.
+
+To check it without a device, run `make hub`, open the hub URL in Chrome DevTools device mode (iPhone, 390×844, touch), and walk: gate → workspace → vault tree → open a `.md` note → type → back → History. Or drive headless Chrome with the same emulation (390×844, DPR 3, `isMobile`, iPhone user agent). Compare against a 1440px-wide screenshot to confirm desktop is unchanged.
+
+Icons are inline SVG (`components/icon.rs`, `layouts::menu_icon`), never text glyphs: iOS system fonts lack ☰ ⓘ ⧉ and render a missing-glyph box.
+
 ## Cleanup
 
 ```bash

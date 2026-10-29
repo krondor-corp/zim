@@ -1822,7 +1822,7 @@ html { background-color: hsl(var(--background)); }
     box-shadow: none;
   }
   .editor-layout--detail > .tree-pane { display: none; }
-  .editor-layout:not(.editor-layout--detail) > .editor-main { display: none; }
+  .editor-layout:not(.editor-layout--detail):not(.history-layout) > .editor-main { display: none; }
   .tree-item { min-height: 44px; }
   .tree-pane__new { min-height: 44px; }
   .editor-container { padding: 1rem 1rem 6rem; }

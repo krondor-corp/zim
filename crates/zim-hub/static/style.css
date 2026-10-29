@@ -1691,6 +1691,10 @@ button.app-menu__item {
    use the heading-selector surface. */
 .milkdown-top-bar { display: none !important; }
 
+/* BlockEdit stays on for its `/` menu, but its side `+` / drag handle
+   doesn't: Crepe 7.23's block provider ignores `shouldShow`, so hide it. */
+.milkdown-block-handle { display: none !important; }
+
 /* The `prosemirror-virtual-cursor` stylesheet is imported by a bare package
    specifier that doesn't resolve at runtime, so the virtual-cursor <div>
    renders as a plain block element with an inline `height` — pushing

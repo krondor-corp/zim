@@ -3,6 +3,7 @@
 
 use yew::prelude::*;
 use yew_router::prelude::*;
+use zim_core::vault::VaultId;
 
 use crate::api::Me;
 use crate::backend::is_desktop;
@@ -14,7 +15,7 @@ pub enum Route {
     #[at("/")]
     Workspace,
     #[at("/v/:id")]
-    Vault { id: String },
+    Vault { id: VaultId },
     #[at("/settings")]
     Settings,
     #[at("/admin")]

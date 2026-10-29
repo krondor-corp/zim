@@ -9,17 +9,20 @@
 
 mod boot;
 mod connect;
+mod error;
 mod login;
 mod sidecar;
 mod state;
 mod vault;
 
 use tauri::State;
+use zim_api::desktop::BootInfo;
 
+use crate::error::CmdResult;
 use crate::state::AppState;
 
 #[tauri::command]
-async fn boot(state: State<'_, AppState>) -> Result<boot::BootInfo, String> {
+async fn boot(state: State<'_, AppState>) -> CmdResult<BootInfo> {
     boot::boot(&state).await
 }
 
@@ -32,7 +35,6 @@ pub fn run() {
             login::default_hub,
             login::hub_login_start,
             login::hub_login_complete,
-            login::hub_linked,
             vault::vault_list,
             vault::vault_create,
             vault::vault_head,

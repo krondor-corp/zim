@@ -3,23 +3,30 @@
 //! daemon's HTTP API. No WASM crypto here — the daemon owns the keys and
 //! the blobs; the SPA only ever sees plaintext paths and bytes.
 //!
-//! Mode is detected at runtime ([`is_desktop`]): Tauri injects
-//! `window.__TAURI_INTERNALS__` before any page script runs. One Trunk
-//! build then serves both the hub (browser) and the desktop shell, with
-//! no cargo feature to keep in sync — the cost is that the desktop code
-//! is compiled into the browser bundle, a few hundred lines of glue.
+//! The contract is [`zim_api::desktop`]: arguments, results and errors
+//! are the same Rust types the shell compiles, serialized by serde — no
+//! hand-matched JSON on this side. Mode is detected at runtime
+//! ([`is_desktop`]): Tauri injects `window.__TAURI_INTERNALS__` before any
+//! page script runs, so one Trunk build serves both the hub (browser) and
+//! the shell, with no cargo feature to keep in sync.
 //!
 //! File bytes cross as `Uint8Array` / `ArrayBuffer` (Tauri's raw IPC
 //! payloads), never JSON number arrays.
 
 use js_sys::{Function, Reflect, Uint8Array};
 use serde::de::DeserializeOwned;
-use serde::Deserialize;
+use serde::Serialize;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
+use zim_api::desktop::{
+    cmd, AddHeaders, CommandError, CreateVault, Head, VaultMove, VaultPath, VaultRef, VaultSummary,
+};
+use zim_core::fs::{AbsPath, DirEntry};
+use zim_core::vault::VaultId;
 
 use super::{ReadError, VaultBackend};
-use crate::api::{FsEntry, VaultItem};
+
+type Result<T> = std::result::Result<T, CommandError>;
 
 /// Are we running inside the Tauri shell?
 pub fn is_desktop() -> bool {
@@ -33,173 +40,210 @@ fn internals() -> Option<JsValue> {
         .filter(|v| !v.is_undefined() && !v.is_null())
 }
 
-/// `invoke(cmd, args, options)` → the resolved JS value, or the
-/// command's error string.
-pub(crate) async fn invoke_raw(
-    cmd: &str,
-    args: JsValue,
-    options: JsValue,
-) -> Result<JsValue, String> {
-    let internals = internals().ok_or("not running inside the desktop app")?;
+/// `invoke(cmd, args, options)` → the resolved JS value. A rejection
+/// carries the shell's serialized [`CommandError`].
+async fn invoke_raw(cmd: &str, args: JsValue, options: JsValue) -> Result<JsValue> {
+    let ipc = |m: &str| CommandError::Ipc(m.to_string());
+    let internals = internals().ok_or_else(|| ipc("not running inside the desktop app"))?;
     let invoke: Function = Reflect::get(&internals, &"invoke".into())
-        .map_err(|_| "tauri invoke missing")?
+        .map_err(|_| ipc("tauri invoke missing"))?
         .dyn_into()
-        .map_err(|_| "tauri invoke is not a function")?;
+        .map_err(|_| ipc("tauri invoke is not a function"))?;
     let promise = invoke
         .call3(&internals, &cmd.into(), &args, &options)
-        .map_err(|e| e.as_string().unwrap_or_else(|| "invoke failed".into()))?;
+        .map_err(|_| ipc("invoke failed"))?;
     JsFuture::from(js_sys::Promise::from(promise))
         .await
-        .map_err(|e| {
-            e.as_string()
-                .or_else(|| js_sys::Error::from(e).message().as_string())
-                .unwrap_or_else(|| "command failed".into())
+        .map_err(|e| from_js(&e))
+}
+
+/// Decode a rejection: the shell's typed error, else its text.
+fn from_js(e: &JsValue) -> CommandError {
+    let json = js_sys::JSON::stringify(e).ok().and_then(|s| s.as_string());
+    json.and_then(|j| serde_json::from_str(&j).ok())
+        .unwrap_or_else(|| {
+            CommandError::Ipc(
+                e.as_string()
+                    .unwrap_or_else(|| "command failed".to_string()),
+            )
         })
 }
 
-fn js(value: serde_json::Value) -> JsValue {
-    js_sys::JSON::parse(&value.to_string()).unwrap_or(JsValue::UNDEFINED)
+/// A serde value as a JS value.
+fn to_js<T: Serialize>(value: &T) -> Result<JsValue> {
+    let json = serde_json::to_string(value).map_err(|e| CommandError::Ipc(e.to_string()))?;
+    js_sys::JSON::parse(&json).map_err(|_| CommandError::Ipc("unencodable arguments".into()))
 }
 
-/// Invoke a command with JSON args and decode its JSON reply.
-pub(crate) async fn invoke<T: DeserializeOwned>(
-    cmd: &str,
-    args: serde_json::Value,
-) -> Result<T, String> {
-    let out = invoke_raw(cmd, js(args), JsValue::UNDEFINED).await?;
-    let json = js_sys::JSON::stringify(&out)
+fn from_value<T: DeserializeOwned>(v: &JsValue) -> Result<T> {
+    let json = js_sys::JSON::stringify(v)
         .ok()
         .and_then(|s| s.as_string())
-        .ok_or("unreadable reply")?;
-    serde_json::from_str(&json).map_err(|e| e.to_string())
+        .ok_or_else(|| CommandError::Ipc("unreadable reply".into()))?;
+    serde_json::from_str(&json).map_err(|e| CommandError::Ipc(e.to_string()))
 }
 
-fn encode(s: &str) -> String {
-    String::from(js_sys::encode_uri_component(s))
+/// Invoke a command with one typed argument, decode its typed result.
+pub(crate) async fn call<A: Serialize, T: DeserializeOwned>(cmd: &str, args: &A) -> Result<T> {
+    let out = invoke_raw(cmd, to_js(&Args { args })?, JsValue::UNDEFINED).await?;
+    from_value(&out)
 }
 
-#[derive(Deserialize)]
-struct Head {
-    height: u64,
+/// Invoke a command that takes no argument.
+pub(crate) async fn call0<T: DeserializeOwned>(cmd: &str) -> Result<T> {
+    from_value(&invoke_raw(cmd, JsValue::UNDEFINED, JsValue::UNDEFINED).await?)
 }
 
-#[derive(Deserialize)]
-struct Entry {
-    name: String,
-    kind: String,
+fn abs(path: &str) -> Result<AbsPath> {
+    AbsPath::new(path).ok_or_else(|| CommandError::BadRequest(format!("invalid path: {path}")))
+}
+
+pub async fn list_vaults() -> std::result::Result<Vec<VaultSummary>, String> {
+    call0(cmd::VAULT_LIST).await.map_err(|e| e.to_string())
+}
+
+pub async fn create_vault(name: String) -> std::result::Result<VaultId, String> {
+    let v: VaultSummary = call(cmd::VAULT_CREATE, &CreateVault { name })
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(v.id)
 }
 
 /// The vault the desktop backend has open, and the head height it last saw.
 #[derive(Clone)]
 pub(super) struct Opened {
-    pub vault_id: String,
+    pub id: VaultId,
     pub height: u64,
 }
 
-pub async fn list_vaults() -> Result<Vec<VaultItem>, String> {
-    invoke("vault_list", serde_json::json!({})).await
-}
-
-pub async fn create_vault(name: String) -> Result<String, String> {
-    let v: VaultItem = invoke("vault_create", serde_json::json!({ "name": name })).await?;
-    Ok(v.vault_id)
-}
-
 impl VaultBackend {
-    fn opened(&self) -> Result<Opened, String> {
+    fn opened(&self) -> Result<Opened> {
         self.desktop
             .borrow()
             .clone()
-            .ok_or_else(|| "vault not open".to_string())
+            .ok_or_else(|| CommandError::BadRequest("vault not open".into()))
     }
 
-    pub(super) async fn desktop_open(&self, vault_id: String) -> Result<(), String> {
-        let head: Head = invoke("vault_head", serde_json::json!({ "vaultId": vault_id })).await?;
+    fn at(&self, path: &str) -> Result<VaultPath> {
+        Ok(VaultPath {
+            vault: self.opened()?.id,
+            path: abs(path)?,
+        })
+    }
+
+    pub(super) async fn desktop_open(&self, id: VaultId) -> std::result::Result<(), String> {
+        let head: Head = call(cmd::VAULT_HEAD, &VaultRef { vault: id })
+            .await
+            .map_err(|e| e.to_string())?;
         *self.desktop.borrow_mut() = Some(Opened {
-            vault_id,
+            id,
             height: head.height,
         });
         Ok(())
     }
 
-    pub(super) async fn desktop_ls(&self, path: String) -> Result<Vec<FsEntry>, String> {
-        let o = self.opened()?;
-        let items: Vec<Entry> = invoke(
-            "vault_ls",
-            serde_json::json!({ "vaultId": o.vault_id, "path": path }),
-        )
-        .await?;
-        Ok(items
-            .into_iter()
-            .map(|e| FsEntry {
-                name: e.name,
-                kind: e.kind,
-                hash: String::new(),
-                mime: None,
-            })
-            .collect())
+    pub(super) async fn desktop_ls(
+        &self,
+        path: &str,
+    ) -> std::result::Result<Vec<DirEntry>, String> {
+        let run = async {
+            let mut entries: Vec<DirEntry> = call(cmd::VAULT_LS, &self.at(path)?).await?;
+            // Directories first, then by name — as the hub backend lists.
+            entries.sort_by(|a, b| (a.kind, &a.name).cmp(&(b.kind, &b.name)));
+            Ok(entries)
+        };
+        run.await.map_err(|e: CommandError| e.to_string())
     }
 
-    pub(super) async fn desktop_cat(&self, path: String) -> Result<Vec<u8>, ReadError> {
-        let o = self.opened().map_err(ReadError::Failed)?;
-        let out = invoke_raw(
-            "vault_cat",
-            js(serde_json::json!({ "vaultId": o.vault_id, "path": path })),
-            JsValue::UNDEFINED,
-        )
-        .await
-        .map_err(ReadError::Failed)?;
-        // `tauri::ipc::Response` arrives as an ArrayBuffer.
-        Ok(Uint8Array::new(&out).to_vec())
+    pub(super) async fn desktop_cat(&self, path: &str) -> std::result::Result<Vec<u8>, ReadError> {
+        let run = async {
+            let out = invoke_raw(
+                cmd::VAULT_CAT,
+                to_js(&Args {
+                    args: &self.at(path)?,
+                })?,
+                JsValue::UNDEFINED,
+            )
+            .await?;
+            // `tauri::ipc::Response` arrives as an ArrayBuffer.
+            Ok(Uint8Array::new(&out).to_vec())
+        };
+        run.await
+            .map_err(|e: CommandError| ReadError::Failed(e.to_string()))
     }
 
     /// Follow the daemon: `true` when its head moved since we last looked
     /// (a peer synced a change in). Best-effort, like the hub's refresh.
     pub(super) async fn desktop_refresh(&self) -> bool {
         let Ok(o) = self.opened() else { return false };
-        let Ok(head) =
-            invoke::<Head>("vault_head", serde_json::json!({ "vaultId": o.vault_id })).await
-        else {
+        let Ok(head) = call::<_, Head>(cmd::VAULT_HEAD, &VaultRef { vault: o.id }).await else {
             return false;
         };
-        let moved = head.height != o.height;
         self.set_height(head.height);
-        moved
+        head.height != o.height
     }
 
-    pub(super) async fn desktop_write(&self, path: String, bytes: Vec<u8>) -> Result<(), String> {
-        let o = self.opened()?;
-        let headers = js_sys::Object::new();
-        let _ = Reflect::set(&headers, &"x-zim-vault".into(), &o.vault_id.as_str().into());
-        let _ = Reflect::set(&headers, &"x-zim-path".into(), &encode(&path).into());
-        let options = js_sys::Object::new();
-        let _ = Reflect::set(&options, &"headers".into(), &headers);
-        let body = Uint8Array::from(bytes.as_slice());
-        let height = invoke_raw("vault_add", body.into(), options.into()).await?;
-        self.note_height(height);
-        Ok(())
-    }
-
-    pub(super) async fn desktop_mutate(
+    pub(super) async fn desktop_write(
         &self,
-        cmd: &str,
-        args: serde_json::Value,
-    ) -> Result<(), String> {
-        let height = invoke_raw(cmd, js(args), JsValue::UNDEFINED).await?;
-        self.note_height(height);
-        Ok(())
+        path: &str,
+        bytes: Vec<u8>,
+    ) -> std::result::Result<(), String> {
+        let run = async {
+            let target = AddHeaders {
+                vault: self.opened()?.id,
+                path: abs(path)?,
+            };
+            let headers = js_sys::Object::new();
+            for (name, value) in target.to_pairs() {
+                let _ = Reflect::set(&headers, &name.into(), &value.into());
+            }
+            let options = js_sys::Object::new();
+            let _ = Reflect::set(&options, &"headers".into(), &headers);
+            let body = Uint8Array::from(bytes.as_slice());
+            let height = invoke_raw(cmd::VAULT_ADD, body.into(), options.into()).await?;
+            self.note_height(from_value(&height)?);
+            Ok(())
+        };
+        run.await.map_err(|e: CommandError| e.to_string())
     }
 
-    pub(super) fn vault_arg(&self) -> Result<String, String> {
-        Ok(self.opened()?.vault_id)
+    pub(super) async fn desktop_mkdir(&self, path: &str) -> std::result::Result<(), String> {
+        self.mutate(cmd::VAULT_MKDIR, self.at(path)).await
+    }
+
+    pub(super) async fn desktop_rm(&self, path: &str) -> std::result::Result<(), String> {
+        self.mutate(cmd::VAULT_RM, self.at(path)).await
+    }
+
+    pub(super) async fn desktop_mv(&self, from: &str, to: &str) -> std::result::Result<(), String> {
+        let args = self.opened().and_then(|o| {
+            Ok(VaultMove {
+                vault: o.id,
+                from: abs(from)?,
+                to: abs(to)?,
+            })
+        });
+        self.mutate(cmd::VAULT_MV, args).await
+    }
+
+    /// Run a structure-changing command; it answers the new head height.
+    async fn mutate<A: Serialize>(
+        &self,
+        command: &str,
+        args: Result<A>,
+    ) -> std::result::Result<(), String> {
+        let run = async {
+            let height: u64 = call(command, &args?).await?;
+            self.note_height(height);
+            Ok(())
+        };
+        run.await.map_err(|e: CommandError| e.to_string())
     }
 
     /// Our own write advanced the head — don't report it back to the
     /// follow loop as a remote change.
-    fn note_height(&self, height: JsValue) {
-        if let Some(h) = height.as_f64() {
-            self.set_height(h as u64);
-        }
+    fn note_height(&self, height: u64) {
+        self.set_height(height);
     }
 
     fn set_height(&self, height: u64) {
@@ -207,4 +251,9 @@ impl VaultBackend {
             o.height = height;
         }
     }
+}
+
+#[derive(Serialize)]
+struct Args<A> {
+    args: A,
 }

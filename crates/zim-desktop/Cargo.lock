@@ -9206,6 +9206,7 @@ dependencies = [
  "thiserror 1.0.69",
  "url",
  "web-time",
+ "zim-core",
  "zim-crypto",
  "zim-did",
 ]
@@ -9320,8 +9321,10 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "url",
+ "zim-api",
  "zim-cli",
  "zim-core",
+ "zim-crypto",
 ]
 
 [[package]]

@@ -4,7 +4,7 @@
 //! Every manifest pins its whole tree, so the historical head at a height
 //! fully reconstructs that version. Decryption uses this browser's share
 //! in *that* manifest: versions from before the key was granted don't
-//! carry one and fail to open (see `WasmFs::history`'s `readable`).
+//! carry one and fail to open (see [`Access::Sealed`]).
 //!
 //! Exposes reads only — there is no `save`, so a historical handle can
 //! never chain a new head off a stale version. Restoring is a `cat` here
@@ -15,16 +15,18 @@
 use std::cell::RefCell;
 
 use reqwest::Client;
-use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 use zim_core::blobs::BlobStore;
 use zim_core::fs::{AbsPath, FsError, Manifest};
-use zim_core::vault::{Vault, VaultLog};
+use zim_core::linked_data::Link;
+use zim_core::vault::{Vault, VaultId, VaultLog};
+use zim_crypto::PublicKey;
 
 use crate::api::{self, GetLog};
-use crate::fs::{parse_base, parse_vault_id, session_key, HubBlobStore, HubVaultLog};
+use crate::fs::{parse_base, session_key, HubBlobStore, HubVaultLog};
 use crate::read;
+use zim_core::fs::DirEntry;
 
 type HubVault = Vault<HubBlobStore, HubVaultLog>;
 
@@ -36,29 +38,46 @@ pub struct WasmVersion {
     live: RefCell<Option<HubVault>>,
 }
 
-#[wasm_bindgen]
+/// Whether this browser's key can read a version.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Access {
+    /// This browser's key holds a share in the version.
+    Readable,
+    /// It doesn't: a key granted later can't open versions from before
+    /// its grant. Permanent.
+    Sealed,
+    /// The manifest couldn't be fetched (network, hub hiccup). Says
+    /// nothing about access; opening the version again may work.
+    Unavailable,
+}
+
+/// One entry of the version chain.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VersionSummary {
+    pub height: u64,
+    pub manifest: Link,
+    /// The key that signed the version; `None` when its manifest couldn't
+    /// be fetched.
+    pub author: Option<PublicKey>,
+    pub access: Access,
+}
+
+// Rust-only surface: the SPA links this crate directly, so these hand it
+// typed values instead of JSON for JS.
 impl WasmVersion {
     /// One page of the version chain, newest first, starting at height
     /// `from` (default: the hub's current head) and walking back at most
-    /// `limit` versions. Returns JSON
-    /// `[{height, manifest_hash, author, access}]`.
-    ///
-    /// Each version's manifest is fetched for its plaintext header (no
-    /// decryption): `author` is the signing key, and `access` is
-    /// - `"readable"` — this browser's key holds a share in that version;
-    /// - `"sealed"` — it doesn't (a key granted later can't open versions
-    ///   from before its grant). Permanent;
-    /// - `"unavailable"` — the manifest couldn't be fetched (network, hub
-    ///   hiccup). Says nothing about access; opening it again may work.
+    /// `limit` versions. Each version's manifest is fetched for its
+    /// plaintext header (no decryption) to learn its author and whether
+    /// this browser can read it.
     pub async fn history(
-        vault_id_hex: String,
-        hub_base: String,
+        id: VaultId,
+        hub_base: &str,
         from: Option<u64>,
         limit: u32,
-    ) -> Result<String, JsError> {
+    ) -> Result<Vec<VersionSummary>, JsError> {
         let me = session_key()?.public();
-        let base = parse_base(&hub_base)?;
-        let id = parse_vault_id(&vault_id_hex)?;
+        let base = parse_base(hub_base)?;
         let from = match from {
             Some(h) => h,
             None => HubVaultLog::new(base.clone())
@@ -78,51 +97,38 @@ impl WasmVersion {
         .await
         .map_err(|e| JsError::new(&format!("history: {e}")))?;
 
-        #[derive(Serialize)]
-        struct Version {
-            height: u64,
-            manifest_hash: String,
-            author: Option<String>,
-            access: &'static str,
-        }
-
         let blobs = HubBlobStore::new(base);
         let manifests: Vec<Result<Manifest, _>> =
             futures::future::join_all(resp.entries.iter().map(|e| blobs.get_cbor(&e.link))).await;
         // A manifest the hub can't serve still lists — without its header,
         // and marked unavailable rather than sealed: a fetch failure is no
         // evidence about access.
-        let versions: Vec<Version> = resp
+        Ok(resp
             .entries
             .into_iter()
             .zip(manifests)
             .map(|(e, m)| {
                 let (author, access) = match m {
-                    Ok(m) if m.get_share(&me).is_some() => (Some(m.author().to_hex()), "readable"),
-                    Ok(m) => (Some(m.author().to_hex()), "sealed"),
-                    Err(_) => (None, "unavailable"),
+                    Ok(m) if m.get_share(&me).is_some() => (Some(*m.author()), Access::Readable),
+                    Ok(m) => (Some(*m.author()), Access::Sealed),
+                    Err(_) => (None, Access::Unavailable),
                 };
-                Version {
+                VersionSummary {
                     height: e.height,
-                    manifest_hash: e.link.hash().to_hex(),
+                    manifest: e.link,
                     author,
                     access,
                 }
             })
-            .collect();
-        serde_json::to_string(&versions).map_err(|e| JsError::new(&format!("json: {e}")))
+            .collect())
     }
 
-    /// Open vault `vault_id_hex` at `height` (the canonical head there).
-    pub async fn open(
-        vault_id_hex: String,
-        height: u64,
-        hub_base: String,
-    ) -> Result<WasmVersion, JsError> {
+    /// Open vault `id` at `height` (the canonical head there).
+    pub async fn open(id: VaultId, height: u64, hub_base: &str) -> Result<WasmVersion, JsError> {
         let pk = session_key()?;
-        let base = parse_base(&hub_base)?;
+        let base = parse_base(hub_base)?;
         let vault = Vault::open_at(
-            parse_vault_id(&vault_id_hex)?,
+            id,
             height,
             HubBlobStore::new(base.clone()),
             HubVaultLog::new(base),
@@ -136,27 +142,14 @@ impl WasmVersion {
         })
     }
 
-    /// This version's header as JSON: `{height, manifest_hash, author}`.
-    pub fn info(&self) -> Result<String, JsError> {
-        #[derive(Serialize)]
-        struct Info {
-            height: u64,
-            manifest_hash: String,
-            author: String,
-        }
-        serde_json::to_string(&Info {
-            height: self.vault.height(),
-            manifest_hash: self.vault.manifest_link().hash().to_hex(),
-            author: self.vault.manifest().author().to_hex(),
-        })
-        .map_err(|e| JsError::new(&format!("json: {e}")))
+    /// List a directory as it was, directories first.
+    pub async fn ls(&self, path: &str) -> Result<Vec<DirEntry>, JsError> {
+        read::ls(self.vault.fs(), path).await
     }
+}
 
-    /// List a directory as it was. JSON: `[{name, kind, hash, mime}]`.
-    pub async fn ls(&self, path: String) -> Result<String, JsError> {
-        read::ls(self.vault.fs(), &path).await
-    }
-
+#[wasm_bindgen]
+impl WasmVersion {
     /// A file's plaintext as it was at this version.
     pub async fn cat(&self, path: String) -> Result<Vec<u8>, JsValue> {
         read::cat(self.vault.fs(), &path).await

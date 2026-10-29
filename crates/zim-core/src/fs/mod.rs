@@ -41,6 +41,7 @@
 mod abs_path;
 pub mod content_store;
 pub mod crdt;
+mod dir_entry;
 mod entry;
 mod fs_inner;
 mod manifest;
@@ -56,6 +57,7 @@ pub use crdt::{
     conflicts_with_mv_source, operations_conflict, Conflict, ConflictFile, ConflictResolver,
     MergeResult, Op, OpId, OpKind, OpsLog, Resolution, ResolvedConflict,
 };
+pub use dir_entry::{DirEntry, EntryKind};
 pub use entry::{Dir, Entry};
 pub use fs_inner::{Fs, FsError, FsInner};
 pub use manifest::{Manifest, ManifestError};

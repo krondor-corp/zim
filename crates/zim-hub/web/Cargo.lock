@@ -3369,6 +3369,9 @@ dependencies = [
  "yew",
  "yew-router",
  "zim-api",
+ "zim-core",
+ "zim-crypto",
+ "zim-did",
  "zim-hub-wasm",
 ]
 

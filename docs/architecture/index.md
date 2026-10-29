@@ -28,6 +28,7 @@ zim-did  -> zim-crypto
 - `zim-peer` owns native storage, iroh transport, synchronization, and service
   lifecycle.
 - `zim` and `zim-hub` compose those libraries into deployable processes.
+- `zim-api`'s `desktop` feature is the shell↔SPA IPC contract (typed arguments, results and one error enum), compiled by both ends.
 - `zim-desktop` is a Tauri shell, outside the root workspace. It runs no peer
   of its own: it connects to (or launches, as a detached sidecar) the `zim`
   daemon for `$ZIM_HOME` and proxies vault operations to its HTTP API, so the

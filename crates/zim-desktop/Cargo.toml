@@ -23,7 +23,9 @@ url = "2.5"
 # `zim hub login`. The daemon itself is NOT linked in-process — it runs
 # as the bundled sidecar binary.
 zim-cli = { path = "../zim", features = ["hub"] }
+zim-api = { path = "../zim-api", features = ["desktop"] }
 zim-core = { path = "../zim-core" }
+zim-crypto = { path = "../zim-crypto" }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

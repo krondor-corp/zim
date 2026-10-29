@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use zim::daemon::api::client::ApiClient;
 use zim::hub::login::PendingLogin;
+use zim_api::desktop::CommandError;
 
 /// A live link to the daemon, established by `boot`.
 pub struct Session {
@@ -24,11 +25,11 @@ impl AppState {
         *self.session.write().await = Some(Arc::new(session));
     }
 
-    pub async fn session(&self) -> Result<Arc<Session>, String> {
+    pub async fn session(&self) -> Result<Arc<Session>, CommandError> {
         self.session
             .read()
             .await
             .clone()
-            .ok_or_else(|| "the zim daemon isn't connected yet (boot hasn't finished)".to_string())
+            .ok_or(CommandError::NotConnected)
     }
 }

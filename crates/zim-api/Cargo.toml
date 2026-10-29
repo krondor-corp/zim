@@ -43,6 +43,10 @@ admin = ["hub"]
 # (head, log, blobs). Spoken by the browser wasm SDK + the hub server;
 # daemons sync over iroh, not HTTP. Pulls `zim-core` for `Link`/`VaultId`.
 vault = ["hub", "dep:zim-core"]
+# The desktop shell's IPC contract (Tauri commands <-> the SPA): domain
+# types, typed arguments and one error enum, so neither end hand-matches
+# JSON. Spoken by `zim-desktop` and the browser SPA.
+desktop = ["hub", "dep:zim-core"]
 
 [dependencies]
 async-trait = "0.1"

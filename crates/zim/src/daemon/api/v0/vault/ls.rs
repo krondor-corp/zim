@@ -21,21 +21,10 @@ pub struct LsRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LsResponse {
     pub path: String,
-    pub items: Vec<PathInfo>,
+    pub items: Vec<DirEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PathInfo {
-    pub name: String,
-    pub kind: EntryKind,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EntryKind {
-    File,
-    Dir,
-}
+pub use zim_core::fs::{DirEntry, EntryKind};
 
 pub async fn handler(
     VaultHandle { vault, .. }: VaultHandle,
@@ -50,7 +39,7 @@ pub async fn handler(
 
     let items = entries
         .into_iter()
-        .map(|(p, entry)| PathInfo {
+        .map(|(p, entry)| DirEntry {
             name: path_name(&p),
             kind: if entry.is_dir() {
                 EntryKind::Dir

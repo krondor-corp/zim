@@ -13,8 +13,11 @@ use yew::prelude::*;
 use yew_router::prelude::*;
 use zim_hub_web::save_queue::SaveQueue;
 
-use crate::api::{fetch_devices, fetch_me, Device, VaultItem};
-use crate::backend::{self, is_desktop, BackendState, ReadError, VaultBackend, VaultMeta};
+use zim_core::vault::VaultId;
+use zim_wasm::VaultInfo;
+
+use crate::api::{fetch_devices, fetch_me, Device};
+use crate::backend::{self, is_desktop, BackendState, ReadError, VaultBackend, VaultSummary};
 use crate::components::dialog::{ConfirmDialog, PromptDialog};
 use crate::layouts::{HeaderMenu, SignOutItem};
 use crate::pages::vault_autosave::{
@@ -39,7 +42,7 @@ enum Dialog {
 
 #[derive(Properties, PartialEq)]
 pub struct Props {
-    pub vault_id: String,
+    pub vault_id: VaultId,
     /// Signed-in user id — the switcher's "+ New vault" shares new
     /// vaults with all the account's devices.
     pub user_id: String,
@@ -115,7 +118,7 @@ pub fn vault_tree(props: &Props) -> Html {
     // Bumped per keystroke; a debounce timer only flushes if it's still
     // the latest when it fires.
     let debounce = use_mut_ref(|| 0u32);
-    let meta = use_state(|| None::<VaultMeta>);
+    let meta = use_state(|| None::<VaultInfo>);
     let devices = use_state(Vec::<Device>::new);
     let web_did = use_state(String::new);
     let show_details = use_state(|| false);
@@ -123,7 +126,7 @@ pub fn vault_tree(props: &Props) -> Html {
     // A failed restore, shown inside the history view (the live error
     // banner is hidden under it) — the view stays open to retry.
     let restore_error = use_state(String::new);
-    let vaults = use_state(Vec::<VaultItem>::new);
+    let vaults = use_state(Vec::<VaultSummary>::new);
     let ctx = use_state(|| None::<CtxMenu>);
     let dialog = use_state(|| None::<Dialog>);
     let dragging = use_state(|| None::<String>);
@@ -262,8 +265,8 @@ pub fn vault_tree(props: &Props) -> Html {
         let syncing = syncing.clone();
         let open_seq = open_seq.clone();
         let show_history = show_history.clone();
-        let vault_id = props.vault_id.clone();
-        use_effect_with(vault_id.clone(), move |_| {
+        let vault_id = props.vault_id;
+        use_effect_with(vault_id, move |_| {
             // Fresh vault, fresh view state: expansion paths and the
             // open file belong to the PREVIOUS vault.
             expanded.set(BTreeSet::new());
@@ -416,7 +419,7 @@ pub fn vault_tree(props: &Props) -> Html {
     let (follow_tick, follow) = use_tick();
     let follow_stale = use_mut_ref(|| false);
     {
-        use_effect_with(props.vault_id.clone(), move |_| {
+        use_effect_with(props.vault_id, move |_| {
             let alive = Rc::new(Cell::new(true));
             {
                 let alive = alive.clone();
@@ -784,7 +787,7 @@ pub fn vault_tree(props: &Props) -> Html {
 
     let vault_title = match &*meta {
         Some(m) if !m.name.is_empty() => m.name.clone(),
-        _ => short_id(&props.vault_id),
+        _ => short_id(&props.vault_id.to_string()),
     };
     let active = open_file
         .0
@@ -800,9 +803,9 @@ pub fn vault_tree(props: &Props) -> Html {
                 trigger_class={classes!("app-header__crumb", "app-header__crumb--current", "vault-switch__trigger")}
                 trigger={html! { <>{ vault_title.clone() }{ " \u{25BE}" }</> }}>
                 { for vaults.iter().map(|v| {
-                    let name = if v.name.is_empty() { short_id(&v.vault_id) } else { v.name.clone() };
+                    let name = if v.name.is_empty() { short_id(&v.id.to_string()) } else { v.name.clone() };
                     html! {
-                        <Link<Route> to={Route::Vault { id: v.vault_id.clone() }} classes="app-menu__item">
+                        <Link<Route> to={Route::Vault { id: v.id }} classes="app-menu__item">
                             { name }
                         </Link<Route>>
                     }
@@ -913,11 +916,11 @@ pub fn vault_tree(props: &Props) -> Html {
         <>
             <header class="app-header">
                 <HeaderMenu trigger={html! { "\u{2630}" }}>
-                    if !desktop {
+                    if desktop {
+                        <Link<Route> to={Route::Workspace} classes="app-menu__item">{ "Vaults" }</Link<Route>>
+                    } else {
                         <Link<Route> to={Route::Settings} classes="app-menu__item">{ "Settings" }</Link<Route>>
                         <SignOutItem />
-                    } else {
-                        <Link<Route> to={Route::Workspace} classes="app-menu__item">{ "Vaults" }</Link<Route>>
                     }
                 </HeaderMenu>
                 <div class="app-header__slot app-header__slot--left">{ crumbs }</div>
@@ -940,7 +943,7 @@ pub fn vault_tree(props: &Props) -> Html {
             </header>
 
             if *show_history {
-                <HistoryView vault_id={props.vault_id.clone()} devices={(*devices).clone()}
+                <HistoryView vault_id={props.vault_id} devices={(*devices).clone()}
                     restore_error={(*restore_error).clone()}
                     on_close={{
                         let show_history = show_history.clone();

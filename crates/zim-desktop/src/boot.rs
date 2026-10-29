@@ -2,41 +2,33 @@
 
 use std::path::Path;
 
-use serde::Serialize;
+use url::Url;
 use zim::cli::ops::init::init_home;
 use zim::context::paths;
+use zim::daemon::api::client::ApiClient;
+use zim_api::desktop::{BootInfo, CommandError};
+use zim_crypto::PublicKey;
 
 use crate::connect::{connect_or_start, Connection, Patience};
+use crate::error::CmdResult;
 use crate::sidecar::{default_binary, SidecarHost};
 use crate::state::{AppState, Session};
 
-#[derive(Debug, Serialize)]
-pub struct BootInfo {
-    pub home: String,
-    /// This device's identity pubkey (hex) — the same one the CLI shows.
-    pub peer_id: String,
-    pub port: u16,
-    /// The identity was minted by this launch.
-    pub first_run: bool,
-    /// We started the daemon (vs. attaching to a running one).
-    pub started_daemon: bool,
-    /// A hub session is already on disk.
-    pub hub_linked: bool,
-}
-
 /// Idempotent: safe to call again after a reload of the web view.
-pub async fn boot(state: &AppState) -> Result<BootInfo, String> {
-    let home = paths::home_dir(None).map_err(|e| e.to_string())?;
-    let init = init_home(&home).await.map_err(|e| e.to_string())?;
+pub async fn boot(state: &AppState) -> CmdResult<BootInfo> {
+    let boot = |e: &dyn std::fmt::Display| CommandError::Boot(e.to_string());
+    let home = paths::home_dir(None).map_err(|e| boot(&e))?;
+    let init = init_home(&home).await.map_err(|e| boot(&e))?;
+    let peer_id = PublicKey::from_hex(&init.identity_hex).map_err(|e| boot(&e))?;
 
     let host = SidecarHost::new(home.clone(), default_binary());
     let conn = connect_or_start(&host, Patience::default())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| boot(&e))?;
 
     let endpoint =
-        url::Url::parse(&format!("http://127.0.0.1:{}", conn.port())).map_err(|e| e.to_string())?;
-    let client = zim::daemon::api::client::ApiClient::new(&endpoint).map_err(|e| e.to_string())?;
+        Url::parse(&format!("http://127.0.0.1:{}", conn.port())).map_err(|e| boot(&e))?;
+    let client = ApiClient::new(&endpoint).map_err(|e| boot(&e))?;
     state
         .set_session(Session {
             home: home.clone(),
@@ -45,12 +37,12 @@ pub async fn boot(state: &AppState) -> Result<BootInfo, String> {
         .await;
 
     Ok(BootInfo {
-        home: home.display().to_string(),
-        peer_id: init.identity_hex,
+        hub_linked: hub_linked(&home),
+        home,
+        peer_id,
         port: conn.port(),
         first_run: init.identity_was_new,
         started_daemon: matches!(conn, Connection::Started { .. }),
-        hub_linked: hub_linked(&home),
     })
 }
 

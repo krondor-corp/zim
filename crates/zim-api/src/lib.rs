@@ -49,6 +49,8 @@ pub use error::ApiError;
 /// [`Url`] without adding their own `url` dependency.
 pub use reqwest::Url;
 
+#[cfg(feature = "desktop")]
+pub mod desktop;
 #[cfg(feature = "hub")]
 pub mod hub;
 

@@ -93,6 +93,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 base64 = "0.22"
+sha2 = "0.10"
 
 # Google OAuth login (single-owner gate). Hand-rolled flow against
 # Google's `/o/oauth2/v2/auth` + `/oauth2.googleapis.com/token`, with

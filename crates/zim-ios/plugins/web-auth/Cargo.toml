@@ -1,0 +1,15 @@
+[package]
+name = "tauri-plugin-zim-web-auth"
+version = "0.1.0"
+description = "Run one sign-in in the system's web-auth sheet (ASWebAuthenticationSession) and return its callback URL"
+edition = "2021"
+license = "MIT"
+publish = false
+links = "tauri-plugin-zim-web-auth"
+
+[dependencies]
+tauri = "2"
+serde = { version = "1", features = ["derive"] }
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }

@@ -9,11 +9,15 @@ use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
 use super::state as oauth_state;
+use crate::http::auth::mobile;
 use crate::state::AppState;
 
 #[derive(Deserialize)]
 pub struct LoginQuery {
     next: Option<String>,
+    /// From the native app: finish by handing a token back to it (see
+    /// [`crate::http::auth::mobile`]) instead of setting a cookie here.
+    mobile_challenge: Option<String>,
 }
 
 pub async fn handler(State(state): State<AppState>, Query(query): Query<LoginQuery>) -> Response {
@@ -24,7 +28,12 @@ pub async fn handler(State(state): State<AppState>, Query(query): Query<LoginQue
     let client_id = &google.client_id;
     let redirect_uri = state.auth.callback_url();
     let secure = state.auth.host_name.starts_with("https://");
-    let (oauth_state, cookie) = oauth_state::begin(query.next.as_deref().unwrap_or("/"), secure);
+    let challenge = query.mobile_challenge.as_deref();
+    if challenge.is_some_and(|c| !mobile::valid_challenge(c)) {
+        return (StatusCode::BAD_REQUEST, "malformed mobile_challenge").into_response();
+    }
+    let (oauth_state, cookies) =
+        oauth_state::begin(query.next.as_deref().unwrap_or("/"), challenge, secure);
 
     // Scopes: `openid email profile`. `openid` + `email` carry the
     // claims we need; `profile` adds the display name we put in the
@@ -43,5 +52,9 @@ pub async fn handler(State(state): State<AppState>, Query(query): Query<LoginQue
         state = urlencoding::encode(&oauth_state),
     );
 
-    ([(SET_COOKIE, cookie)], Redirect::temporary(&url)).into_response()
+    let mut res = Redirect::temporary(&url).into_response();
+    for cookie in cookies.iter().filter_map(|c| c.parse().ok()) {
+        res.headers_mut().append(SET_COOKIE, cookie);
+    }
+    res
 }

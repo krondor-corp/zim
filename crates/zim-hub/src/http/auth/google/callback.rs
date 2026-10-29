@@ -1,7 +1,8 @@
 //! `GET /auth/google/callback` — check `state` against this browser's
 //! cookie (see [`super::state`]), exchange the auth code, validate the
-//! ID-token claims, then hand the verified email to [`mint_session`]
-//! (shared with the dev-trust login), landing on the carried `next`.
+//! ID-token claims, then hand the verified email to [`sign_in`]
+//! (shared with the dev-trust login), landing on the carried `next` —
+//! or, for the native app's handshake, handing it a one-time token.
 //!
 //! ID-token signature: trusted via TLS from Google's token endpoint;
 //! we still audience+issuer-check to catch a misconfigured client_id.
@@ -16,7 +17,7 @@ use serde::Deserialize;
 
 use super::state as oauth_state;
 use crate::http::auth::login::LoginError;
-use crate::http::auth::session::{mint_session, Authority};
+use crate::http::auth::session::{sign_in, Authority, Destination};
 use crate::state::AppState;
 
 #[derive(Deserialize)]
@@ -54,17 +55,22 @@ pub async fn handler(
     let redirect_uri = state.auth.callback_url();
     let secure = state.auth.host_name.starts_with("https://");
 
-    let Some(next) = oauth_state::finish(&query.state, &headers) else {
+    let Some(finished) = oauth_state::finish(&query.state, &headers) else {
         tracing::warn!("oauth state missing or doesn't match this browser's cookie");
         return Redirect::to(&LoginError::Failed.url("/")).into_response();
     };
-    let retry = LoginError::Failed.url(&next);
+    let dest = match &finished.mobile_challenge {
+        Some(challenge) => Destination::App { challenge },
+        None => Destination::Web {
+            next: &finished.next,
+        },
+    };
 
     let id_token = match exchange_code(client_id, client_secret, &redirect_uri, &query.code).await {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("token exchange failed: {e}");
-            return Redirect::to(&retry).into_response();
+            return dest.failure(LoginError::Failed);
         }
     };
 
@@ -72,29 +78,32 @@ pub async fn handler(
         Ok(c) => c,
         Err(e) => {
             tracing::error!("id_token decode failed: {e}");
-            return Redirect::to(&retry).into_response();
+            return dest.failure(LoginError::Failed);
         }
     };
 
     if !id_claims.email_verified {
         tracing::warn!(email = %id_claims.email, "google reports email_verified=false");
-        return Redirect::to(&retry).into_response();
+        return dest.failure(LoginError::Failed);
     }
 
     let name = id_claims.name.unwrap_or_default();
     let authority = Authority::Google { sub: id_claims.sub };
-    match mint_session(&state, &id_claims.email, &name, authority, &next).await {
-        Ok(mut r) => {
-            if let Ok(clear) = oauth_state::clear_cookie(secure).parse() {
-                r.headers_mut().append(SET_COOKIE, clear);
-            }
-            r
-        }
+    let signed_in = sign_in(&state, &id_claims.email, &name, authority, dest).await;
+    let mut res = match signed_in {
+        Ok(r) => r,
         Err(e) => {
             tracing::warn!("google sign-in refused: {e}");
-            Redirect::to(&LoginError::from(&e).url(&next)).into_response()
+            dest.failure(LoginError::from(&e))
         }
+    };
+    for clear in oauth_state::clear_cookies(secure)
+        .iter()
+        .filter_map(|c| c.parse().ok())
+    {
+        res.headers_mut().append(SET_COOKIE, clear);
     }
+    res
 }
 
 async fn exchange_code(

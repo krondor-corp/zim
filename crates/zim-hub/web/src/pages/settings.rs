@@ -7,6 +7,7 @@ use yew_router::prelude::*;
 
 use crate::api::Me;
 use crate::components::field;
+use crate::components::icon::{icon, Icon};
 use crate::pages::devices::Devices;
 use crate::routes::Route;
 
@@ -57,7 +58,7 @@ pub fn settings(props: &Props) -> Html {
         <div class="settings-shell">
             <aside class="settings-nav">
                 <Link<Route> to={Route::Workspace} classes="settings-nav__back">
-                    <span class="settings-link__icon">{ "\u{2190}" }</span>
+                    <span class="settings-link__icon">{ icon(Icon::Back, None) }</span>
                     <span>{ "Back to app" }</span>
                 </Link<Route>>
                 <div class="settings-group">{ "Account" }</div>

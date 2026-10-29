@@ -120,7 +120,7 @@ pub fn workspace(props: &Props) -> Html {
     };
 
     html! {
-        <div class="doc-empty" style="min-height:60vh;flex-direction:column;gap:1rem;">
+        <div class="doc-empty workspace-empty">
             if !(*error).is_empty() {
                 <div class="error">{ (*error).clone() }</div>
             }
@@ -130,7 +130,7 @@ pub fn workspace(props: &Props) -> Html {
                     Some(_) => html! {
                         <>
                             <p>{ "No vaults yet. A vault is an encrypted, versioned folder that syncs to all your devices." }</p>
-                            <button type="button" class="tree-pane__new" style="padding:0.5rem 1.2rem;" onclick={open_dialog}>
+                            <button type="button" class="tree-pane__new workspace-empty__cta" onclick={open_dialog}>
                                 { "+ Create your first vault" }
                             </button>
                         </>

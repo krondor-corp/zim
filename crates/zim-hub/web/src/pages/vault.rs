@@ -19,7 +19,8 @@ use zim_wasm::VaultInfo;
 use crate::api::{fetch_devices, fetch_me, fetch_vaults, Device, VaultItem};
 use crate::backend::{BackendState, ReadError, VaultBackend};
 use crate::components::dialog::{ConfirmDialog, PromptDialog};
-use crate::layouts::{HeaderMenu, SignOutItem};
+use crate::components::icon::{icon, Icon};
+use crate::layouts::{menu_icon, HeaderMenu, SignOutItem};
 use crate::pages::vault_autosave::{
     drain, settled, use_lifecycle_flush, Queue, SaveEvent, SaveState, AUTOSAVE_MS,
 };
@@ -31,6 +32,7 @@ use crate::pages::vault_palette::{use_palette_shortcut, Palette, PaletteAction};
 use crate::pages::vault_tree::{build_rows, CtxMenu, CtxTarget, TreeNode, TreePane};
 use crate::routes::Route;
 use crate::util::{jserr, sleep};
+use zim_hub_web::nav::shows_detail;
 
 /// Which first-class dialog is open (replaces browser prompt/confirm).
 #[derive(Clone, PartialEq)]
@@ -797,7 +799,7 @@ pub fn vault_tree(props: &Props) -> Html {
         items.push(html! {
             <HeaderMenu class={classes!("vault-switch")}
                 trigger_class={classes!("app-header__crumb", "app-header__crumb--current", "vault-switch__trigger")}
-                trigger={html! { <>{ vault_title.clone() }{ " \u{25BE}" }</> }}>
+                trigger={html! { <>{ vault_title.clone() }{ icon(Icon::Chevron, None) }</> }}>
                 { for vaults.iter().filter_map(|v| Some((v.vault_id.parse::<VaultId>().ok()?, v))).map(|(id, v)| {
                     let name = if v.name.is_empty() { short_id(&v.vault_id) } else { v.name.clone() };
                     html! {
@@ -819,6 +821,24 @@ pub fn vault_tree(props: &Props) -> Html {
             }
         }
         items
+    };
+
+    // Narrow screens show the tree OR the open file (CSS keys off the
+    // `--detail` modifier); the header back control returns to the tree.
+    let detail = shows_detail(open_file.0.is_some(), syncing.is_some(), !error.is_empty());
+    let on_back = {
+        let flush = flush.clone();
+        let open_file = open_file.dispatcher();
+        let syncing = syncing.clone();
+        let open_seq = open_seq.clone();
+        let error = error.clone();
+        Callback::from(move |_: MouseEvent| {
+            flush.emit(());
+            *open_seq.borrow_mut() += 1;
+            open_file.dispatch(OpenAction::Show(None));
+            syncing.set(None);
+            error.set(String::new());
+        })
     };
 
     let toggle_details = {
@@ -945,11 +965,14 @@ pub fn vault_tree(props: &Props) -> Html {
 
     html! {
         <>
-            <header class="app-header">
-                <HeaderMenu trigger={html! { "\u{2630}" }}>
+            <header class={classes!("app-header", (detail && !*show_history).then_some("app-header--detail"))}>
+                <HeaderMenu trigger={menu_icon()}>
                     <Link<Route> to={Route::Settings} classes="app-menu__item">{ "Settings" }</Link<Route>>
                     <SignOutItem />
                 </HeaderMenu>
+                <button type="button" class="app-header__back" onclick={on_back}>
+                    { icon(Icon::Back, Some("Back to files")) }
+                </button>
                 <div class="app-header__slot app-header__slot--left">{ crumbs }</div>
                 <div class="app-header__slot app-header__slot--right">
                     <span id="save-status" class="app-header__status">{ (*status).clone() }</span>
@@ -968,7 +991,7 @@ pub fn vault_tree(props: &Props) -> Html {
                         { "History" }
                     </button>
                     <button type="button" class="app-header__btn" title="Vault details" onclick={toggle_details}>
-                        { "\u{24D8}" }
+                        { icon(Icon::Info, Some("Vault details")) }
                     </button>
                 </div>
             </header>
@@ -988,7 +1011,8 @@ pub fn vault_tree(props: &Props) -> Html {
             }
             // Hidden, not unmounted, under history: the editor keeps its
             // textarea state (cursor, scroll) for when the user comes back.
-            <div class="editor-layout" style={show_history.then_some("display:none;")}>
+            <div class={classes!("editor-layout", detail.then_some("editor-layout--detail"))}
+                style={show_history.then_some("display:none;")}>
                 {
                     match &*rows {
                         None => html! {

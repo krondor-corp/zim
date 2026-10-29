@@ -8,6 +8,7 @@ use zim_crypto::PublicKey;
 use zim_wasm::{Access, DirEntry, EntryKind, VersionSummary};
 
 use crate::api::Device;
+use crate::components::icon::{icon, Icon};
 use crate::pages::vault::short_id;
 use crate::pages::vault_details::{device_for, own_label};
 use crate::pages::vault_editor::{media_preview, OpenFile};
@@ -92,7 +93,7 @@ pub(crate) fn tree_list(
         let to = parent(dir);
         html! {
             <button type="button" class="tree-item tree-item--file history-entry"
-                onclick={move |_: MouseEvent| browse.emit(to.clone())}>{ "\u{2190} .." }</button>
+                onclick={move |_: MouseEvent| browse.emit(to.clone())}>{ icon(Icon::Back, None) }{ " .." }</button>
         }
     });
     html! {

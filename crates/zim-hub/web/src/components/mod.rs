@@ -2,8 +2,11 @@
 //! no routing; pages compose these.
 
 pub mod dialog;
+pub mod icon;
 
 use yew::prelude::*;
+
+use icon::{icon, Icon};
 
 /// A copy-to-clipboard button for a fixed string value. Fire-and-forget:
 /// `navigator.clipboard.writeText` returns a Promise we don't await.
@@ -18,7 +21,7 @@ pub fn copy_button(value: &str) -> Html {
     });
     html! {
         <button type="button" class="btn field-copy__btn" {onclick} title="Copy">
-            { "\u{29C9}" }
+            { icon(Icon::Copy, None) }
         </button>
     }
 }

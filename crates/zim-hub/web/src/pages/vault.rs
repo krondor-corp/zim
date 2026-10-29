@@ -800,8 +800,9 @@ pub fn vault_tree(props: &Props) -> Html {
             <HeaderMenu class={classes!("vault-switch")}
                 trigger_class={classes!("app-header__crumb", "app-header__crumb--current", "vault-switch__trigger")}
                 trigger={html! { <>{ vault_title.clone() }{ icon(Icon::Chevron, None) }</> }}>
-                { for vaults.iter().filter_map(|v| Some((v.vault_id.parse::<VaultId>().ok()?, v))).map(|(id, v)| {
-                    let name = if v.name.is_empty() { short_id(&v.vault_id) } else { v.name.clone() };
+                { for vaults.iter().map(|v| {
+                    let id = v.vault_id;
+                    let name = if v.name.is_empty() { short_id(&id.to_string()) } else { v.name.clone() };
                     html! {
                         <Link<Route> to={Route::Vault { id }} classes="app-menu__item">
                             { name }

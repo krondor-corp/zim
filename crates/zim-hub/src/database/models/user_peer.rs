@@ -19,6 +19,15 @@ pub enum PeerKind {
     Daemon,
 }
 
+impl From<PeerKind> for zim_api::hub::DeviceKind {
+    fn from(k: PeerKind) -> Self {
+        match k {
+            PeerKind::Web => Self::Web,
+            PeerKind::Daemon => Self::Daemon,
+        }
+    }
+}
+
 impl PeerKind {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -80,6 +89,9 @@ impl UserPeerListItem {
     pub fn kind(&self) -> &str {
         &self.kind
     }
+    pub fn peer_kind(&self) -> Option<PeerKind> {
+        PeerKind::parse(&self.kind)
+    }
     pub fn created_at(&self) -> &str {
         &self.created_at
     }
@@ -100,6 +112,9 @@ impl UserPeer {
     }
     pub fn kind(&self) -> &str {
         &self.kind
+    }
+    pub fn peer_kind(&self) -> Option<PeerKind> {
+        PeerKind::parse(&self.kind)
     }
     pub fn created_at(&self) -> &str {
         &self.created_at

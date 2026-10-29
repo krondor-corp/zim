@@ -146,12 +146,10 @@ pub fn palette(props: &PaletteProps) -> Html {
         "Open vault details".into(),
     ));
     for v in &props.vaults {
-        let Ok(id) = v.vault_id.parse::<VaultId>() else {
-            continue;
-        };
+        let id = v.vault_id;
         if id != props.vault_id {
             let name = if v.name.is_empty() {
-                short_id(&v.vault_id)
+                short_id(&id.to_string())
             } else {
                 v.name.clone()
             };

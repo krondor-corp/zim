@@ -72,10 +72,7 @@ pub fn workspace(props: &Props) -> Html {
                     Ok(list) if list.is_empty() => empty.set(Some(true)),
                     Ok(list) => {
                         // Last-opened when it still exists, else first.
-                        let ids: Vec<VaultId> = list
-                            .iter()
-                            .filter_map(|v| v.vault_id.parse().ok())
-                            .collect();
+                        let ids: Vec<VaultId> = list.iter().map(|v| v.vault_id).collect();
                         let target = last_vault()
                             .filter(|id| ids.contains(id))
                             .or_else(|| ids.first().copied());

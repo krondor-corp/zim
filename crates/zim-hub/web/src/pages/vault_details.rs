@@ -6,7 +6,7 @@ use yew::prelude::*;
 use zim_crypto::PublicKey;
 use zim_wasm::{ShareInfo, VaultInfo};
 
-use crate::api::Device;
+use crate::api::{Device, DeviceKind};
 
 pub(crate) fn details_panel(meta: &VaultInfo, devices: &[Device], web_did: &str) -> Html {
     html! {
@@ -37,7 +37,7 @@ fn share_row(s: &ShareInfo, devices: &[Device], web_did: &str, author: &PublicKe
     // The web key's proper identity is the account `did:web` (reached via the
     // hub), not the `did:key` sealed into the manifest. Only swap when we can
     // confirm this share *is* our web key (its pubkey matches the web device).
-    let is_web_key = mine.is_some_and(|d| d.kind == "web");
+    let is_web_key = mine.is_some_and(|d| d.kind == DeviceKind::Web);
     let did = if is_web_key && !web_did.is_empty() {
         web_did.to_string()
     } else {
@@ -61,15 +61,13 @@ fn share_row(s: &ShareInfo, devices: &[Device], web_did: &str, author: &PublicKe
 
 /// The account device holding `key`, if it's one of ours.
 pub(crate) fn device_for<'a>(devices: &'a [Device], key: &PublicKey) -> Option<&'a Device> {
-    devices
-        .iter()
-        .find(|d| PublicKey::from_hex(&d.pubkey).is_ok_and(|k| k == *key))
+    devices.iter().find(|d| d.pubkey == *key)
 }
 
 pub(crate) fn own_label(d: &Device) -> String {
     match &d.label {
         Some(l) if !l.is_empty() => l.clone(),
-        _ if d.kind == "web" => "your web key".to_string(),
+        _ if d.kind == DeviceKind::Web => "your web key".to_string(),
         _ => "your daemon".to_string(),
     }
 }

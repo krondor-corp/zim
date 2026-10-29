@@ -10,7 +10,8 @@ use std::fmt;
 
 use async_trait::async_trait;
 use clap::Args;
-use zim_api::hub::device_did;
+use zim_api::hub::DeviceKind;
+use zim_did::Did;
 use zim_peer::{PeerStore, SqlitePeerStore};
 
 use crate::cli::op::Op;
@@ -24,8 +25,8 @@ pub struct List {}
 #[derive(Debug, serde::Serialize)]
 pub struct ListedDevice {
     pub label: Option<String>,
-    pub kind: String,
-    pub did: String,
+    pub kind: DeviceKind,
+    pub did: Did,
     pub pubkey: String,
     /// Already present in the local address book (matched by DID).
     pub in_book: bool,
@@ -63,7 +64,7 @@ impl Op for List {
 
     async fn run(&self, _ctx: ()) -> Result<ListOutput, ListError> {
         let client = load_hub_client()?;
-        let self_hex = client.self_pubkey_hex();
+        let self_pk = client.self_pubkey();
         let devices = client.devices().await?;
 
         let home = paths::home_dir(None)?;
@@ -80,14 +81,14 @@ impl Op for List {
         let listed = devices
             .iter()
             .map(|d| {
-                let did = device_did(d).unwrap_or_default();
+                let did = d.did();
                 ListedDevice {
                     label: d.label.clone(),
-                    kind: d.kind.clone(),
-                    in_book: known.contains(&did),
-                    is_self: d.pubkey == self_hex,
+                    kind: d.kind,
+                    in_book: known.contains(&did.to_string()),
+                    is_self: d.pubkey == self_pk,
                     did,
-                    pubkey: d.pubkey.clone(),
+                    pubkey: d.pubkey.to_hex(),
                 }
             })
             .collect();
@@ -120,7 +121,7 @@ impl fmt::Display for ListOutput {
                 "  {}  {} {} {}",
                 status,
                 ui::ident(name),
-                ui::dim(&d.kind),
+                ui::dim(d.kind.as_str()),
                 ui::dim(short)
             )?;
         }

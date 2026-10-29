@@ -23,7 +23,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use zim_crypto::PublicKey;
 
-use crate::database::models::{EnrollChallenge, PeerKind, UserPeer};
+use crate::database::models::{EnrollChallenge, PeerKind, UserPeer, UserPeerListItem};
 use crate::http::auth::RequireUser;
 use crate::state::AppState;
 
@@ -40,23 +40,26 @@ pub fn router(state: AppState) -> Router<AppState> {
 // route mirrors `zim_api::hub::DevicesRequest` (`GET /api/v0/devices`).
 use zim_api::hub::{Device, DevicesResponse};
 
+/// A stored peer as its wire row. A row whose key or kind doesn't parse
+/// can't be addressed by any client, so it is left out of the roster.
+fn device_of(r: &UserPeerListItem) -> Option<Device> {
+    let pubkey = r.peer_pubkey()?;
+    Some(Device {
+        did: Some(zim_did::Did::from_key(&pubkey)),
+        pubkey,
+        label: r.label().map(str::to_string),
+        kind: r.peer_kind()?.into(),
+        created_at: chrono::NaiveDateTime::parse_from_str(r.created_at(), "%Y-%m-%dT%H:%M:%SZ")
+            .ok()
+            .map(|t| t.and_utc()),
+    })
+}
+
 /// `GET /api/v0/devices` — the signed-in user's enrolled peers.
 async fn list(State(state): State<AppState>, RequireUser(user): RequireUser) -> Response {
     match UserPeer::list_for_user(user.id(), &state.db).await {
         Ok(rows) => Json(DevicesResponse {
-            devices: rows
-                .iter()
-                .map(|r| Device {
-                    pubkey: r.peer_pubkey_hex().to_string(),
-                    did: r
-                        .peer_pubkey()
-                        .map(|pk| zim_did::Did::from_key(&pk).to_string())
-                        .unwrap_or_default(),
-                    label: r.label().map(str::to_string),
-                    kind: r.kind().to_string(),
-                    created_at: r.created_at().to_string(),
-                })
-                .collect(),
+            devices: rows.iter().filter_map(device_of).collect(),
         })
         .into_response(),
         Err(e) => {

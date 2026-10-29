@@ -10,7 +10,15 @@ import "katex/dist/katex.min.css";
 // (`getMarkdown()` right after mount) so merely opening a note, which
 // Milkdown re-serializes (list markers, escaping), isn't an edit.
 export async function mount(el, markdown, onChange) {
-  const crepe = new Crepe({ root: el, defaultValue: markdown });
+  const crepe = new Crepe({
+    root: el,
+    defaultValue: markdown,
+    featureConfigs: {
+      // Crepe's default shows "Please enter..." on every empty line under
+      // the caret; only hint on an empty note.
+      [Crepe.Feature.Placeholder]: { text: "Start writing…", mode: "doc" },
+    },
+  });
   crepe.on((l) => l.markdownUpdated((_ctx, md) => onChange(md)));
   await crepe.create();
   return {

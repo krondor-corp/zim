@@ -117,9 +117,9 @@ pub fn vault_tree(props: &Props) -> Html {
     // Unsaved edits, per path, and the one write in flight.
     let queue: Queue = use_mut_ref(SaveQueue::default);
     let save_state = use_state(|| SaveState::Idle);
-    // Bumped per keystroke; a debounce timer only flushes if it's still
-    // the latest when it fires.
-    let debounce = use_mut_ref(|| 0u32);
+    // Whether an autosave timer is pending; edits made while it is ride
+    // along in its write.
+    let timer_armed = use_mut_ref(|| false);
     let meta = use_state(|| None::<VaultInfo>);
     let devices = use_state(Vec::<Device>::new);
     let web_did = use_state(String::new);
@@ -208,18 +208,19 @@ pub fn vault_tree(props: &Props) -> Html {
             yew::platform::spawn_local(async move { drain(&backend, &queue, &on_save).await });
         })
     };
-    use_lifecycle_flush(flush.clone());
+    use_lifecycle_flush(flush.clone(), queue.clone());
     // Leaving the page (another route) flushes too.
     {
         let flush = flush.clone();
         use_effect_with((), move |_| move || flush.emit(()));
     }
 
-    // The editor streams its text; the page queues it and debounces.
+    // The editor streams its text; the page queues it and saves on a
+    // timer armed by the first unsaved edit.
     let on_change = {
         let path = open_file.0.as_ref().map(|f| f.path.clone());
         let queue = queue.clone();
-        let debounce = debounce.clone();
+        let timer_armed = timer_armed.clone();
         let flush = flush.clone();
         let status = status.clone();
         let save_state = save_state.clone();
@@ -234,18 +235,15 @@ pub fn vault_tree(props: &Props) -> Html {
             if *save_state == SaveState::Saved {
                 save_state.set(SaveState::Idle);
             }
-            let ticket = {
-                let mut d = debounce.borrow_mut();
-                *d = d.wrapping_add(1);
-                *d
-            };
-            let debounce = debounce.clone();
+            if timer_armed.replace(true) {
+                return;
+            }
+            let timer_armed = timer_armed.clone();
             let flush = flush.clone();
             yew::platform::spawn_local(async move {
                 sleep(AUTOSAVE_MS).await;
-                if *debounce.borrow() == ticket {
-                    flush.emit(());
-                }
+                timer_armed.replace(false);
+                flush.emit(());
             });
         })
     };

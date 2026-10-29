@@ -38,14 +38,14 @@ pub enum Hub {
 #[derive(Debug, serde::Serialize)]
 #[serde(untagged)]
 pub enum HubOutput {
-    Login(login::LoginOutput),
+    Login(crate::hub::login::LoginOutput),
     Peers(peers::HubPeersOutput),
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum HubError {
     #[error(transparent)]
-    Login(#[from] login::LoginError),
+    Login(#[from] login::HubLoginError),
     #[error(transparent)]
     Peers(#[from] peers::HubPeersError),
 }

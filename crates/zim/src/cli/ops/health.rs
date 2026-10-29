@@ -41,6 +41,8 @@ pub struct HealthOutput {
     pub endpoint: String,
     /// True if `/_status/livez` answered within `PROBE_TIMEOUT`.
     pub daemon_up: bool,
+    /// Pid recorded in `daemon.lock` by the daemon holding this home.
+    pub daemon_pid: Option<u32>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -68,11 +70,13 @@ impl Op for Health {
             tokio::time::timeout(PROBE_TIMEOUT, ctx.client.call(LivezRequest {})).await,
             Ok(Ok(_))
         );
+        let daemon_pid = ctx.running.and_then(|r| r.pid);
         Ok(HealthOutput {
             home: ctx.home,
             peer_id,
             endpoint,
             daemon_up,
+            daemon_pid,
         })
     }
 }
@@ -100,11 +104,15 @@ impl fmt::Display for HealthOutput {
         writeln!(f, "peer    {peer}")?;
 
         let daemon = if self.daemon_up {
+            let pid = self
+                .daemon_pid
+                .map(|p| format!(" (pid {p})"))
+                .unwrap_or_default();
             format!(
                 "{} {}   {}",
                 ui::SUCCESS,
                 "running",
-                ui::dim(&self.endpoint)
+                ui::dim(format!("{}{pid}", self.endpoint))
             )
         } else {
             format!(

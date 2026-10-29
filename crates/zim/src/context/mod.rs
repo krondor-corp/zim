@@ -7,7 +7,9 @@
 //!   local daemon, the resolved `home` dir, and the loaded
 //!   `AppConfig`. Built by reading `--config-path → $ZIM_HOME →
 //!   $XDG_CONFIG_HOME/zim → ~/.config/zim`, then constructing a
-//!   reqwest client at `http://127.0.0.1:<api_port>`.
+//!   reqwest client at `http://127.0.0.1:<port>` — the port the
+//!   running daemon recorded in `daemon.lock` if one holds the home,
+//!   else `config.api_port`.
 //! - `DaemonContext` — `zim daemon`: same inputs but doesn't open an
 //!   HTTP client; instead the daemon binds the listen address itself.
 
@@ -16,10 +18,12 @@ use std::path::{Path, PathBuf};
 use url::Url;
 
 pub mod config;
+pub mod daemon_lock;
 pub mod hub_session;
 pub mod paths;
 
 pub use config::AppConfig;
+pub use daemon_lock::RunningDaemon;
 pub use hub_session::HubSession;
 
 use crate::daemon::api::client::{ApiClient, ApiError};
@@ -43,21 +47,31 @@ pub struct ApiContext {
     pub home: PathBuf,
     pub config: AppConfig,
     pub client: ApiClient,
+    /// The daemon currently holding `home`, if any (see [`daemon_lock::probe`]).
+    pub running: Option<RunningDaemon>,
 }
 
 impl ApiContext {
     /// Build by resolving the home dir from `cli_override → $ZIM_HOME
     /// → $XDG_CONFIG_HOME/zim → ~/.config/zim`, loading the config
-    /// (defaults if missing), and constructing the API client.
+    /// (defaults if missing), and constructing the API client. A
+    /// running daemon's recorded port wins over `config.api_port`, so
+    /// `zim daemon run --port N` is found without editing the config.
     pub fn build(cli_override: Option<&Path>) -> Result<Self, ContextError> {
         let home = paths::home_dir(cli_override)?;
         let config = AppConfig::load(&home)?;
-        let endpoint = Url::parse(&format!("http://127.0.0.1:{}", config.api_port))?;
+        let running = daemon_lock::probe(&home);
+        let port = running
+            .as_ref()
+            .and_then(|r| r.api_port)
+            .unwrap_or(config.api_port);
+        let endpoint = Url::parse(&format!("http://127.0.0.1:{port}"))?;
         let client = ApiClient::new(&endpoint)?;
         Ok(Self {
             home,
             config,
             client,
+            running,
         })
     }
 }

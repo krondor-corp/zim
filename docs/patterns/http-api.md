@@ -378,6 +378,25 @@ Response:
 
 Exports bucket contents.
 
+## Vault History (daemon)
+
+Per-vault routes live under `/api/v0/vaults/:vault_id/`, all `POST` with a JSON body.
+
+### POST /api/v0/vaults/:vault_id/log - Version Chain
+
+```json
+{ "from": 12, "limit": 20 }
+```
+
+Both fields optional (`from` defaults to the head; `limit` to 20, capped at 100).
+Returns newest first: `{"entries": [{"height": 12, "link": "...", "author": "<hex key>"}]}`.
+`author` is null if the manifest blob isn't held locally.
+
+### POST /api/v0/vaults/:vault_id/ls and /cat - Read at a Version
+
+Both accept an optional `"at": <height>` beside `path`; omitted reads the head.
+An unknown height returns 404.
+
 ## Gateway Endpoints
 
 The gateway server provides read-only access to bucket contents:

@@ -268,6 +268,21 @@ where
             .map_err(|e| anyhow::anyhow!("Vault::open({vault_id}): {e}"))
     }
 
+    /// Open the [`Vault`] for `vault_id` as it was at `height` — the
+    /// canonical head the log holds there. Read-only use: saving the
+    /// handle would chain off a stale head.
+    pub async fn open_vault_at(&self, vault_id: VaultId, height: u64) -> anyhow::Result<Vault<L>> {
+        Vault::open_at(
+            vault_id,
+            height,
+            self.blobs.clone(),
+            self.log.clone(),
+            &self.secret,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("Vault::open_at({vault_id}, {height}): {e}"))
+    }
+
     // ── Fast-path peer queries (log-only, never open a vault) ──
     //
     // Every `handle_*` method below has the same shape:

@@ -38,15 +38,21 @@ web-sys = { version = "0.3", features = [
     "HtmlElement",
     "Element",
     "KeyboardEvent",
+    "Event",
+    "EventTarget",
+    "ScrollIntoViewOptions",
+    "ScrollLogicalPosition",
 ] }
 gloo-storage = "0.3"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
 hex = "0.4"
 console_error_panic_hook = "0.1"
 
 # The SDK: HubClient / WasmFs / crypto, called directly as Rust.
 zim-hub-wasm = { path = "../wasm" }
+# Domain types the SDK hands back (ids, keys, DIDs).
+zim-core = { path = "../../zim-core" }
+zim-crypto = { path = "../../zim-crypto" }
+zim-did = { path = "../../zim-did" }
 # Shared hub wire types + the typed client (reqwest's wasm/fetch backend).
 # Same `ApiRequest` types the hub server compiles + the CLI calls; the SPA
 # additionally speaks the admin page + browser device-code approval.

@@ -1,114 +1,38 @@
 //! Vault workspace: pack-style shell — persistent expandable file tree
-//! on the left, document editor/viewer on the right. Read (`ls`/`cat`)
-//! and edit (`add_file`/`mkdir`/`rm` then `save`) go through the held
-//! `WasmFs` — all blob crypto happens inside the SDK. The handle lives
-//! in a `RefCell` shared by user actions and the background follow
-//! loop; async helpers wait out an in-flight borrow ([`lock`],
-//! [`lock_mut`]) instead of panicking on it.
+//! on the left, document editor/viewer on the right. Every read and
+//! write goes through the page's [`VaultBackend`]; text edits autosave
+//! (see [`vault_autosave`](crate::pages::vault_autosave)).
 
-use std::cell::{Cell, Ref, RefCell, RefMut};
+use std::cell::Cell;
 use std::collections::BTreeSet;
-use std::hash::{Hash, Hasher};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU32, Ordering};
 
-use serde::Deserialize;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::HtmlInputElement;
 use yew::prelude::*;
 use yew_router::prelude::*;
-use zim_wasm::{WasmFs, BLOB_PENDING};
+use zim_hub_web::save_queue::SaveQueue;
 
-use crate::api::{fetch_devices, fetch_me, fetch_vaults, Device, DeviceKind, FsEntry, VaultItem};
+use zim_core::vault::VaultId;
+use zim_wasm::VaultInfo;
+
+use crate::api::{fetch_devices, fetch_me, fetch_vaults, Device, VaultItem};
+use crate::backend::{BackendState, ReadError, VaultBackend};
 use crate::components::dialog::{ConfirmDialog, PromptDialog};
-use crate::layouts::{HeaderMenu, SignOutItem};
-use crate::pages::vault_editor::{EditorPane, OpenFile};
+use crate::components::icon::{icon, Icon};
+use crate::layouts::{menu_icon, HeaderMenu, SignOutItem};
+use crate::pages::vault_autosave::{
+    drain, settled, use_lifecycle_flush, Queue, SaveEvent, SaveState, AUTOSAVE_MS,
+};
+use crate::pages::vault_details::details_panel;
+use crate::pages::vault_editor::EditorPane;
+use crate::pages::vault_file::{load_file, OpenAction, OpenState, SYNC_RETRIES, SYNC_RETRY_MS};
 use crate::pages::vault_history::{HistoryView, Restore};
+use crate::pages::vault_palette::{use_palette_shortcut, Palette, PaletteAction};
 use crate::pages::vault_tree::{build_rows, CtxMenu, CtxTarget, TreeNode, TreePane};
 use crate::routes::Route;
-use crate::util::{jserr, origin, sleep};
-
-type FsHandle = Rc<RefCell<Option<WasmFs>>>;
-
-/// Vault manifest metadata for the Details panel — parsed from
-/// [`WasmFs::manifest_info`].
-#[derive(Clone, PartialEq, Deserialize)]
-struct VaultMeta {
-    vault_id: String,
-    name: String,
-    height: u64,
-    manifest_hash: String,
-    author: String,
-    shares: Vec<ShareMeta>,
-}
-
-#[derive(Clone, PartialEq, Deserialize)]
-struct ShareMeta {
-    pubkey: String,
-    did: String,
-    #[serde(default)]
-    via: Option<String>,
-}
-
-/// Read the open vault's manifest metadata (synchronous — no network).
-fn read_meta(fs: &FsHandle) -> Option<VaultMeta> {
-    let guard = fs.try_borrow().ok()?;
-    let f = guard.as_ref()?;
-    let json = f.manifest_info().ok()?;
-    serde_json::from_str::<VaultMeta>(&json).ok()
-}
-
-pub(crate) fn guess_mime(name: &str) -> String {
-    let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-    match ext.as_str() {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "avif" => "image/avif",
-        "svg" => "image/svg+xml",
-        "ico" => "image/x-icon",
-        "pdf" => "application/pdf",
-        "mp4" | "m4v" => "video/mp4",
-        "webm" => "video/webm",
-        "mov" => "video/quicktime",
-        "mp3" => "audio/mpeg",
-        "wav" => "audio/wav",
-        "ogg" | "oga" => "audio/ogg",
-        "flac" => "audio/flac",
-        "json" => "application/json",
-        "js" | "mjs" => "text/javascript",
-        "css" => "text/css",
-        "html" | "htm" => "text/html",
-        "csv" => "text/csv",
-        "xml" => "application/xml",
-        "txt" | "md" | "markdown" | "log" | "toml" | "yaml" | "yml" | "ini" | "conf" | "rs"
-        | "py" | "go" | "c" | "h" | "cpp" | "sh" | "sql" => "text/plain",
-        _ => "application/octet-stream",
-    }
-    .to_string()
-}
-
-pub(crate) fn is_textual(mime: &str) -> bool {
-    mime.starts_with("text/")
-        || matches!(
-            mime,
-            "application/json" | "application/xml" | "application/javascript"
-        )
-}
-
-/// Build an object URL over `bytes` tagged with `mime`, for blob-backed
-/// rendering (`<img src>`, `<iframe src>`, download links).
-pub(crate) fn object_url(bytes: &[u8], mime: &str) -> Result<String, String> {
-    let arr = js_sys::Uint8Array::from(bytes);
-    let parts = js_sys::Array::new();
-    parts.push(&arr);
-    let opts = web_sys::BlobPropertyBag::new();
-    opts.set_type(mime);
-    let blob =
-        web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &opts).map_err(jserr)?;
-    web_sys::Url::create_object_url_with_blob(&blob).map_err(jserr)
-}
+use crate::util::{jserr, sleep};
+use zim_hub_web::nav::shows_detail;
 
 /// Which first-class dialog is open (replaces browser prompt/confirm).
 #[derive(Clone, PartialEq)]
@@ -121,17 +45,10 @@ enum Dialog {
 
 #[derive(Properties, PartialEq)]
 pub struct Props {
-    pub vault_id: String,
+    pub vault_id: VaultId,
     /// Signed-in user id — the switcher's "+ New vault" shares new
     /// vaults with all the account's devices.
     pub user_id: String,
-}
-
-/// Fingerprint decrypted bytes for [`OpenFile::digest`].
-pub(crate) fn digest(bytes: &[u8]) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    hasher.finish()
 }
 
 /// Abbreviate a 64-char hex vault id for display: `01fc44f0\u{2026}405e38`.
@@ -144,139 +61,6 @@ pub(crate) fn short_id(id: &str) -> String {
     }
 }
 
-/// How long [`lock`]/[`lock_mut`] wait before re-trying a busy handle.
-const LOCK_RETRY_MS: i32 = 25;
-
-/// Borrow the handle, waiting while another task holds it mutably
-/// across an await (a save, or the follow loop's refresh).
-async fn lock(fs: &FsHandle) -> Ref<'_, Option<WasmFs>> {
-    loop {
-        if let Ok(guard) = fs.try_borrow() {
-            return guard;
-        }
-        sleep(LOCK_RETRY_MS).await;
-    }
-}
-
-/// Mutably borrow the handle, waiting out any in-flight borrow.
-async fn lock_mut(fs: &FsHandle) -> RefMut<'_, Option<WasmFs>> {
-    loop {
-        if let Ok(guard) = fs.try_borrow_mut() {
-            return guard;
-        }
-        sleep(LOCK_RETRY_MS).await;
-    }
-}
-
-async fn open(fs: &FsHandle, vault_id: String) -> Result<(), String> {
-    let opened = WasmFs::open(vault_id, origin())
-        .await
-        .map_err(|e| jserr(e.into()))?;
-    *lock_mut(fs).await = Some(opened);
-    Ok(())
-}
-
-async fn ls(fs: &FsHandle, path: String) -> Result<Vec<FsEntry>, String> {
-    let guard = lock(fs).await;
-    let f = guard.as_ref().ok_or("vault not open")?;
-    let json = f.ls(path).await.map_err(|e| jserr(e.into()))?;
-    serde_json::from_str::<Vec<FsEntry>>(&json).map_err(|e| e.to_string())
-}
-
-/// Why [`load_file`] came back without a file.
-enum LoadError {
-    /// The tree names a blob the hub hasn't mirrored yet — another
-    /// device just wrote it. Retry shortly; don't show an empty file.
-    Pending,
-    Failed(String),
-}
-
-async fn cat(fs: &FsHandle, path: String) -> Result<Vec<u8>, LoadError> {
-    let guard = lock(fs).await;
-    let f = guard
-        .as_ref()
-        .ok_or_else(|| LoadError::Failed("vault not open".into()))?;
-    f.cat(path).await.map_err(|e| {
-        if String::from(js_sys::Error::from(e.clone()).name()) == BLOB_PENDING {
-            LoadError::Pending
-        } else {
-            LoadError::Failed(jserr(e))
-        }
-    })
-}
-
-/// Sync the open vault to the hub's head if another device advanced it;
-/// `true` when the tree changed. Best-effort: a failed refresh (offline,
-/// transient) keeps the current view rather than breaking navigation.
-async fn refresh(fs: &FsHandle) -> bool {
-    let mut guard = lock_mut(fs).await;
-    match guard.as_mut() {
-        Some(f) => f.refresh().await.unwrap_or(false),
-        None => false,
-    }
-}
-
-/// Run `op` + save; on a head conflict (another device wrote since we
-/// loaded — the hub answers 409), fast-forward and replay once.
-async fn save_with_retry<F>(fs: &FsHandle, op: F) -> Result<(), String>
-where
-    F: for<'a> AsyncFn(&'a mut WasmFs) -> Result<(), String>,
-{
-    let mut guard = lock_mut(fs).await;
-    let f = guard.as_mut().ok_or("vault not open")?;
-    op(f).await?;
-    match f.save().await {
-        Ok(_) => Ok(()),
-        Err(e) => {
-            let msg = jserr(e.into());
-            if !msg.contains("409") {
-                return Err(msg);
-            }
-            f.refresh().await.map_err(|e| jserr(e.into()))?;
-            op(f).await?;
-            f.save().await.map_err(|e| jserr(e.into()))?;
-            Ok(())
-        }
-    }
-}
-
-async fn add_and_save(fs: &FsHandle, path: String, bytes: Vec<u8>) -> Result<(), String> {
-    save_with_retry(fs, async |f: &mut WasmFs| {
-        f.add_file(path.clone(), bytes.clone())
-            .await
-            .map_err(|e| jserr(e.into()))
-    })
-    .await
-}
-
-async fn mkdir_and_save(fs: &FsHandle, path: String) -> Result<(), String> {
-    save_with_retry(fs, async |f: &mut WasmFs| {
-        f.mkdir(path.clone()).await.map_err(|e| jserr(e.into()))
-    })
-    .await
-}
-
-async fn rm_and_save(fs: &FsHandle, path: String) -> Result<(), String> {
-    save_with_retry(fs, async |f: &mut WasmFs| {
-        f.rm(path.clone()).await.map_err(|e| jserr(e.into()))
-    })
-    .await
-}
-
-async fn mv_and_save(fs: &FsHandle, from: String, to: String) -> Result<(), String> {
-    save_with_retry(fs, async |f: &mut WasmFs| {
-        f.mv(from.clone(), to.clone())
-            .await
-            .map_err(|e| jserr(e.into()))
-    })
-    .await
-}
-
-/// How long a file whose blob is still syncing to the hub is retried
-/// before giving up: `SYNC_RETRIES` attempts, `SYNC_RETRY_MS` apart.
-pub(crate) const SYNC_RETRIES: u32 = 30;
-pub(crate) const SYNC_RETRY_MS: i32 = 2_000;
-
 /// How often an open vault re-checks the hub's head while the tab is
 /// visible, so another device's edits show up without re-opening.
 const FOLLOW_MS: i32 = 3_000;
@@ -288,29 +72,6 @@ fn tab_hidden() -> bool {
         .is_some_and(|d| d.hidden())
 }
 
-/// Load `path` into an [`OpenFile`] (decrypt, object-URL, decode text).
-async fn load_file(fs: &FsHandle, path: String) -> Result<OpenFile, LoadError> {
-    static LOADS: AtomicU32 = AtomicU32::new(0);
-    let bytes = cat(fs, path.clone()).await?;
-    let name = path.rsplit('/').next().unwrap_or_default();
-    let mime = guess_mime(name);
-    let url = object_url(&bytes, &mime).map_err(LoadError::Failed)?;
-    let digest = digest(&bytes);
-    let text = if is_textual(&mime) && bytes.len() < 2_000_000 {
-        String::from_utf8(bytes).ok()
-    } else {
-        None
-    };
-    Ok(OpenFile {
-        path,
-        mime,
-        url,
-        text,
-        digest,
-        rev: LOADS.fetch_add(1, Ordering::Relaxed),
-    })
-}
-
 /// Join `dir` + `name` into a vault path.
 fn joined(dir: &str, name: &str) -> String {
     if dir == "/" {
@@ -320,12 +81,32 @@ fn joined(dir: &str, name: &str) -> String {
     }
 }
 
+/// A `Callback<()>` that bumps a counter state — for effects that must
+/// re-run with the *current* render's state when fired from an async task.
+#[hook]
+fn use_tick() -> (u32, Callback<()>) {
+    let tick = use_state(|| 0u32);
+    let count = use_mut_ref(|| 0u32);
+    let bump = {
+        let tick = tick.setter();
+        Callback::from(move |_: ()| {
+            let n = {
+                let mut c = count.borrow_mut();
+                *c = c.wrapping_add(1);
+                *c
+            };
+            tick.set(n);
+        })
+    };
+    (*tick, bump)
+}
+
 #[function_component(VaultTree)]
 pub fn vault_tree(props: &Props) -> Html {
-    let fs: FsHandle = use_mut_ref(|| None::<WasmFs>);
+    let backend: VaultBackend = (*use_memo((), |_| VaultBackend::default())).clone();
     let expanded = use_state(BTreeSet::<String>::new);
     let rows = use_state(|| None::<Vec<TreeNode>>);
-    let open_file = use_state(|| None::<OpenFile>);
+    let open_file = use_reducer(OpenState::default);
     // A file whose latest blob hasn't reached the hub yet; shown as
     // "syncing" (never as an editable empty file) while `on_open` retries.
     let syncing = use_state(|| None::<String>);
@@ -334,15 +115,18 @@ pub fn vault_tree(props: &Props) -> Html {
     let open_seq = use_mut_ref(|| 0u32);
     let error = use_state(String::new);
     let status = use_state(String::new);
-    // The in-flight edit: Some(text) once the open file's content has
-    // been touched; cleared on save / file switch. Drives the header's
-    // Save affordance.
-    let draft = use_state(|| None::<String>);
-    let meta = use_state(|| None::<VaultMeta>);
+    // Unsaved edits, per path, and the one write in flight.
+    let queue: Queue = use_mut_ref(SaveQueue::default);
+    let save_state = use_state(|| SaveState::Idle);
+    // Whether an autosave timer is pending; edits made while it is ride
+    // along in its write.
+    let timer_armed = use_mut_ref(|| false);
+    let meta = use_state(|| None::<VaultInfo>);
     let devices = use_state(Vec::<Device>::new);
     let web_did = use_state(String::new);
     let show_details = use_state(|| false);
     let show_history = use_state(|| false);
+    let show_palette = use_state(|| false);
     // A failed restore, shown inside the history view (the live error
     // banner is hidden under it) — the view stays open to retry.
     let restore_error = use_state(String::new);
@@ -354,40 +138,114 @@ pub fn vault_tree(props: &Props) -> Html {
     let upload_input = use_node_ref();
 
     // Rebuild the whole visible tree: refresh from the hub, walk root +
-    // every expanded dir, refresh manifest metadata. Expansion state is
-    // preserved, so this is the one refresh path after any mutation.
-    let rebuild = {
-        let fs = fs.clone();
-        let expanded = expanded.clone();
+    // every expanded dir, refresh manifest metadata. `rebuild` only bumps
+    // a tick; the effect runs with the current expansion set, so a
+    // rebuild asked for from an old render's task never walks a stale one.
+    let (rebuild_tick, rebuild) = use_tick();
+    {
+        let backend = backend.clone();
         let rows = rows.clone();
         let error = error.clone();
         let meta = meta.clone();
-        Callback::from(move |_: ()| {
-            let fs = fs.clone();
-            let expanded_set = (*expanded).clone();
-            let rows = rows.clone();
-            let error = error.clone();
-            let meta = meta.clone();
-            yew::platform::spawn_local(async move {
-                // Busy means a task holds an open vault.
-                if fs.try_borrow().is_ok_and(|g| g.is_none()) {
-                    return; // pre-open effect fire; mount path rebuilds explicitly
-                }
-                refresh(&fs).await;
-                let lister = {
-                    let fs = fs.clone();
-                    move |p: String| {
-                        let fs = fs.clone();
-                        async move { ls(&fs, p).await }
+        use_effect_with(
+            (rebuild_tick, (*expanded).clone()),
+            move |(_, expanded_set)| {
+                let expanded_set = expanded_set.clone();
+                yew::platform::spawn_local(async move {
+                    if backend.state() == BackendState::Closed {
+                        return; // pre-open effect fire; mount path rebuilds explicitly
                     }
-                };
-                match build_rows(lister, &expanded_set).await {
-                    Ok(r) => rows.set(Some(r)),
-                    Err(e) => error.set(e),
-                }
-                if let Some(m) = read_meta(&fs) {
+                    backend.refresh().await;
+                    let lister = {
+                        let backend = backend.clone();
+                        move |p: String| {
+                            let backend = backend.clone();
+                            async move { backend.ls(p).await }
+                        }
+                    };
+                    match build_rows(lister, &expanded_set).await {
+                        Ok(r) => rows.set(Some(r)),
+                        Err(e) => error.set(e),
+                    }
+                    if let Some(m) = backend.meta() {
+                        meta.set(Some(m));
+                    }
+                });
+                || ()
+            },
+        );
+    }
+
+    // --- autosave ---
+
+    let on_save = {
+        let open_file = open_file.dispatcher();
+        let save_state = save_state.setter();
+        let meta = meta.setter();
+        let backend = backend.clone();
+        Callback::from(move |ev: SaveEvent| match ev {
+            SaveEvent::Saving => save_state.set(SaveState::Saving),
+            SaveEvent::Saved { path, text } => {
+                open_file.dispatch(OpenAction::Saved { path, text });
+                if let Some(m) = backend.meta() {
                     meta.set(Some(m));
                 }
+                save_state.set(SaveState::Saved);
+            }
+            SaveEvent::Failed(e) => save_state.set(SaveState::Failed(e)),
+        })
+    };
+
+    // Write every draft now (best effort; failures park them for the
+    // next flush and show in the header).
+    let flush = {
+        let backend = backend.clone();
+        let queue = queue.clone();
+        let on_save = on_save.clone();
+        Callback::from(move |_: ()| {
+            queue.borrow_mut().flush();
+            let backend = backend.clone();
+            let queue = queue.clone();
+            let on_save = on_save.clone();
+            yew::platform::spawn_local(async move { drain(&backend, &queue, &on_save).await });
+        })
+    };
+    use_lifecycle_flush(flush.clone(), queue.clone());
+    // Leaving the page (another route) flushes too.
+    {
+        let flush = flush.clone();
+        use_effect_with((), move |_| move || flush.emit(()));
+    }
+
+    // The editor streams its text; the page queues it and saves on a
+    // timer armed by the first unsaved edit.
+    let on_change = {
+        let path = open_file.0.as_ref().map(|f| f.path.clone());
+        let queue = queue.clone();
+        let timer_armed = timer_armed.clone();
+        let flush = flush.clone();
+        let status = status.clone();
+        let save_state = save_state.clone();
+        Callback::from(move |text: String| {
+            let Some(path) = path.clone() else {
+                return;
+            };
+            queue.borrow_mut().edit(&path, text);
+            if !status.is_empty() {
+                status.set(String::new());
+            }
+            if *save_state == SaveState::Saved {
+                save_state.set(SaveState::Idle);
+            }
+            if timer_armed.replace(true) {
+                return;
+            }
+            let timer_armed = timer_armed.clone();
+            let flush = flush.clone();
+            yew::platform::spawn_local(async move {
+                sleep(AUTOSAVE_MS).await;
+                timer_armed.replace(false);
+                flush.emit(());
             });
         })
     };
@@ -395,7 +253,9 @@ pub fn vault_tree(props: &Props) -> Html {
     // Open on mount, then build the root tree; load the account's vault
     // list (switcher) + devices (details panel).
     {
-        let fs = fs.clone();
+        let backend = backend.clone();
+        let queue = queue.clone();
+        let on_save = on_save.clone();
         let rebuild = rebuild.clone();
         let error = error.clone();
         let devices = devices.clone();
@@ -403,29 +263,29 @@ pub fn vault_tree(props: &Props) -> Html {
         let vaults = vaults.clone();
         let expanded = expanded.clone();
         let rows = rows.clone();
-        let open_file = open_file.clone();
+        let open_file = open_file.dispatcher();
         let syncing = syncing.clone();
         let open_seq = open_seq.clone();
         let show_history = show_history.clone();
-        let vault_id = props.vault_id.clone();
-        use_effect_with(vault_id.clone(), move |_| {
-            let fs = fs.clone();
-            let rebuild = rebuild.clone();
-            let error = error.clone();
-            let devices = devices.clone();
-            let web_did = web_did.clone();
-            let vaults = vaults.clone();
+        let vault_id = props.vault_id;
+        use_effect_with(vault_id, move |_| {
             // Fresh vault, fresh view state: expansion paths and the
             // open file belong to the PREVIOUS vault.
             expanded.set(BTreeSet::new());
             show_history.set(false);
             rows.set(None);
-            open_file.set(None);
+            open_file.dispatch(OpenAction::Show(None));
             syncing.set(None);
             *open_seq.borrow_mut() += 1;
             crate::pages::workspace::remember_vault(&vault_id);
             yew::platform::spawn_local(async move {
-                match open(&fs, vault_id).await {
+                // Unsaved drafts belong to the previous vault: write them
+                // there before it's swapped out.
+                queue.borrow_mut().flush();
+                drain(&backend, &queue, &on_save).await;
+                settled(&queue).await;
+                queue.borrow_mut().clear();
+                match backend.open(vault_id).await {
                     Ok(()) => rebuild.emit(()),
                     Err(e) => error.set(e),
                 }
@@ -443,19 +303,9 @@ pub fn vault_tree(props: &Props) -> Html {
         });
     }
 
-    // Expansion set drives the tree; rebuild on every change.
-    {
-        let rebuild = rebuild.clone();
-        let expanded_now = (*expanded).clone();
-        use_effect_with(expanded_now, move |_| {
-            rebuild.emit(());
-            || ()
-        });
-    }
-
     // Revoke the open file's object URL when it changes or we unmount.
     {
-        let url = (*open_file).as_ref().map(|p| p.url.clone());
+        let url = open_file.0.as_ref().map(|p| p.url.clone());
         use_effect_with(url, move |url| {
             let url = url.clone();
             move || {
@@ -481,25 +331,32 @@ pub fn vault_tree(props: &Props) -> Html {
     // written since the last rebuild). A blob the hub is still mirroring
     // shows "syncing" and is retried; any failure clears the pane, so a
     // stale copy is never left up to be edited and saved over the remote
-    // write.
+    // write. The file being left is flushed first; a file that still has
+    // unsaved text (a write that failed) reopens with that text.
     let on_open = {
-        let fs = fs.clone();
-        let open_file = open_file.clone();
+        let backend = backend.clone();
+        let queue = queue.clone();
+        let flush = flush.clone();
+        let open_file = open_file.dispatcher();
         let syncing = syncing.clone();
         let open_seq = open_seq.clone();
         let error = error.clone();
+        let status = status.clone();
         let rebuild = rebuild.clone();
         Callback::from(move |path: String| {
+            flush.emit(());
             let ticket = {
                 let mut seq = open_seq.borrow_mut();
                 *seq += 1;
                 *seq
             };
-            let fs = fs.clone();
+            let backend = backend.clone();
+            let queue = queue.clone();
             let open_file = open_file.clone();
             let syncing = syncing.clone();
             let open_seq = open_seq.clone();
             let error = error.clone();
+            let status = status.clone();
             let rebuild = rebuild.clone();
             yew::platform::spawn_local(async move {
                 let current = || *open_seq.borrow() == ticket;
@@ -510,9 +367,8 @@ pub fn vault_tree(props: &Props) -> Html {
                     if !current() {
                         return;
                     }
-                    let changed = refresh(&fs).await;
-                    let loaded = load_file(&fs, path.clone()).await;
-                    // Rebuild only once our borrow is released.
+                    let changed = backend.refresh().await;
+                    let loaded = load_file(&backend, path.clone()).await;
                     if changed {
                         rebuild.emit(());
                     }
@@ -520,18 +376,22 @@ pub fn vault_tree(props: &Props) -> Html {
                         return;
                     }
                     error.set(String::new());
+                    status.set(String::new());
                     match loaded {
-                        Ok(f) => {
+                        Ok(mut f) => {
+                            if let Some(text) = queue.borrow().unsaved(&path) {
+                                f.text = Some(text.to_string());
+                            }
                             syncing.set(None);
-                            open_file.set(Some(f));
+                            open_file.dispatch(OpenAction::Show(Some(f)));
                             return;
                         }
-                        Err(LoadError::Pending) => {
-                            open_file.set(None);
+                        Err(ReadError::Pending) => {
+                            open_file.dispatch(OpenAction::Show(None));
                             syncing.set(Some(path.clone()));
                         }
-                        Err(LoadError::Failed(e)) => {
-                            open_file.set(None);
+                        Err(ReadError::Failed(e)) => {
+                            open_file.dispatch(OpenAction::Show(None));
                             syncing.set(None);
                             error.set(e);
                             return;
@@ -545,82 +405,19 @@ pub fn vault_tree(props: &Props) -> Html {
             });
         })
     };
-    // A fresh load (another file, or a re-open) abandons the draft: the
-    // editor remounts with the loaded text.
-    {
-        let draft = draft.clone();
-        let status = status.clone();
-        let loaded_now = (*open_file).as_ref().map(|f| (f.path.clone(), f.rev));
-        use_effect_with(loaded_now, move |_| {
-            draft.set(None);
-            status.set(String::new());
-            || ()
-        });
-    }
-
-    let save_draft = {
-        let fs = fs.clone();
-        let open_file = open_file.clone();
-        let draft = draft.clone();
-        let error = error.clone();
-        let status = status.clone();
-        let rebuild = rebuild.clone();
-        Callback::from(move |_: MouseEvent| {
-            let Some(path) = (*open_file).as_ref().map(|f| f.path.clone()) else {
-                return;
-            };
-            let Some(text) = (*draft).clone() else {
-                return;
-            };
-            let fs = fs.clone();
-            let open_file = open_file.clone();
-            let draft = draft.clone();
-            let error = error.clone();
-            let status = status.clone();
-            let rebuild = rebuild.clone();
-            status.set("saving\u{2026}".to_string());
-            yew::platform::spawn_local(async move {
-                match add_and_save(&fs, path.clone(), text.into_bytes()).await {
-                    Ok(()) => {
-                        status.set("saved".to_string());
-                        draft.set(None);
-                        if let Ok(f) = load_file(&fs, path).await {
-                            open_file.set(Some(f));
-                        }
-                        rebuild.emit(());
-                    }
-                    Err(e) => {
-                        status.set(String::new());
-                        error.set(e);
-                    }
-                }
-            });
-        })
-    };
 
     // Follow remote edits: every FOLLOW_MS a ticker bumps `follow_tick`,
     // and the effect below (which sees this render's state) fast-forwards
     // to the hub's head. A changed head rebuilds the tree and reloads the
-    // open file if its bytes changed — unless it holds an unsaved draft,
-    // which is never clobbered. A reload that couldn't land (blob still
-    // mirroring) leaves `follow_stale` set so the next tick tries again.
-    let follow_tick = use_state(|| 0u32);
-    let follow_count = use_mut_ref(|| 0u32);
+    // open file if its bytes changed — unless it holds unsaved text,
+    // which is never clobbered. Our own autosaves don't count: they move
+    // the local head too (no change to follow) and update the open file's
+    // digest in place. A reload that couldn't land (blob still mirroring)
+    // leaves `follow_stale` set so the next tick tries again.
+    let (follow_tick, follow) = use_tick();
     let follow_stale = use_mut_ref(|| false);
-    // Mirrors `draft.is_some()` for the follow task, which outlives the
-    // render it was spawned from.
-    let dirty = use_mut_ref(|| false);
     {
-        let dirty = dirty.clone();
-        use_effect_with(draft.is_some(), move |&d| {
-            *dirty.borrow_mut() = d;
-            || ()
-        });
-    }
-    {
-        let tick = follow_tick.setter();
-        let count = follow_count.clone();
-        use_effect_with(props.vault_id.clone(), move |_| {
+        use_effect_with(props.vault_id, move |_| {
             let alive = Rc::new(Cell::new(true));
             {
                 let alive = alive.clone();
@@ -631,12 +428,7 @@ pub fn vault_tree(props: &Props) -> Html {
                             return;
                         }
                         if !tab_hidden() {
-                            let n = {
-                                let mut c = count.borrow_mut();
-                                *c = c.wrapping_add(1);
-                                *c
-                            };
-                            tick.set(n);
+                            follow.emit(());
                         }
                     }
                 });
@@ -645,21 +437,21 @@ pub fn vault_tree(props: &Props) -> Html {
         });
     }
     {
-        let fs = fs.clone();
-        let open_file = open_file.clone();
+        let backend = backend.clone();
+        let queue = queue.clone();
+        let open = open_file.0.clone();
+        let open_file = open_file.dispatcher();
         let open_seq = open_seq.clone();
         let follow_stale = follow_stale.clone();
-        let dirty = dirty.clone();
         let status = status.clone();
         let rebuild = rebuild.clone();
-        use_effect_with(*follow_tick, move |&tick| {
-            // A user action holds the handle: it refreshes on its own.
-            let idle = fs.try_borrow().is_ok_and(|g| g.is_some());
-            if tick > 0 && idle {
-                let open = (*open_file).clone();
+        use_effect_with(follow_tick, move |&tick| {
+            // A user action or a save holds the handle: it refreshes on
+            // its own.
+            if tick > 0 && backend.state() == BackendState::Idle {
                 let ticket = *open_seq.borrow();
                 yew::platform::spawn_local(async move {
-                    let changed = refresh(&fs).await;
+                    let changed = backend.refresh().await;
                     if changed {
                         rebuild.emit(());
                     }
@@ -670,26 +462,27 @@ pub fn vault_tree(props: &Props) -> Html {
                     let Some(open) = open else {
                         return;
                     };
-                    if *dirty.borrow() {
+                    let dirty = || queue.borrow().is_dirty(&open.path);
+                    if dirty() {
                         status.set("changed on another device".to_string());
                         return;
                     }
-                    let loaded = load_file(&fs, open.path.clone()).await;
+                    let loaded = load_file(&backend, open.path.clone()).await;
                     // The user opened another file or started typing
                     // while we loaded: their view wins.
-                    let current = *open_seq.borrow() == ticket && !*dirty.borrow();
+                    let current = *open_seq.borrow() == ticket && !dirty();
                     match loaded {
-                        Ok(f) if current && f.digest != open.digest => {
-                            open_file.set(Some(f));
-                        }
+                        Ok(f) if current => open_file.dispatch(OpenAction::Remote(f)),
                         Ok(f) => {
                             let _ = web_sys::Url::revoke_object_url(&f.url);
                         }
-                        Err(LoadError::Pending) => *follow_stale.borrow_mut() = true,
+                        Err(ReadError::Pending) => *follow_stale.borrow_mut() = true,
                         // Removed or renamed elsewhere: don't leave a
                         // stale copy up to be saved back.
-                        Err(LoadError::Failed(_)) if current => open_file.set(None),
-                        Err(LoadError::Failed(_)) => {}
+                        Err(ReadError::Failed(_)) if current => {
+                            open_file.dispatch(OpenAction::Removed(open.path.clone()))
+                        }
+                        Err(ReadError::Failed(_)) => {}
                     }
                 });
             }
@@ -697,20 +490,12 @@ pub fn vault_tree(props: &Props) -> Html {
         });
     }
 
-    let on_change = {
-        let draft = draft.clone();
-        let status = status.clone();
-        Callback::from(move |text: String| {
-            draft.set(Some(text));
-            status.set(String::new());
-        })
-    };
-
     // --- creation / destruction (ctx menu + docked New) ---
 
     let new_note_in = {
-        let fs = fs.clone();
-        let open_file = open_file.clone();
+        let backend = backend.clone();
+        let flush = flush.clone();
+        let open_file = open_file.dispatcher();
         let syncing = syncing.clone();
         let open_seq = open_seq.clone();
         let error = error.clone();
@@ -720,7 +505,8 @@ pub fn vault_tree(props: &Props) -> Html {
             if !name.to_ascii_lowercase().ends_with(".md") {
                 name.push_str(".md");
             }
-            let fs = fs.clone();
+            flush.emit(());
+            let backend = backend.clone();
             let path = joined(&dir, &name);
             let open_file = open_file.clone();
             let syncing = syncing.clone();
@@ -730,13 +516,13 @@ pub fn vault_tree(props: &Props) -> Html {
             let rebuild = rebuild.clone();
             status.set(format!("creating {name}\u{2026}"));
             yew::platform::spawn_local(async move {
-                match add_and_save(&fs, path.clone(), Vec::new()).await {
+                match backend.write(path.clone(), Vec::new()).await {
                     Ok(()) => {
                         status.set(String::new());
-                        if let Ok(f) = load_file(&fs, path).await {
+                        if let Ok(f) = load_file(&backend, path).await {
                             *open_seq.borrow_mut() += 1;
                             syncing.set(None);
-                            open_file.set(Some(f));
+                            open_file.dispatch(OpenAction::Show(Some(f)));
                         }
                         rebuild.emit(());
                     }
@@ -750,19 +536,19 @@ pub fn vault_tree(props: &Props) -> Html {
     };
 
     let new_folder_in = {
-        let fs = fs.clone();
+        let backend = backend.clone();
         let error = error.clone();
         let status = status.clone();
         let rebuild = rebuild.clone();
         Callback::from(move |(dir, name): (String, String)| {
-            let fs = fs.clone();
+            let backend = backend.clone();
             let path = joined(&dir, &name);
             let error = error.clone();
             let status = status.clone();
             let rebuild = rebuild.clone();
             status.set(format!("creating {name}\u{2026}"));
             yew::platform::spawn_local(async move {
-                match mkdir_and_save(&fs, path).await {
+                match backend.mkdir(path).await {
                     Ok(()) => {
                         status.set(String::new());
                         rebuild.emit(());
@@ -776,27 +562,31 @@ pub fn vault_tree(props: &Props) -> Html {
         })
     };
 
+    // Deleting drops the path's unsaved text and waits out a write in
+    // flight, so autosave can't recreate what was just removed.
     let remove_path = {
-        let fs = fs.clone();
-        let open_file = open_file.clone();
+        let backend = backend.clone();
+        let queue = queue.clone();
+        let open_file = open_file.dispatcher();
         let error = error.clone();
         let status = status.clone();
         let rebuild = rebuild.clone();
         Callback::from(move |path: String| {
             let name = path.rsplit('/').next().unwrap_or_default().to_string();
-            let fs = fs.clone();
+            queue.borrow_mut().discard(&path);
+            let backend = backend.clone();
+            let queue = queue.clone();
             let open_file = open_file.clone();
             let error = error.clone();
             let status = status.clone();
             let rebuild = rebuild.clone();
             status.set(format!("deleting {name}\u{2026}"));
             yew::platform::spawn_local(async move {
-                match rm_and_save(&fs, path.clone()).await {
+                settled(&queue).await;
+                match backend.rm(path.clone()).await {
                     Ok(()) => {
                         status.set(String::new());
-                        if (*open_file).as_ref().is_some_and(|f| f.path == path) {
-                            open_file.set(None);
-                        }
+                        open_file.dispatch(OpenAction::Removed(path));
                         rebuild.emit(());
                     }
                     Err(e) => {
@@ -809,7 +599,7 @@ pub fn vault_tree(props: &Props) -> Html {
     };
 
     let upload_files = {
-        let fs = fs.clone();
+        let backend = backend.clone();
         let error = error.clone();
         let status = status.clone();
         let rebuild = rebuild.clone();
@@ -828,7 +618,7 @@ pub fn vault_tree(props: &Props) -> Html {
             if picked.is_empty() {
                 return;
             }
-            let fs = fs.clone();
+            let backend = backend.clone();
             let dir = (*upload_dir).clone();
             let error = error.clone();
             let status = status.clone();
@@ -845,7 +635,7 @@ pub fn vault_tree(props: &Props) -> Html {
                             return;
                         }
                     };
-                    if let Err(e) = add_and_save(&fs, joined(&dir, &name), bytes).await {
+                    if let Err(e) = backend.write(joined(&dir, &name), bytes).await {
                         status.set(String::new());
                         error.set(e);
                         return;
@@ -858,8 +648,11 @@ pub fn vault_tree(props: &Props) -> Html {
     };
 
     // Drag & drop: move `from` into directory `into` (append its name).
+    // Pending text is written first, so it lands before the move.
     let on_move = {
-        let fs = fs.clone();
+        let backend = backend.clone();
+        let queue = queue.clone();
+        let flush = flush.clone();
         let open_file = open_file.clone();
         let error = error.clone();
         let status = status.clone();
@@ -870,20 +663,24 @@ pub fn vault_tree(props: &Props) -> Html {
             if to == from {
                 return;
             }
-            let fs = fs.clone();
-            let open_file = open_file.clone();
+            flush.emit(());
+            let follows_open = open_file.0.as_ref().is_some_and(|f| f.path == from);
+            let backend = backend.clone();
+            let queue = queue.clone();
+            let open_file = open_file.dispatcher();
             let error = error.clone();
             let status = status.clone();
             let rebuild = rebuild.clone();
             status.set(format!("moving {name}\u{2026}"));
             yew::platform::spawn_local(async move {
-                match mv_and_save(&fs, from.clone(), to.clone()).await {
+                settled(&queue).await;
+                match backend.mv(from.clone(), to.clone()).await {
                     Ok(()) => {
                         status.set(String::new());
                         // If the open file moved, follow it to the new path.
-                        if (*open_file).as_ref().is_some_and(|f| f.path == from) {
-                            if let Ok(f) = load_file(&fs, to).await {
-                                open_file.set(Some(f));
+                        if follows_open {
+                            if let Ok(file) = load_file(&backend, to).await {
+                                open_file.dispatch(OpenAction::Moved { from, file });
                             }
                         }
                         rebuild.emit(());
@@ -988,9 +785,10 @@ pub fn vault_tree(props: &Props) -> Html {
 
     let vault_title = match &*meta {
         Some(m) if !m.name.is_empty() => m.name.clone(),
-        _ => short_id(&props.vault_id),
+        _ => short_id(&props.vault_id.to_string()),
     };
-    let active = (*open_file)
+    let active = open_file
+        .0
         .as_ref()
         .map(|f| f.path.clone())
         .or_else(|| (*syncing).clone());
@@ -1001,11 +799,12 @@ pub fn vault_tree(props: &Props) -> Html {
         items.push(html! {
             <HeaderMenu class={classes!("vault-switch")}
                 trigger_class={classes!("app-header__crumb", "app-header__crumb--current", "vault-switch__trigger")}
-                trigger={html! { <>{ vault_title.clone() }{ " \u{25BE}" }</> }}>
+                trigger={html! { <>{ vault_title.clone() }{ icon(Icon::Chevron, None) }</> }}>
                 { for vaults.iter().map(|v| {
-                    let name = if v.name.is_empty() { short_id(&v.vault_id.to_string()) } else { v.name.clone() };
+                    let id = v.vault_id;
+                    let name = if v.name.is_empty() { short_id(&id.to_string()) } else { v.name.clone() };
                     html! {
-                        <Link<Route> to={Route::Vault { id: v.vault_id.to_string() }} classes="app-menu__item">
+                        <Link<Route> to={Route::Vault { id }} classes="app-menu__item">
                             { name }
                         </Link<Route>>
                     }
@@ -1016,13 +815,31 @@ pub fn vault_tree(props: &Props) -> Html {
                 </button>
             </HeaderMenu>
         });
-        if let Some(f) = &*open_file {
+        if let Some(f) = &open_file.0 {
             for seg in f.path.trim_start_matches('/').split('/') {
                 items.push(html! { <span class="app-header__sep">{ "/" }</span> });
                 items.push(html! { <span class="app-header__crumb app-header__crumb--current">{ seg.to_string() }</span> });
             }
         }
         items
+    };
+
+    // Narrow screens show the tree OR the open file (CSS keys off the
+    // `--detail` modifier); the header back control returns to the tree.
+    let detail = shows_detail(open_file.0.is_some(), syncing.is_some(), !error.is_empty());
+    let on_back = {
+        let flush = flush.clone();
+        let open_file = open_file.dispatcher();
+        let syncing = syncing.clone();
+        let open_seq = open_seq.clone();
+        let error = error.clone();
+        Callback::from(move |_: MouseEvent| {
+            flush.emit(());
+            *open_seq.borrow_mut() += 1;
+            open_file.dispatch(OpenAction::Show(None));
+            syncing.set(None);
+            error.set(String::new());
+        })
     };
 
     let toggle_details = {
@@ -1033,16 +850,56 @@ pub fn vault_tree(props: &Props) -> Html {
     let toggle_history = {
         let show_history = show_history.clone();
         let restore_error = restore_error.clone();
+        let flush = flush.clone();
         Callback::from(move |_: MouseEvent| {
+            flush.emit(());
             restore_error.set(String::new());
             show_history.set(!*show_history);
+        })
+    };
+
+    // Cmd/Ctrl+K (or the header button) opens the palette; its choices
+    // run through the same paths as the tree and header.
+    {
+        let show_palette = show_palette.setter();
+        use_palette_shortcut(Callback::from(move |_: ()| show_palette.set(true)));
+    }
+    let on_palette_action = {
+        let dialog = dialog.clone();
+        let flush = flush.clone();
+        let show_history = show_history.clone();
+        let restore_error = restore_error.clone();
+        let show_details = show_details.clone();
+        let navigator = navigator.clone();
+        let open_path = open_file.0.as_ref().map(|f| f.path.clone());
+        Callback::from(move |action: PaletteAction| match action {
+            PaletteAction::NewNote => dialog.set(Some(Dialog::NewNote {
+                dir: "/".to_string(),
+            })),
+            PaletteAction::NewFolder => dialog.set(Some(Dialog::NewFolder {
+                dir: "/".to_string(),
+            })),
+            PaletteAction::DeleteOpenFile => {
+                if let Some(path) = open_path.clone() {
+                    dialog.set(Some(Dialog::Delete { path }));
+                }
+            }
+            PaletteAction::SaveNow => flush.emit(()),
+            PaletteAction::History => {
+                flush.emit(());
+                restore_error.set(String::new());
+                show_history.set(true);
+            }
+            PaletteAction::Details => show_details.set(true),
+            PaletteAction::SwitchVault(id) => navigator.push(&Route::Vault { id }),
         })
     };
 
     // Restore = write the historical bytes forward as a normal save (the
     // chain only ever grows), then return to the live tree on that file.
     let on_restore = {
-        let fs = fs.clone();
+        let backend = backend.clone();
+        let queue = queue.clone();
         let show_history = show_history.clone();
         let restore_error = restore_error.clone();
         let status = status.clone();
@@ -1050,7 +907,10 @@ pub fn vault_tree(props: &Props) -> Html {
         let on_open = on_open.clone();
         Callback::from(move |r: Restore| {
             let name = r.path.rsplit('/').next().unwrap_or_default().to_string();
-            let fs = fs.clone();
+            // The restored bytes win over any text still parked for the file.
+            queue.borrow_mut().discard(&r.path);
+            let backend = backend.clone();
+            let queue = queue.clone();
             let show_history = show_history.clone();
             let restore_error = restore_error.clone();
             let status = status.clone();
@@ -1059,7 +919,8 @@ pub fn vault_tree(props: &Props) -> Html {
             restore_error.set(String::new());
             status.set(format!("restoring {name}\u{2026}"));
             yew::platform::spawn_local(async move {
-                match add_and_save(&fs, r.path.clone(), r.bytes).await {
+                settled(&queue).await;
+                match backend.write(r.path.clone(), r.bytes).await {
                     Ok(()) => {
                         status.set(format!("restored {name} from version {}", r.height));
                         show_history.set(false);
@@ -1105,32 +966,39 @@ pub fn vault_tree(props: &Props) -> Html {
 
     html! {
         <>
-            <header class="app-header">
-                <HeaderMenu trigger={html! { "\u{2630}" }}>
+            <header class={classes!("app-header", (detail && !*show_history).then_some("app-header--detail"))}>
+                <HeaderMenu trigger={menu_icon()}>
                     <Link<Route> to={Route::Settings} classes="app-menu__item">{ "Settings" }</Link<Route>>
                     <SignOutItem />
                 </HeaderMenu>
+                <button type="button" class="app-header__back" onclick={on_back}>
+                    { icon(Icon::Back, Some("Back to files")) }
+                </button>
                 <div class="app-header__slot app-header__slot--left">{ crumbs }</div>
                 <div class="app-header__slot app-header__slot--right">
                     <span id="save-status" class="app-header__status">{ (*status).clone() }</span>
-                    if draft.is_some() {
-                        <button type="button" class="app-header__btn app-header__btn--save" onclick={save_draft.clone()}>
-                            { "Save" }
-                        </button>
-                    }
+                    { save_indicator(&save_state) }
+                    <button type="button" class="app-header__btn app-header__btn--palette"
+                        title="Command palette (Ctrl/Cmd+K)" aria-label="Command palette"
+                        onclick={{
+                            let show_palette = show_palette.clone();
+                            Callback::from(move |_: MouseEvent| show_palette.set(true))
+                        }}>
+                        { "\u{2315}" }
+                    </button>
                     <button type="button"
                         class={classes!("app-header__btn", show_history.then_some("app-header__btn--on"))}
                         title="Version history" onclick={toggle_history}>
                         { "History" }
                     </button>
                     <button type="button" class="app-header__btn" title="Vault details" onclick={toggle_details}>
-                        { "\u{24D8}" }
+                        { icon(Icon::Info, Some("Vault details")) }
                     </button>
                 </div>
             </header>
 
             if *show_history {
-                <HistoryView vault_id={props.vault_id.clone()} devices={(*devices).clone()}
+                <HistoryView vault_id={props.vault_id} devices={(*devices).clone()}
                     restore_error={(*restore_error).clone()}
                     on_close={{
                         let show_history = show_history.clone();
@@ -1142,9 +1010,10 @@ pub fn vault_tree(props: &Props) -> Html {
                     }}
                     {on_restore} />
             }
-            // Hidden, not unmounted, under history: an unsaved draft keeps
-            // its textarea state for when the user comes back.
-            <div class="editor-layout" style={show_history.then_some("display:none;")}>
+            // Hidden, not unmounted, under history: the editor keeps its
+            // textarea state (cursor, scroll) for when the user comes back.
+            <div class={classes!("editor-layout", detail.then_some("editor-layout--detail"))}
+                style={show_history.then_some("display:none;")}>
                 {
                     match &*rows {
                         None => html! {
@@ -1181,7 +1050,7 @@ pub fn vault_tree(props: &Props) -> Html {
                             <div class="error" style="margin:1rem 2rem 0;">{ (*error).clone() }</div>
                         }
                         {
-                            match &*open_file {
+                            match &open_file.0 {
                                 Some(f) => html! {
                                     <EditorPane file={f.clone()} on_change={on_change.clone()} />
                                 },
@@ -1208,6 +1077,17 @@ pub fn vault_tree(props: &Props) -> Html {
 
             { ctx_menu_html.unwrap_or_default() }
             { details_modal }
+            if *show_palette {
+                <Palette backend={backend.clone()} vault_id={props.vault_id}
+                    vaults={(*vaults).clone()}
+                    open_path={open_file.0.as_ref().map(|f| f.path.clone())}
+                    on_action={on_palette_action}
+                    on_open={on_open.clone()}
+                    on_close={{
+                        let show_palette = show_palette.clone();
+                        Callback::from(move |_: ()| show_palette.set(false))
+                    }} />
+            }
             {
                 match &*dialog {
                     None => html! {},
@@ -1283,63 +1163,21 @@ pub fn vault_tree(props: &Props) -> Html {
     }
 }
 
-/// The Details panel: vault metadata + shareholders, flagging which keys
-/// are the signed-in user's own enrolled devices.
-fn details_panel(meta: &VaultMeta, devices: &[Device], web_did: &str) -> Html {
-    html! {
-        <div class="card vault-details" style="padding:1rem;">
-            <div style="display:grid;grid-template-columns:auto 1fr;gap:0.35rem 1rem;align-items:baseline;">
-                <span class="muted">{ "name" }</span>
-                <span>{ meta.name.clone() }</span>
-                <span class="muted">{ "height" }</span>
-                <span>{ meta.height }</span>
-                <span class="muted">{ "vault id" }</span>
-                <code style="word-break:break-all;font-size:0.72rem;">{ meta.vault_id.clone() }</code>
-                <span class="muted">{ "manifest" }</span>
-                <code style="word-break:break-all;font-size:0.72rem;">{ meta.manifest_hash.clone() }</code>
-            </div>
-            <h3 style="font-size:0.9rem;margin:1rem 0 0.5rem;">
-                { format!("Shareholders ({})", meta.shares.len()) }
-            </h3>
-            <div style="display:flex;flex-direction:column;gap:0.4rem;">
-                { for meta.shares.iter().map(|s| share_row(s, devices, web_did, &meta.author)) }
-            </div>
-        </div>
-    }
-}
-
-fn share_row(s: &ShareMeta, devices: &[Device], web_did: &str, author: &str) -> Html {
-    let mine = devices.iter().find(|d| d.pubkey.to_hex() == s.pubkey);
-    let is_author = s.pubkey == author;
-    // The web key's proper identity is the account `did:web` (reached via the
-    // hub), not the `did:key` sealed into the manifest. Only swap when we can
-    // confirm this share *is* our web key (its pubkey matches the web device).
-    let is_web_key = mine.is_some_and(|d| d.kind == DeviceKind::Web);
-    let did = if is_web_key && !web_did.is_empty() {
-        web_did.to_string()
-    } else {
-        s.did.clone()
-    };
-    html! {
-        <div style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0.6rem;border:1px solid hsl(var(--border));border-radius:var(--radius);">
-            <code style="font-size:0.72rem;word-break:break-all;">{ did }</code>
-            <span style="flex:1;"></span>
-            if is_author {
-                <span class="device-row__badge">{ "author" }</span>
-            }
-            if let Some(d) = mine {
-                <span class="device-row__badge device-row__badge--master">{ own_label(d) }</span>
-            } else {
-                <span class="device-row__badge">{ "external" }</span>
-            }
-        </div>
-    }
-}
-
-pub(crate) fn own_label(d: &Device) -> String {
-    match &d.label {
-        Some(l) if !l.is_empty() => l.clone(),
-        _ if d.kind == DeviceKind::Web => "your web key".to_string(),
-        _ => "your daemon".to_string(),
+/// The header's autosave indicator: "Saving…", a "Saved" that fades out,
+/// or why the last write failed (its text stays queued for the next).
+fn save_indicator(state: &SaveState) -> Html {
+    match state {
+        SaveState::Idle => Html::default(),
+        SaveState::Saving => html! {
+            <span class="app-header__status">{ "Saving\u{2026}" }</span>
+        },
+        SaveState::Saved => html! {
+            <span class="app-header__status app-header__status--fade">{ "Saved" }</span>
+        },
+        SaveState::Failed(e) => html! {
+            <span class="app-header__status app-header__status--error" title={e.clone()}>
+                { "Not saved \u{2014} retrying on your next edit" }
+            </span>
+        },
     }
 }

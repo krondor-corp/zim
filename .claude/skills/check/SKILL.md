@@ -44,6 +44,17 @@ Install: `curl -fsSL https://raw.githubusercontent.com/krondor-corp/confit/main/
    If the branch touches `confit.toml`, also run `confit validate` (lanes 10
    apart, no duplicate or already-bound ports).
 
+   If the branch touches `crates/zim-hub/web` (its own cargo workspace, not
+   covered above), also run from that directory:
+
+   ```bash
+   cargo test --lib
+   cargo clippy --target wasm32-unknown-unknown -- -D warnings
+   cargo fmt -- --check
+   ```
+
+   and `make build-web` from the root (the Trunk build).
+
 3. Report a summary:
    - Build: PASS/FAIL
    - Tests: PASS/FAIL

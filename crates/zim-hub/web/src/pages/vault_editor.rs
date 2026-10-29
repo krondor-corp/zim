@@ -1,10 +1,16 @@
 //! The pack document pane: centered `editor-container` with the big
 //! borderless title and ONE always-editable surface — no view/edit
-//! modes. Text lives in a page-colored textarea; the parent holds the
-//! draft and shows Save in the app header when changes are detected.
+//! modes. Text lives in a page-colored textarea that only reports its
+//! changes; the parent owns saving (autosave). Any editor that emits
+//! `on_change` with the full text can stand in for the textarea.
+//! `.md` files swap the textarea for Milkdown (`markdown_editor`).
 //! Non-text files render inline (image/pdf/video/audio).
 
 use yew::prelude::*;
+
+use zim_hub_web::markdown::is_markdown;
+
+use crate::pages::markdown_editor::MarkdownEditor;
 
 /// What the editor pane holds.
 #[derive(Clone, PartialEq)]
@@ -20,15 +26,16 @@ pub struct OpenFile {
     pub digest: u64,
     /// Unique per load. The textarea is uncontrolled (its text is written
     /// once per load, then left to the user), so it's keyed on this:
-    /// every (re)load remounts it with the freshly read text.
+    /// every (re)load remounts it with the freshly read text. An autosave
+    /// keeps it, so saving never disturbs the cursor.
     pub rev: u32,
 }
 
 #[derive(Properties, PartialEq)]
 pub struct EditorProps {
     pub file: OpenFile,
-    /// Every edit streams the draft up; the parent decides when it's
-    /// dirty and renders the Save affordance in the header.
+    /// Every edit streams the full text up; the parent queues and
+    /// autosaves it.
     pub on_change: Callback<String>,
 }
 
@@ -71,7 +78,9 @@ pub fn editor_pane(props: &EditorProps) -> Html {
                 <h1 class="editor-title" title={file.path.clone()}>{ title }</h1>
             </div>
             {
-                if editable {
+                if editable && is_markdown(&file.path) {
+                    html! { <MarkdownEditor file={file.clone()} on_change={props.on_change.clone()} /> }
+                } else if editable {
                     html! {
                         <textarea class="editor-textarea--doc" key={format!("{}#{}", file.path, file.rev)}
                             ref={textarea}

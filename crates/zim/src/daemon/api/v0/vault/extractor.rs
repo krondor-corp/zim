@@ -9,7 +9,7 @@ use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use zim_core::vault::VaultId;
-use zim_peer::{SqliteVaultLog, Vault};
+use zim_peer::{SqliteVaultLog, Vault, VaultLookupError};
 
 use crate::daemon::state::vault_lookup_response;
 use crate::ServiceState;
@@ -50,5 +50,21 @@ impl FromRequestParts<ServiceState> for VaultHandle {
             id: vault_id,
             vault,
         })
+    }
+}
+
+impl VaultHandle {
+    /// The vault to read from: the live head, or — when `at` is set —
+    /// the canonical version at that height. Read-only: a historical
+    /// handle must never be saved.
+    pub async fn at(
+        self,
+        state: &ServiceState,
+        at: Option<u64>,
+    ) -> Result<Vault<SqliteVaultLog>, VaultLookupError> {
+        match at {
+            None => Ok(self.vault),
+            Some(height) => state.peer().vault_at(self.id, height).await,
+        }
     }
 }

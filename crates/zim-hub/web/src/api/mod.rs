@@ -7,10 +7,8 @@
 //! routes still go through the SDK (`HubClient`/`WasmFs`).
 //!
 //! Wire types live in `zim_api::hub` (one definition for the server, the
-//! CLI, and this SPA); only [`FsEntry`] is local, since it mirrors what
-//! `WasmFs::ls` serializes — a browser-side shape, not a hub route.
+//! CLI, and this SPA).
 
-use serde::Deserialize;
 use zim_api::{ApiError, ApiRequest, Client, Url};
 
 // One definition per endpoint — server serializes, CLI + SPA deserialize.
@@ -18,15 +16,6 @@ pub use zim_api::hub::{
     AdminActionRequest, AdminUser, AdminUsers, AdminUsersRequest, Device, DeviceKind,
     DevicesRequest, Me, MeRequest, RemoveDeviceRequest, VaultItem, VaultsRequest,
 };
-
-/// One entry as `WasmFs::ls` serializes it.
-#[derive(Clone, PartialEq, Deserialize)]
-pub struct FsEntry {
-    pub name: String,
-    pub kind: String, // "file" | "dir"
-    pub hash: String,
-    pub mime: Option<String>,
-}
 
 /// A [`Client`] rooted at this page's origin. Cheap to build per call —
 /// reqwest's wasm client is a thin handle over the browser's `fetch`.

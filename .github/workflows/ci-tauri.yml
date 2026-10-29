@@ -1,0 +1,61 @@
+name: Desktop CI 🖥️
+
+# Lint + test for crates/zim-desktop (outside the root workspace, so
+# ci-rust.yml never sees it). No bundling here — release-desktop.yml
+# does that on tags.
+
+on:
+  workflow_call:
+
+jobs:
+  check:
+    name: Desktop App Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/zim-desktop/target
+          key: ${{ runner.os }}-tauri-ci-${{ hashFiles('crates/zim-desktop/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-tauri-ci-
+
+      # tauri's build script wants the frontend dist and the sidecar to
+      # exist. The checks never run the app, so empty stand-ins do.
+      - name: Stub frontend dist and sidecar
+        run: |
+          mkdir -p crates/zim-hub/web/dist
+          touch crates/zim-hub/web/dist/index.html
+          touch crates/zim-desktop/binaries/zim-x86_64-unknown-linux-gnu
+
+      - name: Check formatting
+        working-directory: crates/zim-desktop
+        run: cargo fmt -- --check
+
+      - name: Run clippy
+        working-directory: crates/zim-desktop
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Run tests
+        working-directory: crates/zim-desktop
+        run: cargo test --locked

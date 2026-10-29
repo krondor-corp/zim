@@ -233,3 +233,15 @@ git push origin main
 # Option 3: Manual release (fastest)
 cargo smart-release zim-peer --execute --no-publish --bump patch
 ```
+
+## Desktop app
+
+The desktop app (`crates/zim-desktop`) is released in lockstep with the `zim` CLI, not on its own train. It bundles the `zim` daemon as its sidecar, so a `zim-v*` tag is a desktop release too.
+
+- **Tag → release.** `release-cli.yml` builds the CLI binaries and creates the GitHub Release for the tag. `release-desktop.yml` runs on the same tag, builds the bundles, then waits for that release to exist and uploads to it (`gh release upload --clobber`). It never creates the release, so the two workflows can't race. The release body's desktop table is written by `release-cli.yml`.
+- **Version.** Stamped from the tag at build time (`cargo tauri build --config '{"version":"<tag version>"}'`). `crates/zim-desktop/tauri.conf.json` and its `Cargo.toml` carry placeholder versions; there is nothing to bump and release-plz needs no changes. The crate is outside the workspace, so release-plz doesn't see it.
+- **Artifacts.** macOS Apple Silicon `.dmg` (and a `_fuse` `.dmg` whose sidecar is built with `--features hub,fuse`; needs macFUSE), Linux x86_64 `.deb` and `.AppImage` (built on Ubuntu 22.04 for glibc compatibility).
+- **Per build.** `make desktop-sidecar PROFILE=release FEATURES=<features>` builds `zim` into `crates/zim-desktop/binaries/zim-<triple>`, then `cargo tauri build` runs `trunk build` for the frontend and bundles. `tauri-cli` is installed from crates.io (pinned, cached).
+- **Not signed.** No code signing or notarization yet: macOS users right-click → Open the first time (Gatekeeper).
+- **Manual run.** Actions → "Release Desktop" → "Run workflow" with a version, for a `zim-v<version>` release that already exists.
+- **CI.** `ci-tauri.yml` (called from `ci.yml`, part of CI Success) runs fmt, clippy and tests for the crate on Ubuntu. It doesn't bundle.

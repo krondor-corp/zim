@@ -58,8 +58,8 @@ hub: ## Start the hub in this worktree's dev tmux session (minio + dev-trust log
 	./bin/dev hub up
 
 .PHONY: desktop-sidecar
-desktop-sidecar: ## Build the `zim` binary the desktop app launches, into crates/zim-desktop/binaries/ (PROFILE=release for a bundle)
-	cargo build -p zim-cli --features hub $(if $(filter release,$(PROFILE)),--release)
+desktop-sidecar: ## Build the `zim` binary the desktop app launches, into crates/zim-desktop/binaries/ (PROFILE=release for a bundle; FEATURES=hub,fuse for the FUSE variant)
+	cargo build -p zim-cli --features $(or $(FEATURES),hub) $(if $(filter release,$(PROFILE)),--release)
 	cp "$${CARGO_TARGET_DIR:-target}/$(or $(PROFILE),debug)/zim" "crates/zim-desktop/binaries/zim-$$(rustc -vV | sed -n 's/host: //p')"
 
 .PHONY: desktop

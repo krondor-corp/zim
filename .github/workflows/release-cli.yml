@@ -176,6 +176,19 @@ jobs:
             | Linux (x86_64) | `zim-linux-x64-${{ steps.version.outputs.version }}` | No |
             | Linux (x86_64 + FUSE) | `zim-linux-x64-fuse-${{ steps.version.outputs.version }}` | Yes (requires libfuse3) |
 
+            ### Desktop app
+
+            Built by `release-desktop.yml` on the same tag and attached here a few minutes after the CLI binaries. It bundles the same `zim` daemon.
+
+            | Platform | File | FUSE Mount Support |
+            |----------|------|--------------------|
+            | macOS (Apple Silicon) | `zim_${{ steps.version.outputs.version }}_aarch64.dmg` | No |
+            | macOS (Apple Silicon + FUSE) | `zim_${{ steps.version.outputs.version }}_aarch64_fuse.dmg` | Yes (requires [macFUSE](https://macfuse.github.io/)) |
+            | Linux (Debian/Ubuntu) | `zim_${{ steps.version.outputs.version }}_amd64.deb` | No |
+            | Linux (portable) | `zim_${{ steps.version.outputs.version }}_amd64.AppImage` | No |
+
+            The macOS builds aren't signed or notarized: on first launch, right-click the app and choose Open (Gatekeeper).
+
             ### Install
 
             ```bash

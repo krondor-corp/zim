@@ -7,6 +7,11 @@
 //! uses. A service that exits before the shutdown signal (e.g. the
 //! peer's effect runner dying) trips a loud exit(2), so the service
 //! manager restarts us instead of running half-dead.
+//!
+//! Before booting anything it takes the exclusive `$ZIM_HOME/daemon.lock`
+//! (see [`crate::context::daemon_lock`]) so a home only ever has one
+//! daemon, then records the actually-bound API port in it once the
+//! listener is up.
 
 use std::fmt;
 use std::net::SocketAddr;
@@ -15,6 +20,7 @@ use async_trait::async_trait;
 use clap::Args;
 
 use crate::cli::op::Op;
+use crate::context::daemon_lock::{self, LockError};
 use crate::context::{ContextError, DaemonContext};
 use crate::daemon::state::{ServiceState, StateError};
 use crate::daemon::Config;
@@ -40,7 +46,12 @@ pub enum RunError {
     #[error(transparent)]
     State(#[from] StateError),
     #[error(transparent)]
-    Server(#[from] crate::daemon::HttpServerError),
+    Lock(#[from] LockError),
+    #[error("listener bind {addr}: {source}")]
+    Bind {
+        addr: SocketAddr,
+        source: std::io::Error,
+    },
     #[error("invalid bind: {0}")]
     BadBind(String),
 }
@@ -61,6 +72,10 @@ impl Op for Run {
             .parse()
             .map_err(|e: std::net::AddrParseError| RunError::BadBind(e.to_string()))?;
 
+        // One daemon per home: refuse before touching any store. Held
+        // until this fn returns (i.e. the process lifetime).
+        let mut lock = daemon_lock::acquire(&ctx.home)?;
+
         let state = ServiceState::boot(&ctx.home).await?;
 
         // Re-mount any vaults registered with `--auto`. Best-effort: a missing
@@ -68,7 +83,15 @@ impl Op for Run {
         #[cfg(feature = "fuse")]
         state.mounts().start_auto().await;
 
-        let config = Config::new(addr);
+        let bind_err = |source| RunError::Bind { addr, source };
+        let listener = tokio::net::TcpListener::bind(addr)
+            .await
+            .map_err(bind_err)?;
+        // Record the real port (`--port 0` binds an ephemeral one).
+        let bound = listener.local_addr().map_err(bind_err)?;
+        lock.record(bound.port())?;
+
+        let config = Config::new(bound);
 
         let (mut handle, shutdown_rx) = zim_peer::ShutdownHandle::new();
         let http_state = state.clone();
@@ -76,7 +99,8 @@ impl Op for Run {
         handle.push(
             "http",
             tokio::spawn(async move {
-                if let Err(e) = crate::daemon::run_api(config, http_state, http_rx).await {
+                if let Err(e) = crate::daemon::run_api(listener, config, http_state, http_rx).await
+                {
                     tracing::error!("http server error: {e}");
                 }
             }),
@@ -90,6 +114,7 @@ impl Op for Run {
         #[cfg(feature = "fuse")]
         state.mounts().stop_all().await;
 
+        drop(lock);
         Ok(RunOutput {})
     }
 }

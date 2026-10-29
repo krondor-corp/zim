@@ -8,6 +8,8 @@
 //!   per-command contexts
 //! - [`daemon`] — runtime state + axum API + health, plus the typed
 //!   [`daemon::api::client::ApiClient`]
+//! - [`hub`] (feature `hub`) — hub integration as a library, e.g. the
+//!   device-code login flow, for front ends other than the CLI
 //! - [`version`] — `BuildInfo` populated by `build.rs`
 //!
 //! The `command_enum!` macro at the crate root is exported from
@@ -18,6 +20,8 @@ pub mod context;
 pub mod daemon;
 #[cfg(feature = "fuse")]
 pub mod fuse;
+#[cfg(feature = "hub")]
+pub mod hub;
 #[cfg(feature = "fuse")]
 pub mod mount;
 pub mod version;

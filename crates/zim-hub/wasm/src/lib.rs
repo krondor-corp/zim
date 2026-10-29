@@ -142,15 +142,15 @@ pub use api::{HubClient, LocalKey};
 #[cfg(target_arch = "wasm32")]
 mod fs;
 #[cfg(target_arch = "wasm32")]
-pub use fs::WasmFs;
+pub use fs::{ShareInfo, VaultInfo, WasmFs};
 #[cfg(target_arch = "wasm32")]
 mod read;
 #[cfg(target_arch = "wasm32")]
-pub use read::BLOB_PENDING;
+pub use read::{DirEntry, EntryKind, BLOB_PENDING};
 #[cfg(target_arch = "wasm32")]
 mod version;
 #[cfg(target_arch = "wasm32")]
-pub use version::WasmVersion;
+pub use version::{Access, VersionSummary, WasmVersion};
 
 // ---------------------------------------------------------------------------
 // Device model / JWT auth (T-017 / T-017b)

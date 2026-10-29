@@ -3,10 +3,12 @@
 
 use yew::prelude::*;
 
-use crate::api::Device;
-use crate::backend::{ShareMeta, VaultMeta};
+use zim_crypto::PublicKey;
+use zim_wasm::{ShareInfo, VaultInfo};
 
-pub(crate) fn details_panel(meta: &VaultMeta, devices: &[Device], web_did: &str) -> Html {
+use crate::api::Device;
+
+pub(crate) fn details_panel(meta: &VaultInfo, devices: &[Device], web_did: &str) -> Html {
     html! {
         <div class="card vault-details" style="padding:1rem;">
             <div style="display:grid;grid-template-columns:auto 1fr;gap:0.35rem 1rem;align-items:baseline;">
@@ -15,9 +17,9 @@ pub(crate) fn details_panel(meta: &VaultMeta, devices: &[Device], web_did: &str)
                 <span class="muted">{ "height" }</span>
                 <span>{ meta.height }</span>
                 <span class="muted">{ "vault id" }</span>
-                <code style="word-break:break-all;font-size:0.72rem;">{ meta.vault_id.clone() }</code>
+                <code style="word-break:break-all;font-size:0.72rem;">{ meta.id.to_string() }</code>
                 <span class="muted">{ "manifest" }</span>
-                <code style="word-break:break-all;font-size:0.72rem;">{ meta.manifest_hash.clone() }</code>
+                <code style="word-break:break-all;font-size:0.72rem;">{ meta.manifest.to_string() }</code>
             </div>
             <h3 style="font-size:0.9rem;margin:1rem 0 0.5rem;">
                 { format!("Shareholders ({})", meta.shares.len()) }
@@ -29,9 +31,9 @@ pub(crate) fn details_panel(meta: &VaultMeta, devices: &[Device], web_did: &str)
     }
 }
 
-fn share_row(s: &ShareMeta, devices: &[Device], web_did: &str, author: &str) -> Html {
-    let mine = devices.iter().find(|d| d.pubkey == s.pubkey);
-    let is_author = s.pubkey == author;
+fn share_row(s: &ShareInfo, devices: &[Device], web_did: &str, author: &PublicKey) -> Html {
+    let mine = device_for(devices, &s.key);
+    let is_author = s.key == *author;
     // The web key's proper identity is the account `did:web` (reached via the
     // hub), not the `did:key` sealed into the manifest. Only swap when we can
     // confirm this share *is* our web key (its pubkey matches the web device).
@@ -39,7 +41,7 @@ fn share_row(s: &ShareMeta, devices: &[Device], web_did: &str, author: &str) -> 
     let did = if is_web_key && !web_did.is_empty() {
         web_did.to_string()
     } else {
-        s.did.clone()
+        s.identity.to_string()
     };
     html! {
         <div style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0.6rem;border:1px solid hsl(var(--border));border-radius:var(--radius);">
@@ -55,6 +57,13 @@ fn share_row(s: &ShareMeta, devices: &[Device], web_did: &str, author: &str) -> 
             }
         </div>
     }
+}
+
+/// The account device holding `key`, if it's one of ours.
+pub(crate) fn device_for<'a>(devices: &'a [Device], key: &PublicKey) -> Option<&'a Device> {
+    devices
+        .iter()
+        .find(|d| PublicKey::from_hex(&d.pubkey).is_ok_and(|k| k == *key))
 }
 
 pub(crate) fn own_label(d: &Device) -> String {

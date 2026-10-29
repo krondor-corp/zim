@@ -10,16 +10,15 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use yew::prelude::*;
-use zim_wasm::{WasmVersion, BLOB_PENDING};
+use zim_core::vault::VaultId;
+use zim_wasm::{DirEntry, VersionSummary, WasmVersion, BLOB_PENDING};
 
-use crate::api::{Device, FsEntry};
+use crate::api::Device;
 use crate::pages::vault_editor::OpenFile;
 use crate::pages::vault_file::{
     digest, guess_mime, is_textual, object_url, SYNC_RETRIES, SYNC_RETRY_MS,
 };
-use crate::pages::vault_history_view::{
-    author_label, file_preview, tree_list, version_row, VersionMeta,
-};
+use crate::pages::vault_history_view::{author_label, file_preview, tree_list, version_row};
 use crate::util::{jserr, origin, sleep};
 
 /// Versions fetched per page of the chain walk.
@@ -34,7 +33,7 @@ pub struct Restore {
 
 #[derive(Properties, PartialEq)]
 pub struct HistoryProps {
-    pub vault_id: String,
+    pub vault_id: VaultId,
     /// The account's devices — labels version authors.
     pub devices: Vec<Device>,
     pub on_close: Callback<()>,
@@ -80,16 +79,13 @@ async fn cat_synced(
     ))
 }
 
-async fn ls(v: &WasmVersion, dir: &str) -> Result<Vec<FsEntry>, String> {
-    let json = v.ls(dir.to_string()).await.map_err(|e| jserr(e.into()))?;
-    let mut entries: Vec<FsEntry> = serde_json::from_str(&json).map_err(|e| e.to_string())?;
-    entries.sort_by(|a, b| (a.kind != "dir", &a.name).cmp(&(b.kind != "dir", &b.name)));
-    Ok(entries)
+async fn ls(v: &WasmVersion, dir: &str) -> Result<Vec<DirEntry>, String> {
+    v.ls(dir).await.map_err(|e| jserr(e.into()))
 }
 
 #[function_component(HistoryView)]
 pub fn history_view(props: &HistoryProps) -> Html {
-    let versions = use_state(Vec::<VersionMeta>::new);
+    let versions = use_state(Vec::<VersionSummary>::new);
     // Height the next "Load older" page starts at; None once genesis is in.
     let older = use_state(|| None::<u64>);
     let head = use_state(|| None::<u64>);
@@ -101,7 +97,7 @@ pub fn history_view(props: &HistoryProps) -> Html {
     // still waiting on the hub.
     let file_seq = use_mut_ref(|| 0u32);
     let dir = use_state(|| "/".to_string());
-    let entries = use_state(|| None::<Vec<FsEntry>>);
+    let entries = use_state(|| None::<Vec<DirEntry>>);
     let preview = use_state(|| None::<OpenFile>);
     // Whether the previewed file is the same revision at the live head
     // (nothing to restore). `None` when the comparison couldn't be made.
@@ -116,20 +112,16 @@ pub fn history_view(props: &HistoryProps) -> Html {
         let older = older.clone();
         let head = head.clone();
         let error = error.clone();
-        let vault_id = props.vault_id.clone();
+        let vault_id = props.vault_id;
         Callback::from(move |from: Option<u64>| {
             let versions = versions.clone();
             let older = older.clone();
             let head = head.clone();
             let error = error.clone();
-            let vault_id = vault_id.clone();
             yew::platform::spawn_local(async move {
-                let page = WasmVersion::history(vault_id, origin(), from, PAGE)
+                let page = WasmVersion::history(vault_id, &origin(), from, PAGE)
                     .await
-                    .map_err(|e| jserr(e.into()))
-                    .and_then(|json| {
-                        serde_json::from_str::<Vec<VersionMeta>>(&json).map_err(|e| e.to_string())
-                    });
+                    .map_err(|e| jserr(e.into()));
                 match page {
                     Ok(page) => {
                         if from.is_none() {
@@ -152,7 +144,7 @@ pub fn history_view(props: &HistoryProps) -> Html {
 
     {
         let load_page = load_page.clone();
-        use_effect_with(props.vault_id.clone(), move |_| {
+        use_effect_with(props.vault_id, move |_| {
             load_page.emit(None);
             || ()
         });
@@ -218,7 +210,7 @@ pub fn history_view(props: &HistoryProps) -> Html {
         let syncing = syncing.clone();
         let error = error.clone();
         let browse = browse.clone();
-        let vault_id = props.vault_id.clone();
+        let vault_id = props.vault_id;
         Callback::from(move |height: u64| {
             let ticket = {
                 let mut s = seq.borrow_mut();
@@ -235,9 +227,8 @@ pub fn history_view(props: &HistoryProps) -> Html {
             let seq = seq.clone();
             let error = error.clone();
             let browse = browse.clone();
-            let vault_id = vault_id.clone();
             yew::platform::spawn_local(async move {
-                let opened = WasmVersion::open(vault_id, height, origin()).await;
+                let opened = WasmVersion::open(vault_id, height, &origin()).await;
                 if *seq.borrow() != ticket {
                     return;
                 }
@@ -408,7 +399,7 @@ pub fn history_view(props: &HistoryProps) -> Html {
                                 Some(v) => format!(
                                     "Viewing version {} \u{2014} read-only \u{00B7} by {}",
                                     v.height,
-                                    author_label(v.author.as_deref(), &props.devices)
+                                    author_label(v.author.as_ref(), &props.devices)
                                 ),
                                 None => "Version history \u{2014} pick a version to browse it as it was".to_string(),
                             }

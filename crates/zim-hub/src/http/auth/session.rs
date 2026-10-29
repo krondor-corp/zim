@@ -12,9 +12,10 @@ use chrono::{Duration, Utc};
 use jsonwebtoken::{encode, EncodingKey, Header};
 
 use crate::config::AuthConfig;
-use crate::database::models::User;
+use crate::database::models::{MobileHandoff, User};
 use crate::database::types::DbAuthProvider;
-use crate::http::auth::Claims;
+use crate::http::auth::login::LoginError;
+use crate::http::auth::{mobile, Claims};
 use crate::state::AppState;
 
 pub const COOKIE_MAX_AGE_SECS: i64 = 60 * 60 * 24 * 7;
@@ -79,26 +80,65 @@ pub enum SessionError {
     Token(#[from] jsonwebtoken::errors::Error),
 }
 
-/// Find-or-create the user for `email`, sign a session JWT, and
-/// answer with the cookie + a redirect to `next` (an already-sanitized
-/// same-origin path; see [`super::return_to`]).
-pub async fn mint_session(
+/// Where a finished sign-in lands.
+#[derive(Clone, Copy)]
+pub enum Destination<'a> {
+    /// The browser that started it: session cookie + redirect to `next`
+    /// (an already-sanitized same-origin path; see [`super::return_to`]).
+    Web { next: &'a str },
+    /// The native app: a one-time handoff token for the app's webview
+    /// (see [`super::mobile`]) instead of a cookie in the system browser.
+    App { challenge: &'a str },
+}
+
+impl Destination<'_> {
+    /// Back to where the visitor started after a refused sign-in.
+    pub fn failure(&self, error: LoginError) -> Response {
+        match self {
+            Destination::Web { next } => Redirect::to(&error.url(next)).into_response(),
+            Destination::App { .. } => mobile::failed(),
+        }
+    }
+}
+
+/// Find-or-create the user for `email`, then finish the sign-in at
+/// `dest`: sign a session JWT and set the cookie, or issue a handoff.
+pub async fn sign_in(
     state: &AppState,
     email: &str,
     name: &str,
     authority: Authority,
-    next: &str,
+    dest: Destination<'_>,
 ) -> Result<Response, SessionError> {
     let user = find_or_create_user(state, email, name, &authority).await?;
+    tracing::info!(
+        email = user.email(),
+        role = %user.role().label(),
+        authority = %authority.provider(),
+        app = matches!(dest, Destination::App { .. }),
+        "user signed in"
+    );
+    match dest {
+        Destination::Web { next } => {
+            let cookie = session_cookie(&state.auth, &user)?;
+            Ok(([(SET_COOKIE, cookie)], Redirect::to(next)).into_response())
+        }
+        Destination::App { challenge } => {
+            let token = MobileHandoff::issue(user.id(), challenge, &state.db).await?;
+            Ok(mobile::callback(&token))
+        }
+    }
+}
 
+/// The `Set-Cookie` value that signs `user` in.
+pub fn session_cookie(auth: &AuthConfig, user: &User) -> Result<String, SessionError> {
     let now = Utc::now();
     let exp = now + Duration::seconds(COOKIE_MAX_AGE_SECS);
     let claims = Claims {
-        sub: match &authority {
-            Authority::Google { sub } => sub.clone(),
-            #[cfg(feature = "dev-login")]
-            Authority::DevTrust => format!("dev:{email}"),
-        },
+        sub: user
+            .auth_subject()
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("dev:{}", user.email())),
         email: user.email().to_string(),
         name: user.name().to_string(),
         iat: now.timestamp() as usize,
@@ -107,25 +147,15 @@ pub async fn mint_session(
     let token = encode(
         &Header::default(),
         &claims,
-        &EncodingKey::from_secret(state.auth.service_secret.as_bytes()),
+        &EncodingKey::from_secret(auth.service_secret.as_bytes()),
     )?;
-
-    let secure = state.auth.host_name.starts_with("https://");
-    let cookie = build_cookie(
-        &state.auth.session_cookie(),
+    let secure = auth.host_name.starts_with("https://");
+    Ok(build_cookie(
+        &auth.session_cookie(),
         &token,
         secure,
         COOKIE_MAX_AGE_SECS,
-    );
-
-    tracing::info!(
-        email = user.email(),
-        role = %user.role().label(),
-        authority = %authority.provider(),
-        "user signed in"
-    );
-
-    Ok(([(SET_COOKIE, cookie)], Redirect::to(next)).into_response())
+    ))
 }
 
 /// Look up the user by email (refusing a cross-provider or

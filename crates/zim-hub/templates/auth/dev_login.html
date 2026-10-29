@@ -3,6 +3,7 @@
 <form method="post" action="/auth/dev/login">
   <div class="error" style="margin-bottom:0.75rem;">⚠ Development only — if you see this in production, something is wrong. Fix immediately.</div>
   <input type="hidden" name="next" value="{{ next }}">
+  {% if let Some(c) = mobile_challenge %}<input type="hidden" name="mobile_challenge" value="{{ c }}">{% endif %}
   <div class="field">
     <label for="email">Email</label>
     <input id="email" type="email" name="email" required autofocus>

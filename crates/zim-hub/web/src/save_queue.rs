@@ -69,10 +69,6 @@ impl SaveQueue {
         self.unsaved(path).is_some()
     }
 
-    pub fn is_saving(&self) -> bool {
-        self.in_flight.is_some()
-    }
-
     /// Nothing is being written and nothing is waiting to be: either all
     /// drafts are saved, or the last write failed and left them parked.
     pub fn is_settled(&self) -> bool {

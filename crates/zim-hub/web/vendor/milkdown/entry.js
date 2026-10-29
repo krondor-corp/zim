@@ -14,8 +14,6 @@ export async function mount(el, markdown, onChange) {
     root: el,
     defaultValue: markdown,
     featureConfigs: {
-      // Keep BlockEdit's `/` menu, but never show its side `+` / drag handle.
-      [Crepe.Feature.BlockEdit]: { blockHandle: { shouldShow: () => false } },
       // Crepe's default shows "Please enter..." on every empty line under
       // the caret; only hint on an empty note.
       [Crepe.Feature.Placeholder]: { text: "Start writing…", mode: "doc" },

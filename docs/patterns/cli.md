@@ -33,7 +33,7 @@ pub struct OpContext {
 }
 ```
 
-The context is constructed once in `main()` and passed to every op. It contains everything an op needs to talk to the daemon. The remote URL is resolved from: explicit `--remote` flag > config file `api_port` > hardcoded default. The `MultiProgress` handle is hidden when stdout is not a TTY.
+The context is constructed once in `main()` and passed to every op. It contains everything an op needs to talk to the daemon. The remote URL is resolved from: explicit `--remote` flag > the port recorded in `$ZIM_HOME/daemon.lock` by the daemon currently holding the home (`context::daemon_lock::probe`) > config file `api_port` > hardcoded default. The `MultiProgress` handle is hidden when stdout is not a TTY.
 
 ### Anatomy of an Op
 

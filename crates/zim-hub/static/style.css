@@ -1662,3 +1662,105 @@ button.app-menu__item {
   border-radius: var(--radius);
   white-space: nowrap;
 }
+
+/* --- Milkdown (.md editor), themed from the hub palette. Crepe's own
+ * stylesheet is lazy-loaded from /static/milkdown/ on first .md open. ---- */
+
+/* Milkdown overrides — container controls width, editor fills it */
+.milkdown-wrap { overflow: visible; margin-top: 0; }
+#editor-root.milkdown-wrap { margin-top: 0; }
+.milkdown-wrap .milkdown { background: transparent; }
+.milkdown-wrap .milkdown-editor { background: transparent; }
+
+.milkdown-wrap .ProseMirror {
+    padding: 0 !important;
+    max-width: none !important;
+    margin: 0 !important;
+    font-size: 1.05rem;
+    line-height: 1.75;
+    outline: none;
+    background: transparent;
+    color: hsl(var(--foreground));
+}
+
+.milkdown-wrap .ProseMirror:focus { outline: none; }
+
+/* Crepe renders a sticky .milkdown-top-bar (44px min-height, heading-type
+   selector) that pops into the flow when the caret enters a heading — that
+   was shifting editor content downward on heading clicks. Hide it; we don't
+   use the heading-selector surface. */
+.milkdown-top-bar { display: none !important; }
+
+/* BlockEdit stays on for its `/` menu, but its side `+` / drag handle
+   doesn't: Crepe 7.23's block provider ignores `shouldShow`, so hide it. */
+.milkdown-block-handle { display: none !important; }
+
+/* The `prosemirror-virtual-cursor` stylesheet is imported by a bare package
+   specifier that doesn't resolve at runtime, so the virtual-cursor <div>
+   renders as a plain block element with an inline `height` — pushing
+   everything after it down by 40-50px. Every click resized it and the
+   editor drifted permanently. Pin it out of flow. */
+.ProseMirror .prosemirror-virtual-cursor {
+    position: absolute;
+    pointer-events: none;
+    width: 1px;
+    background: currentColor;
+    opacity: 0.4;
+}
+
+.milkdown-wrap .ProseMirror > :first-child {
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+}
+
+.milkdown-wrap .ProseMirror a {
+    color: hsl(var(--foreground));
+    text-decoration: underline;
+    text-decoration-color: hsl(var(--muted-foreground) / 0.5);
+    text-underline-offset: 0.2em;
+    text-decoration-thickness: 1px;
+    transition: text-decoration-color 0.15s;
+}
+
+.milkdown-wrap .ProseMirror a:hover {
+    text-decoration-color: hsl(var(--foreground));
+}
+
+.milkdown-wrap,
+.milkdown-wrap * {
+    --crepe-color-background: transparent !important;
+    --crepe-color-surface: hsl(var(--card)) !important;
+    --crepe-color-on-background: hsl(var(--foreground)) !important;
+    --crepe-color-on-surface: hsl(var(--foreground)) !important;
+    --crepe-color-outline: hsl(var(--border)) !important;
+    --crepe-color-primary: hsl(var(--foreground)) !important;
+    --crepe-color-on-primary: hsl(var(--background)) !important;
+    --crepe-color-secondary: hsl(var(--muted)) !important;
+    --crepe-color-inline-code: hsl(var(--muted)) !important;
+    --crepe-color-solid: hsl(var(--foreground)) !important;
+    /* The rest of Crepe's palette: left unset, the classic theme's light
+       values leak in (cream hover/selected rows under light text). */
+    --crepe-color-surface-low: hsl(var(--popover)) !important;
+    --crepe-color-on-surface-variant: hsl(var(--muted-foreground)) !important;
+    --crepe-color-on-secondary: hsl(var(--secondary-foreground)) !important;
+    --crepe-color-hover: hsl(var(--accent)) !important;
+    --crepe-color-selected: hsl(var(--border)) !important;
+    --crepe-color-inverse: hsl(var(--foreground)) !important;
+    --crepe-color-on-inverse: hsl(var(--background)) !important;
+    --crepe-color-inline-area: hsl(var(--muted)) !important;
+}
+
+.milkdown-wrap .milkdown {
+    outline: none !important;
+    border: none !important;
+    box-shadow: none !important;
+    max-width: none !important;
+    padding: 0 !important;
+}
+
+.milkdown-wrap .milkdown > div {
+    max-width: none !important;
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+}

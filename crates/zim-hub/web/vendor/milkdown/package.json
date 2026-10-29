@@ -1,0 +1,8 @@
+{
+  "name": "zim-hub-milkdown-bundle",
+  "private": true,
+  "description": "Builds static/milkdown.js + milkdown.css (Crepe WYSIWYG) for the hub SPA. See build.sh.",
+  "scripts": { "build": "./build.sh" },
+  "dependencies": { "@milkdown/crepe": "7.23.0" },
+  "devDependencies": { "esbuild": "0.25.12" }
+}

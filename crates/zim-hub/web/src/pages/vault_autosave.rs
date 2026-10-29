@@ -1,5 +1,5 @@
 //! Autosave driver: runs the writes a [`SaveQueue`] hands out, and wires
-//! the page-lifecycle moments that must flush (tab hidden, page hide,
+//! the page-lifecycle moments that must flush (tab hidden, tab close,
 //! Cmd/Ctrl+S). The editor only reports text; the page owns saving.
 
 use std::cell::RefCell;
@@ -13,8 +13,10 @@ use zim_hub_web::save_queue::SaveQueue;
 use crate::backend::VaultBackend;
 use crate::util::sleep;
 
-/// Quiet time after the last keystroke before a draft is written.
-pub(crate) const AUTOSAVE_MS: i32 = 1_500;
+/// How long an edit may sit unsaved: the first edit after a write arms
+/// one timer, and everything typed until it fires lands in one write.
+/// Every write is a version, so this bounds history density.
+pub(crate) const AUTOSAVE_MS: i32 = 30_000;
 
 /// How often [`settled`] re-checks a draining queue.
 const SETTLE_POLL_MS: i32 = 50;
@@ -69,11 +71,12 @@ pub(crate) async fn settled(queue: &Queue) {
 }
 
 /// Flush on the moments a tab can go away under unsaved text — hidden
-/// (tab switch, app switch, mobile background) and `pagehide` — plus
-/// Cmd/Ctrl+S as an explicit "save now". Best effort: a closing page may
-/// not live to finish the write.
+/// (tab switch, app switch, mobile background), `beforeunload`, and
+/// `pagehide` — plus Cmd/Ctrl+S as an explicit "save now". A closing
+/// page may not live to finish the write, so `beforeunload` also asks the
+/// browser to confirm leaving while a draft is still unwritten.
 #[hook]
-pub(crate) fn use_lifecycle_flush(flush: Callback<()>) {
+pub(crate) fn use_lifecycle_flush(flush: Callback<()>, queue: Queue) {
     use_effect_with((), move |_| {
         let window = web_sys::window().expect("window");
         let document = window.document().expect("document");
@@ -84,6 +87,15 @@ pub(crate) fn use_lifecycle_flush(flush: Callback<()>) {
             Closure::<dyn Fn(web_sys::Event)>::new(move |_| {
                 if document.hidden() {
                     flush.emit(());
+                }
+            })
+        };
+        let on_beforeunload = {
+            let flush = flush.clone();
+            Closure::<dyn Fn(web_sys::Event)>::new(move |e: web_sys::Event| {
+                flush.emit(());
+                if !queue.borrow().is_settled() {
+                    e.prevent_default();
                 }
             })
         };
@@ -103,6 +115,10 @@ pub(crate) fn use_lifecycle_flush(flush: Callback<()>) {
             "visibilitychange",
             on_hidden.as_ref().unchecked_ref(),
         );
+        let _ = window.add_event_listener_with_callback(
+            "beforeunload",
+            on_beforeunload.as_ref().unchecked_ref(),
+        );
         let _ = window
             .add_event_listener_with_callback("pagehide", on_pagehide.as_ref().unchecked_ref());
         let _ = window.add_event_listener_with_callback("keydown", on_key.as_ref().unchecked_ref());
@@ -111,6 +127,10 @@ pub(crate) fn use_lifecycle_flush(flush: Callback<()>) {
             let _ = document.remove_event_listener_with_callback(
                 "visibilitychange",
                 on_hidden.as_ref().unchecked_ref(),
+            );
+            let _ = window.remove_event_listener_with_callback(
+                "beforeunload",
+                on_beforeunload.as_ref().unchecked_ref(),
             );
             let _ = window.remove_event_listener_with_callback(
                 "pagehide",

@@ -5,6 +5,7 @@
 pub mod admin;
 pub mod devices;
 pub mod gate;
+pub mod markdown_editor;
 pub mod not_found;
 pub mod settings;
 pub mod vault;

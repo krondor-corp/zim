@@ -3,9 +3,14 @@
 //! modes. Text lives in a page-colored textarea that only reports its
 //! changes; the parent owns saving (autosave). Any editor that emits
 //! `on_change` with the full text can stand in for the textarea.
+//! `.md` files swap the textarea for Milkdown (`markdown_editor`).
 //! Non-text files render inline (image/pdf/video/audio).
 
 use yew::prelude::*;
+
+use zim_hub_web::markdown::is_markdown;
+
+use crate::pages::markdown_editor::MarkdownEditor;
 
 /// What the editor pane holds.
 #[derive(Clone, PartialEq)]
@@ -73,7 +78,9 @@ pub fn editor_pane(props: &EditorProps) -> Html {
                 <h1 class="editor-title" title={file.path.clone()}>{ title }</h1>
             </div>
             {
-                if editable {
+                if editable && is_markdown(&file.path) {
+                    html! { <MarkdownEditor file={file.clone()} on_change={props.on_change.clone()} /> }
+                } else if editable {
                     html! {
                         <textarea class="editor-textarea--doc" key={format!("{}#{}", file.path, file.rev)}
                             ref={textarea}

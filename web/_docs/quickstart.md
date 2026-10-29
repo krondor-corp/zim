@@ -40,7 +40,7 @@ Inside a vault you can:
 
 - **Browse** the file tree — expand folders, click a file to view it.
 - **Upload** files and create folders.
-- **Write notes** — create a markdown file and edit it in the browser.
+- **Write notes** — create a markdown file and edit it in the browser, with formatting shown as you type. Changes save automatically.
   Changes save automatically a moment after you stop typing (or right
   away with Cmd/Ctrl+S); each save commits a new version to the
   vault's history.

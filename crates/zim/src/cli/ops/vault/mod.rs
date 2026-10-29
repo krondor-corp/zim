@@ -16,6 +16,7 @@ pub mod cat;
 pub mod create;
 pub mod head;
 pub mod list;
+pub mod log;
 pub mod ls;
 pub mod mkdir;
 pub mod mv;
@@ -52,6 +53,8 @@ pub enum Vault {
     List(list::List),
     /// Show the current head + height.
     Head(head::Head),
+    /// Show a vault's version history, newest first.
+    Log(log::Log),
     /// List directory contents.
     Ls(ls::Ls),
     /// Read a file to stdout.
@@ -76,6 +79,7 @@ pub enum VaultOutput {
     Create(create::CreateOutput),
     List(list::ListOutput),
     Head(head::HeadOutput),
+    Log(log::LogOutput),
     Ls(ls::LsOutput),
     Cat(cat::CatOutput),
     Add(add::AddOutput),
@@ -94,6 +98,8 @@ pub enum VaultError {
     List(#[from] list::ListError),
     #[error(transparent)]
     Head(#[from] head::HeadError),
+    #[error(transparent)]
+    Log(#[from] log::LogError),
     #[error(transparent)]
     Ls(#[from] ls::LsError),
     #[error(transparent)]
@@ -127,6 +133,7 @@ impl Op for Vault {
             Vault::Create(c) => VaultOutput::Create(c.run(c.build_context().await?).await?),
             Vault::List(c) => VaultOutput::List(c.run(c.build_context().await?).await?),
             Vault::Head(c) => VaultOutput::Head(c.run(c.build_context().await?).await?),
+            Vault::Log(c) => VaultOutput::Log(c.run(c.build_context().await?).await?),
             Vault::Ls(c) => VaultOutput::Ls(c.run(c.build_context().await?).await?),
             Vault::Cat(c) => VaultOutput::Cat(c.run(c.build_context().await?).await?),
             Vault::Add(c) => VaultOutput::Add(c.run(c.build_context().await?).await?),
@@ -145,6 +152,7 @@ impl fmt::Display for VaultOutput {
             VaultOutput::Create(o) => write!(f, "{o}"),
             VaultOutput::List(o) => write!(f, "{o}"),
             VaultOutput::Head(o) => write!(f, "{o}"),
+            VaultOutput::Log(o) => write!(f, "{o}"),
             VaultOutput::Ls(o) => write!(f, "{o}"),
             VaultOutput::Cat(o) => write!(f, "{o}"),
             VaultOutput::Add(o) => write!(f, "{o}"),

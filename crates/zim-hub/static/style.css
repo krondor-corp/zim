@@ -1887,3 +1887,60 @@ html { background-color: hsl(var(--background)); }
   .dialog__form { padding: 1.1rem; }
   .dialog__actions { flex-wrap: wrap; }
 }
+
+/* Command palette (Cmd/Ctrl+K): a dialog pinned near the top, one
+ * 16px input (no iOS zoom) over a scrolling list of tall tap targets. */
+.dialog.palette {
+  top: 15vh;
+  transform: translateX(-50%);
+  width: 36rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.palette__input {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 16px;
+  padding: 0.85rem 1rem;
+  border: none;
+  border-bottom: 1px solid hsl(var(--border));
+  background: transparent;
+  color: hsl(var(--foreground));
+  outline: none;
+}
+.palette__list { max-height: 50vh; overflow-y: auto; padding: 0.25rem; }
+.palette__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.4rem 0.75rem;
+  border: none;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font: inherit;
+  font-size: 0.9rem;
+  text-align: left;
+  cursor: pointer;
+}
+.palette__item:hover,
+.palette__item--on { background: hsl(var(--muted)); }
+.palette__name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.palette__hint {
+  flex-shrink: 0;
+  max-width: 50%;
+  font-size: 0.75rem;
+  color: hsl(var(--muted-foreground));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.palette__empty { padding: 0.75rem; font-size: 0.9rem; color: hsl(var(--muted-foreground)); }
+@media (max-width: 768px) {
+  .dialog.palette { top: 4rem; width: calc(100vw - 2rem); }
+}

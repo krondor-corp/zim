@@ -26,7 +26,9 @@
 //! `ZIM_HUB_ADMIN_EMAILS`, and the blob-store backend:
 //! `ZIM_HUB_S3_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` /
 //! `_BUCKET` / `_REGION` (all-or-nothing except region; unset →
-//! local filesystem store). (Legacy `ZIM_HUB_GOOGLE_CLIENT_ID`,
+//! local filesystem store), and the SPA timings it injects into
+//! `index.html` (see [`ClientConfig`]): `ZIM_HUB_AUTOSAVE_MS` (unset →
+//! 30000) and `ZIM_HUB_FOLLOW_MS` (unset → 3000). (Legacy `ZIM_HUB_GOOGLE_CLIENT_ID`,
 //! `ZIM_HUB_GOOGLE_CLIENT_SECRET`, `ZIM_HUB_SESSION_SECRET`,
 //! `ZIM_HUB_BASE_URL` are still accepted as fallbacks; the
 //! generic-style names win when both are set.)
@@ -51,6 +53,7 @@ use std::path::{Path, PathBuf};
 
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use zim_api::hub::ClientConfig;
 
 mod auth;
 
@@ -82,6 +85,10 @@ pub struct Config {
     /// store under `data_dir/blobs/`. Dev: `make hub` points this at
     /// the minio container from `bin/minio`.
     pub s3: Option<S3Config>,
+    /// Timings injected into the SPA's `index.html`. Defaults are the
+    /// production ones; dev (`make hub`) shortens them so edits cross
+    /// tabs and devices in about a second.
+    pub client: ClientConfig,
 }
 
 /// S3-compatible object-store coordinates for the hub's blob
@@ -134,6 +141,8 @@ pub enum ConfigError {
          needs endpoint, access key, secret key, and bucket"
     )]
     S3Incomplete { missing: String },
+    #[error("invalid {var}: expected milliseconds as a whole number, got `{value}`")]
+    InvalidMillis { var: &'static str, value: String },
     #[error(
         "auth misconfigured: GOOGLE_O_AUTH_CLIENT_ID and GOOGLE_O_AUTH_CLIENT_SECRET \
          are required (or the ZIM_HUB_GOOGLE_CLIENT_ID / ZIM_HUB_GOOGLE_CLIENT_SECRET \
@@ -196,6 +205,7 @@ impl Config {
 
         let auth = AuthConfig::resolve(&data_dir, listen_address)?;
         let s3 = S3Config::from_env()?;
+        let client = client_config_from_env()?;
 
         Ok(Self {
             listen_address,
@@ -204,12 +214,31 @@ impl Config {
             host,
             auth,
             s3,
+            client,
         })
     }
 
     /// `did:web:<host>` — the hub's canonical identity URL.
     pub fn did(&self) -> String {
         format!("did:web:{}", self.host)
+    }
+}
+
+/// The SPA timings: each env var overrides its production default.
+fn client_config_from_env() -> Result<ClientConfig, ConfigError> {
+    let defaults = ClientConfig::default();
+    Ok(ClientConfig {
+        autosave_ms: millis_from_env("ZIM_HUB_AUTOSAVE_MS", defaults.autosave_ms)?,
+        follow_ms: millis_from_env("ZIM_HUB_FOLLOW_MS", defaults.follow_ms)?,
+    })
+}
+
+fn millis_from_env(var: &'static str, default: u32) -> Result<u32, ConfigError> {
+    match env::var(var) {
+        Ok(value) if !value.is_empty() => value
+            .parse()
+            .map_err(|_| ConfigError::InvalidMillis { var, value }),
+        _ => Ok(default),
     }
 }
 

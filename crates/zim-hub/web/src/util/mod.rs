@@ -2,6 +2,8 @@
 //! pages and components.
 
 use wasm_bindgen::JsValue;
+use zim_api::hub::{ClientConfig, CLIENT_CONFIG_ELEMENT_ID};
+use zim_hub_web::client_config;
 
 /// sessionStorage key for the unlocked web-key seed.
 pub const SS_KEY: &str = "zim:webkey";
@@ -11,6 +13,22 @@ pub fn origin() -> String {
     web_sys::window()
         .and_then(|w| w.location().origin().ok())
         .unwrap_or_default()
+}
+
+thread_local! {
+    /// Read off the page once, the first time anything asks.
+    static CLIENT_CONFIG: ClientConfig = client_config::parse(
+        web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.get_element_by_id(CLIENT_CONFIG_ELEMENT_ID))
+            .and_then(|tag| tag.text_content())
+            .as_deref(),
+    );
+}
+
+/// The timings the hub injected into `index.html` (defaults when absent).
+pub fn client_config() -> ClientConfig {
+    CLIENT_CONFIG.with(|c| *c)
 }
 
 /// Resolve after `ms` milliseconds (a `setTimeout` promise).

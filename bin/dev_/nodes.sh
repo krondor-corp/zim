@@ -336,7 +336,9 @@ cmd_cli() {
 }
 
 # Seed each node's $ZIM_HOME with a config.toml that pins its
-# `api_port`. Idempotent — overwrites the file every time so changes
+# `api_port` and a 5s reconcile sweep (production: 300s), so a daemon
+# edit whose announce was missed still reaches the others in ~5s.
+# Idempotent — overwrites the file every time so changes
 # to confit.toml (or a new slot) propagate. Shared by `cmd_run` and `cmd_shell` so the
 # CLI resolves the right daemon port regardless of whether the user
 # started the tmux session first.
@@ -345,7 +347,7 @@ seed_node_configs() {
         local home=$(get_data_dir "$node")
         local port=$(get_api_port "$node")
         mkdir -p "$home"
-        printf 'api_port = %s\nlog_level = "info"\n' "$port" > "$home/config.toml"
+        printf 'api_port = %s\nlog_level = "info"\nsync_interval_secs = 5\n' "$port" > "$home/config.toml"
     done
 }
 

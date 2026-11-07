@@ -32,6 +32,10 @@ Defaults:
 - `ZIM_HUB_LISTEN=127.0.0.1:17190` — HTTP bind address
 - `ZIM_HUB_HOME=./data/zim-hub` — data directory (peer identity, vault log, blobs)
 - `ZIM_HUB_LOG=info`
+- `ZIM_HUB_AUTOSAVE_MS=30000` — how long the web app lets an edit sit before autosaving it (each save is a version). `make hub` sets 1500.
+- `ZIM_HUB_FOLLOW_MS=3000` — how often an open vault in the web app checks for other devices' edits. `make hub` sets 1000.
+
+The two timings reach the web app inside the `index.html` the hub serves (a `#zim-config` JSON script). Without the tag the app uses the defaults above.
 
 ## Endpoints (Phase 1)
 

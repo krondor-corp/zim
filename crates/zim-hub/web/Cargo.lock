@@ -3361,6 +3361,7 @@ dependencies = [
  "hex",
  "js-sys",
  "pulldown-cmark",
+ "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

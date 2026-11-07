@@ -11,6 +11,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::HtmlInputElement;
 use yew::prelude::*;
 use yew_router::prelude::*;
+use zim_hub_web::client_config::timeout_ms;
 use zim_hub_web::save_queue::SaveQueue;
 
 use zim_core::vault::VaultId;
@@ -22,7 +23,7 @@ use crate::components::dialog::{ConfirmDialog, PromptDialog};
 use crate::components::icon::{icon, Icon};
 use crate::layouts::{menu_icon, HeaderMenu, SignOutItem};
 use crate::pages::vault_autosave::{
-    drain, settled, use_lifecycle_flush, Queue, SaveEvent, SaveState, AUTOSAVE_MS,
+    autosave_ms, drain, settled, use_lifecycle_flush, Queue, SaveEvent, SaveState,
 };
 use crate::pages::vault_details::details_panel;
 use crate::pages::vault_editor::EditorPane;
@@ -31,7 +32,7 @@ use crate::pages::vault_history::{HistoryView, Restore};
 use crate::pages::vault_palette::{use_palette_shortcut, Palette, PaletteAction};
 use crate::pages::vault_tree::{build_rows, CtxMenu, CtxTarget, TreeNode, TreePane};
 use crate::routes::Route;
-use crate::util::{jserr, sleep};
+use crate::util::{client_config, jserr, sleep};
 use zim_hub_web::nav::shows_detail;
 use zim_hub_web::rename::{moved_path, renamed, RenameError};
 
@@ -64,8 +65,11 @@ pub(crate) fn short_id(id: &str) -> String {
 }
 
 /// How often an open vault re-checks the hub's head while the tab is
-/// visible, so another device's edits show up without re-opening.
-const FOLLOW_MS: i32 = 3_000;
+/// visible, so another device's edits show up without re-opening. Set by
+/// the hub (`ZIM_HUB_FOLLOW_MS`); 3s by default.
+fn follow_ms() -> i32 {
+    timeout_ms(client_config().follow_ms)
+}
 
 /// Whether the tab is in the background (no point polling then).
 fn tab_hidden() -> bool {
@@ -247,7 +251,7 @@ pub fn vault_tree(props: &Props) -> Html {
             let timer_armed = timer_armed.clone();
             let flush = flush.clone();
             yew::platform::spawn_local(async move {
-                sleep(AUTOSAVE_MS).await;
+                sleep(autosave_ms()).await;
                 timer_armed.replace(false);
                 flush.emit(());
             });
@@ -410,7 +414,7 @@ pub fn vault_tree(props: &Props) -> Html {
         })
     };
 
-    // Follow remote edits: every FOLLOW_MS a ticker bumps `follow_tick`,
+    // Follow remote edits: every `follow_ms()` a ticker bumps `follow_tick`,
     // and the effect below (which sees this render's state) fast-forwards
     // to the hub's head. A changed head rebuilds the tree and reloads the
     // open file if its bytes changed — unless it holds unsaved text,
@@ -427,7 +431,7 @@ pub fn vault_tree(props: &Props) -> Html {
                 let alive = alive.clone();
                 yew::platform::spawn_local(async move {
                     loop {
-                        sleep(FOLLOW_MS).await;
+                        sleep(follow_ms()).await;
                         if !alive.get() {
                             return;
                         }

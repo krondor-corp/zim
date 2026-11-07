@@ -6,6 +6,8 @@
 
 use std::net::SocketAddr;
 
+use zim_api::hub::ClientConfig;
+
 use crate::config::{AuthConfig, Config};
 use crate::database::Database;
 
@@ -24,6 +26,8 @@ pub struct AppState {
     pub db: Database,
     /// OAuth + cookie config.
     pub auth: AuthConfig,
+    /// SPA timings injected into every `index.html` the hub serves.
+    pub client: ClientConfig,
 }
 
 impl AppState {
@@ -35,6 +39,7 @@ impl AppState {
             peer,
             db,
             auth: config.auth.clone(),
+            client: config.client,
         }
     }
 }

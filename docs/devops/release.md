@@ -233,3 +233,21 @@ git push origin main
 # Option 3: Manual release (fastest)
 cargo smart-release zim-peer --execute --no-publish --bump patch
 ```
+
+## iOS app (SideStore)
+
+Every `zim-v*` tag also runs `.github/workflows/release-ios.yml`, which builds
+an unsigned `Zim.ipa` (`bin/ios-ipa`) and a SideStore/AltStore source
+(`bin/sidestore-source`) and uploads both to the release that `release-cli.yml`
+creates. Users add the source once:
+
+```
+https://github.com/krondor-corp/zim/releases/latest/download/sidestore.json
+```
+
+SideStore re-signs the IPA with the user's own Apple ID, so no signing secrets
+live in CI. The URL follows GitHub's *latest* release, so a release whose iOS
+job failed leaves the source pointing nowhere until the job is re-run
+(`workflow_dispatch` with the version). The App Store path is separate and
+unchanged: a signed `cargo tauri ios build --export-method app-store-connect`
+with a development team.

@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Build an unsigned Zim.ipa for sideloading.
+#
+#   bin/ios-ipa [version] [out-dir]     # default: tauri.conf.json version, ./target/ios
+#
+# SideStore/AltStore re-sign the IPA with the installing user's Apple ID,
+# so no team or certificate is needed here. The App Store path is
+# untouched: `cargo tauri ios build --export-method app-store-connect`
+# with a development team still signs and exports as usual.
+#
+# `cargo tauri ios build` always signs, so xcodebuild runs through a shim
+# that turns signing off for the build/archive steps. The signed export
+# then fails (no team); the archive it leaves behind is all we need.
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+ios="$root/crates/zim-ios"
+version="${1:-$(jq -r .version "$ios/tauri.conf.json")}"
+out="${2:-$root/target/ios}"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+mkdir -p "$work/shim"
+cat >"$work/shim/xcodebuild" <<'EOF'
+#!/usr/bin/env bash
+real="$(PATH="${PATH#*/shim:}" command -v xcodebuild)"
+for a in "$@"; do [[ "$a" == "-exportArchive" ]] && exec "$real" "$@"; done
+exec "$real" "$@" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM=
+EOF
+chmod +x "$work/shim/xcodebuild"
+
+archive="$ios/gen/apple/build/zim-ios_iOS.xcarchive"
+rm -rf "$archive"
+(
+  cd "$ios"
+  PATH="$work/shim:$PATH" cargo tauri ios build --ci --config "{\"version\":\"$version\"}" ||
+    true # the export step fails without a team; the archive is checked below
+)
+app="$archive/Products/Applications/Zim.app"
+[[ -x "$app/Zim" ]] || { echo "ios-ipa: no app in $archive (build failed above)" >&2; exit 1; }
+
+mkdir -p "$work/Payload" "$out"
+cp -R "$app" "$work/Payload/"
+plist="$work/Payload/Zim.app/Info.plist"
+plutil -replace CFBundleShortVersionString -string "$version" "$plist"
+plutil -replace CFBundleVersion -string "$version" "$plist"
+rm -f "$out/Zim.ipa"
+(cd "$work" && zip -qry "$out/Zim.ipa" Payload)
+echo "$out/Zim.ipa"

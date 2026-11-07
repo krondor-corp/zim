@@ -175,6 +175,13 @@ make ios SIM="iPhone Air"                 # another simulator (xcrun simctl list
 app at it. iOS builds are large (~10GB); set `CARGO_TARGET_DIR` to a
 directory you can delete.
 
+`make ios-ipa` (`VERSION=…`) builds an unsigned `target/ios/Zim.ipa` for
+SideStore/AltStore against the production hub; install it with SideStore, or
+see `docs/devops/release.md` for the per-release source. `bin/ios-ipa` drives
+`cargo tauri ios build` through an `xcodebuild` shim that turns signing off,
+then zips the archive's `Zim.app` — the signed export step is expected to
+fail and is ignored.
+
 The hub URL comes from `plugins.zim-hub.url`; default is the production hub
 in release builds and `http://127.0.0.1:17190` in debug. The simulator shares
 the host's loopback, so a local hub works; debug sign-in goes through the

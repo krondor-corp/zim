@@ -63,6 +63,10 @@ ios: ## Run the iOS app in the simulator against this worktree's hub (starts it;
 	cd crates/zim-ios && cargo tauri ios dev "$(or $(SIM),iPhone 17 Pro)" --no-dev-server-wait \
 	  --config "{\"plugins\":{\"zim-hub\":{\"url\":\"http://127.0.0.1:$$(confit export --profile dev --format shell | sed -n "s/^export HUB_PORT='\(.*\)'/\1/p")\"}}}"
 
+.PHONY: ios-ipa
+ios-ipa: ## Build an unsigned target/ios/Zim.ipa for SideStore/AltStore (VERSION=0.2.0; default tauri.conf.json)
+	bin/ios-ipa $(VERSION)
+
 .PHONY: check
 check: ## Run the quality gate: fmt-check, clippy, cargo check (what CI runs)
 	cargo fmt --all -- --check

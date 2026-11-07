@@ -1,0 +1,87 @@
+name: Release iOS (SideStore)
+
+# The iOS app ships with every zim release as an unsigned Zim.ipa plus a
+# SideStore/AltStore source (sidestore.json), attached to the GitHub
+# Release that release-cli.yml creates from the same zim-v* tag. Users add
+#   https://github.com/krondor-corp/zim/releases/latest/download/sidestore.json
+# as a source once; SideStore re-signs the IPA with their Apple ID and
+# picks up each new release from there. No signing secrets are involved.
+
+on:
+  push:
+    tags:
+      - "zim-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build and attach (e.g. 0.1.9); the zim-v<version> release must exist or be about to"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  ipa:
+    name: Build Zim.ipa
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/zim-v}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=zim-v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Install tauri-cli
+        uses: taiki-e/install-action@v2
+        with:
+          tool: tauri-cli@2.9.6
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            crates/zim-ios/target
+          key: ios-release-${{ hashFiles('crates/zim-ios/Cargo.lock') }}
+          restore-keys: ios-release-
+
+      - name: Build IPA
+        env:
+          CARGO_TARGET_DIR: crates/zim-ios/target
+        run: bin/ios-ipa "${{ steps.version.outputs.version }}" "$PWD/out"
+
+      - name: Write SideStore source
+        run: bin/sidestore-source "${{ steps.version.outputs.version }}" out/Zim.ipa > out/sidestore.json
+
+      # release-cli.yml owns creating the release from the same tag;
+      # creating it here would race it, so wait for it and only upload.
+      - name: Wait for the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for i in $(seq 1 90); do
+            if gh release view "${{ steps.version.outputs.tag }}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              exit 0
+            fi
+            echo "release ${{ steps.version.outputs.tag }} not there yet ($i/90)"
+            sleep 20
+          done
+          echo "release-cli.yml never created ${{ steps.version.outputs.tag }}" >&2
+          exit 1
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ steps.version.outputs.tag }}" out/Zim.ipa out/sidestore.json --repo "$GITHUB_REPOSITORY" --clobber

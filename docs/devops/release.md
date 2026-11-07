@@ -246,7 +246,10 @@ https://github.com/krondor-corp/zim/releases/latest/download/sidestore.json
 ```
 
 SideStore re-signs the IPA with the user's own Apple ID, so no signing secrets
-live in CI. The URL follows GitHub's *latest* release, so a release whose iOS
+live in CI. Pull requests touching `crates/zim-ios/`, `bin/ios-ipa`,
+`bin/sidestore-source` or the workflow build the same IPA (plus source and
+`Zim.ipa.sha256`) as a workflow artifact, `Zim-pr<N>-run<M>`, without
+publishing, so a broken iOS build fails the PR, not the release. The URL follows GitHub's *latest* release, so a release whose iOS
 job failed leaves the source pointing nowhere until the job is re-run
 (`workflow_dispatch` with the version). The App Store path is separate and
 unchanged: a signed `cargo tauri ios build --export-method app-store-connect`

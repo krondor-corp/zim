@@ -6,16 +6,30 @@ name: Release iOS (SideStore)
 #   https://github.com/krondor-corp/zim/releases/latest/download/sidestore.json
 # as a source once; SideStore re-signs the IPA with their Apple ID and
 # picks up each new release from there. No signing secrets are involved.
+#
+# Pull requests that touch the app build the same IPA as a workflow
+# artifact (nothing is published), so a broken iOS build shows up on the
+# PR rather than on the release tag.
 
 on:
   push:
     tags:
       - "zim-v*"
+  pull_request:
+    paths:
+      - "crates/zim-ios/**"
+      - "bin/ios-ipa"
+      - "bin/sidestore-source"
+      - ".github/workflows/release-ios.yml"
   workflow_dispatch:
     inputs:
       version:
         description: "Version to build and attach (e.g. 0.1.9); the zim-v<version> release must exist or be about to"
         required: true
+
+concurrency:
+  group: release-ios-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: write
@@ -30,23 +44,36 @@ jobs:
       - name: Get version
         id: version
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/zim-v}"
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=zim-v$VERSION" >> "$GITHUB_OUTPUT"
+          # iOS wants a plain dotted version (CFBundleShortVersionString),
+          # so PR builds keep the app's own and only the artifact name
+          # carries the PR/run.
+          case "${{ github.event_name }}" in
+            workflow_dispatch) VERSION="${{ github.event.inputs.version }}"; LABEL="$VERSION" ;;
+            push)              VERSION="${GITHUB_REF#refs/tags/zim-v}"; LABEL="$VERSION" ;;
+            *)                 VERSION="$(jq -r .version crates/zim-ios/tauri.conf.json)"
+                               LABEL="pr${{ github.event.pull_request.number }}-run${{ github.run_number }}" ;;
+          esac
+          {
+            echo "version=$VERSION"
+            echo "label=$LABEL"
+            echo "tag=zim-v$VERSION"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-ios
 
-      - name: Install tauri-cli
+      - name: Install cargo-binstall
         uses: taiki-e/install-action@v2
         with:
-          tool: tauri-cli@2.9.6
+          tool: cargo-binstall
+
+      # Pinned to the version the Xcode project's build phase was
+      # generated with; binstall falls back to a source build if no
+      # prebuilt binary matches.
+      - name: Install tauri-cli
+        run: cargo binstall --no-confirm --locked tauri-cli@2.9.6
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -59,15 +86,26 @@ jobs:
 
       - name: Build IPA
         env:
-          CARGO_TARGET_DIR: crates/zim-ios/target
+          CARGO_TARGET_DIR: ${{ github.workspace }}/crates/zim-ios/target
         run: bin/ios-ipa "${{ steps.version.outputs.version }}" "$PWD/out/Zim.ipa"
 
       - name: Write SideStore source
         run: bin/sidestore-source "${{ steps.version.outputs.version }}" out/Zim.ipa > out/sidestore.json
 
+      - name: Checksum
+        run: (cd out && shasum -a 256 Zim.ipa > Zim.ipa.sha256 && cat Zim.ipa.sha256)
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zim-${{ steps.version.outputs.label }}
+          path: out/
+          if-no-files-found: error
+
       # release-cli.yml owns creating the release from the same tag;
       # creating it here would race it, so wait for it and only upload.
       - name: Wait for the release
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -82,6 +120,7 @@ jobs:
           exit 1
 
       - name: Upload to the release
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ steps.version.outputs.tag }}" out/Zim.ipa out/sidestore.json --repo "$GITHUB_REPOSITORY" --clobber
+        run: gh release upload "${{ steps.version.outputs.tag }}" out/Zim.ipa out/Zim.ipa.sha256 out/sidestore.json --repo "$GITHUB_REPOSITORY" --clobber

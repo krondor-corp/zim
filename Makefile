@@ -69,9 +69,6 @@ ios: ## Run the iOS app in the simulator against this worktree's hub (starts it;
 ios-ipa: ## Build an unsigned target/ios/Zim.ipa for SideStore/AltStore, against the production hub (VERSION=0.2.0; default crates/zim-ios/Cargo.toml)
 	bin/ios-ipa $(VERSION)
 
-.PHONY: ios-release
-ios-release: ## Tag origin/main as zim-ios-v$(VERSION) to release the iOS app (bump crates/zim-ios/Cargo.toml on main first)
-	bin/ios-release $(VERSION)
 
 .PHONY: ios-ipa-dev
 ios-ipa-dev: ## Build ~/Downloads/Zim-dev.ipa against the LAN hub (http://<mac>.local:17189, whichever worktree runs `make dev LAN=1`)

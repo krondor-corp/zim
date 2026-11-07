@@ -78,7 +78,7 @@ archive="$ios/gen/apple/build/zim-ios_iOS.xcarchive"
 rm -rf "$archive"
 (
   cd "$ios"
-  PATH="$work/shim:$PATH" cargo tauri ios build --ci "${features[@]}" --config "$config" ||
+  PATH="$work/shim:$PATH" cargo tauri ios build --ci ${features[@]+"${features[@]}"} --config "$config" ||
     true # the export step fails without a team; the archive is checked below
 )
 app="$archive/Products/Applications/Zim.app"

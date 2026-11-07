@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build an unsigned Zim.ipa for sideloading.
 #
-#   bin/ios-ipa [version] [out-file]    # default: tauri.conf.json version, target/ios/Zim.ipa
+#   bin/ios-ipa [version] [out-file]    # default: crates/zim-ios version, target/ios/Zim.ipa
 #   HUB_URL=http://… bin/ios-ipa …       # build against another hub (default: production)
 #   IOS_VARIANT=dev bin/ios-ipa …        # "Zim Dev" (org.krondor.zim.dev): installs beside Zim,
 #                                        # amber icon (AppIcon-Dev), Web Inspector on
@@ -18,7 +18,9 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 ios="$root/crates/zim-ios"
-version="${1:-$(jq -r .version "$ios/tauri.conf.json")}"
+# The app's version lives in its Cargo.toml (tauri.conf.json has none, so
+# Tauri reads it from there too); `zim-ios-v<version>` tags release it.
+version="${1:-$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ios/Cargo.toml" | head -1)}"
 out="${2:-$root/target/ios/Zim.ipa}"
 # A dev variant is its own app: another bundle id (so it installs next to
 # the release Zim with its own data) and home-screen name. The identifier

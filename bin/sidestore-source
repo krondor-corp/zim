@@ -3,11 +3,12 @@
 #
 #   bin/sidestore-source <version> <ipa> [date]
 #
-# The release workflow attaches the output as `sidestore.json` to the
-# zim-v<version> GitHub Release, so the stable source URL
-#   https://github.com/krondor-corp/zim/releases/latest/download/sidestore.json
-# always lists the newest IPA. SideStore re-signs the unsigned IPA with
-# the user's own Apple ID; nothing here is signed.
+# The release workflow attaches the output to the zim-ios-v<version>
+# GitHub Release, and the docs site republishes the newest one at the
+# stable source URL
+#   https://zim.krondor.org/ios/sidestore.json
+# SideStore re-signs the unsigned IPA with the user's own Apple ID;
+# nothing here is signed.
 set -euo pipefail
 
 version="${1:?version (e.g. 0.2.0)}"
@@ -23,8 +24,8 @@ jq -n \
   --arg date "$date" \
   --argjson size "$size" \
   --arg minOS "$min_os" \
-  --arg source "https://github.com/$repo/releases/latest/download/sidestore.json" \
-  --arg ipa "https://github.com/$repo/releases/download/zim-v$version/Zim.ipa" \
+  --arg source "https://zim.krondor.org/ios/sidestore.json" \
+  --arg ipa "https://github.com/$repo/releases/download/zim-ios-v$version/Zim.ipa" \
   --arg icon "https://raw.githubusercontent.com/$repo/main/crates/zim-ios/icons/icon.png" \
   '{
     name: "Zim",

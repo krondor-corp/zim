@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Zim",
-  "version": "0.1.0",
   "identifier": "org.krondor.zim",
   "build": {
     "frontendDist": "../zim-ios/frontend"

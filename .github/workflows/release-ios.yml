@@ -1,20 +1,25 @@
-name: Release iOS (SideStore)
+name: Release iOS
 
-# The iOS app ships with every zim release as an unsigned Zim.ipa plus a
-# SideStore/AltStore source (sidestore.json), attached to the GitHub
-# Release that release-cli.yml creates from the same zim-v* tag. Users add
-#   https://github.com/krondor-corp/zim/releases/latest/download/sidestore.json
-# as a source once; SideStore re-signs the IPA with their Apple ID and
-# picks up each new release from there. No signing secrets are involved.
+# The iOS app has its own release train. It is a native shell around the
+# hub's web app (which deploys continuously), so it only needs a release
+# when crates/zim-ios itself changes — not with every zim-v* release.
 #
-# Pull requests that touch the app build the same IPA as a workflow
-# artifact (nothing is published), so a broken iOS build shows up on the
-# PR rather than on the release tag.
+#   bump crates/zim-ios/Cargo.toml version in a PR → merge →
+#   bin/ios-release <version> tags origin/main as zim-ios-v<version> →
+#   this workflow builds an unsigned Zim.ipa, creates the "Zim for iOS"
+#   GitHub Release (IPA, checksum, SideStore source) and redeploys the
+#   docs site, which republishes the newest source at the stable URL
+#     https://zim.krondor.org/ios/sidestore.json
+#
+# SideStore/AltStore re-sign the IPA with the user's Apple ID; no signing
+# secrets are involved. Pull requests that touch the app build the same
+# IPA as a workflow artifact (nothing is published), so a broken build
+# fails the PR rather than the tag.
 
 on:
   push:
     tags:
-      - "zim-v*"
+      - "zim-ios-v*"
   pull_request:
     paths:
       - "crates/zim-ios/**"
@@ -24,7 +29,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to build and attach (e.g. 0.1.9); the zim-v<version> release must exist or be about to"
+        description: "Rebuild and re-upload an existing zim-ios-v<version> release (e.g. 0.2.0)"
         required: true
 
 concurrency:
@@ -33,31 +38,48 @@ concurrency:
 
 permissions:
   contents: write
+  actions: write # dispatch the Pages redeploy
 
 jobs:
   ipa:
     name: Build Zim.ipa
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Get version
+      - name: Resolve version
         id: version
         run: |
           # iOS wants a plain dotted version (CFBundleShortVersionString),
           # so PR builds keep the app's own and only the artifact name
           # carries the PR/run.
           case "${{ github.event_name }}" in
-            workflow_dispatch) VERSION="${{ github.event.inputs.version }}"; LABEL="$VERSION" ;;
-            push)              VERSION="${GITHUB_REF#refs/tags/zim-v}"; LABEL="$VERSION" ;;
-            *)                 VERSION="$(jq -r .version crates/zim-ios/tauri.conf.json)"
+            workflow_dispatch) VERSION="${{ github.event.inputs.version }}"; REF="zim-ios-v$VERSION"; LABEL="$VERSION" ;;
+            push)              VERSION="${GITHUB_REF#refs/tags/zim-ios-v}"; REF="$GITHUB_REF"; LABEL="$VERSION" ;;
+            *)                 VERSION=""; REF="$GITHUB_REF"
                                LABEL="pr${{ github.event.pull_request.number }}-run${{ github.run_number }}" ;;
           esac
           {
             echo "version=$VERSION"
+            echo "ref=$REF"
             echo "label=$LABEL"
-            echo "tag=zim-v$VERSION"
+            echo "tag=zim-ios-v$VERSION"
           } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.version.outputs.ref }}
+
+      # A tag must name the version the crate declares, or the IPA and
+      # the release would disagree.
+      - name: Check the tag matches crates/zim-ios
+        id: crate
+        run: |
+          CRATE=$(sed -n 's/^version = "\(.*\)"$/\1/p' crates/zim-ios/Cargo.toml | head -1)
+          echo "version=$CRATE" >> "$GITHUB_OUTPUT"
+          WANT="${{ steps.version.outputs.version }}"
+          if [ -n "$WANT" ] && [ "$WANT" != "$CRATE" ]; then
+            echo "tag says $WANT but crates/zim-ios/Cargo.toml says $CRATE" >&2
+            exit 1
+          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -87,13 +109,12 @@ jobs:
       - name: Build IPA
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/crates/zim-ios/target
-        run: bin/ios-ipa "${{ steps.version.outputs.version }}" "$PWD/out/Zim.ipa"
+        run: bin/ios-ipa "${{ steps.crate.outputs.version }}" "$PWD/out/Zim.ipa"
 
-      - name: Write SideStore source
-        run: bin/sidestore-source "${{ steps.version.outputs.version }}" out/Zim.ipa > out/sidestore.json
-
-      - name: Checksum
-        run: (cd out && shasum -a 256 Zim.ipa > Zim.ipa.sha256 && cat Zim.ipa.sha256)
+      - name: Write SideStore source and checksum
+        run: |
+          bin/sidestore-source "${{ steps.crate.outputs.version }}" out/Zim.ipa > out/sidestore.json
+          (cd out && shasum -a 256 Zim.ipa > Zim.ipa.sha256 && cat Zim.ipa.sha256)
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -102,25 +123,25 @@ jobs:
           path: out/
           if-no-files-found: error
 
-      # release-cli.yml owns creating the release from the same tag;
-      # creating it here would race it, so wait for it and only upload.
-      - name: Wait for the release
+      - name: Publish the release
         if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          for i in $(seq 1 90); do
-            if gh release view "${{ steps.version.outputs.tag }}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-              exit 0
-            fi
-            echo "release ${{ steps.version.outputs.tag }} not there yet ($i/90)"
-            sleep 20
-          done
-          echo "release-cli.yml never created ${{ steps.version.outputs.tag }}" >&2
-          exit 1
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" out/Zim.ipa out/Zim.ipa.sha256 out/sidestore.json --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" out/Zim.ipa out/Zim.ipa.sha256 out/sidestore.json \
+              --repo "$GITHUB_REPOSITORY" --title "Zim for iOS v$VERSION" --notes-file .github/ios-release-notes.md
+          fi
 
-      - name: Upload to the release
+      # The docs site serves the newest release's sidestore.json at the
+      # stable source URL; a Pages build picks it up. (A dispatch from
+      # GITHUB_TOKEN does trigger workflows, unlike a pushed tag.)
+      - name: Redeploy the docs site
         if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ steps.version.outputs.tag }}" out/Zim.ipa out/Zim.ipa.sha256 out/sidestore.json --repo "$GITHUB_REPOSITORY" --clobber
+        run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main

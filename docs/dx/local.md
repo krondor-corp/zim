@@ -189,7 +189,7 @@ the app loads the SPA from the hub, so web changes only need a reload).
 
 `make ios-ipa` (`VERSION=…`) builds an unsigned `target/ios/Zim.ipa` for
 SideStore/AltStore against the production hub (what releases ship; `HUB_URL=…`
-picks another hub); see `docs/devops/release.md` for the per-release source. `bin/ios-ipa` drives
+picks another hub; the version defaults to `crates/zim-ios/Cargo.toml`'s). The app has its own release train (`make ios-release`, `zim-ios-v*` tags): see `docs/devops/release.md`. `bin/ios-ipa` drives
 `cargo tauri ios build` through an `xcodebuild` shim that turns signing off,
 then zips the archive's `Zim.app` — the signed export step is expected to
 fail and is ignored.

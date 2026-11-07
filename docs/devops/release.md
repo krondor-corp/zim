@@ -234,23 +234,39 @@ git push origin main
 cargo smart-release zim-peer --execute --no-publish --bump patch
 ```
 
-## iOS app (SideStore)
+## iOS app (its own train)
 
-Every `zim-v*` tag also runs `.github/workflows/release-ios.yml`, which builds
-an unsigned `Zim.ipa` (`bin/ios-ipa`) and a SideStore/AltStore source
-(`bin/sidestore-source`) and uploads both to the release that `release-cli.yml`
-creates. Users add the source once:
+The iOS app is a native shell around the hub's web app, which deploys
+continuously with the hub, so it is versioned and released on its own —
+only when `crates/zim-ios/` changes, never with `zim-v*` (release-plz doesn't
+see it: it's its own Cargo workspace). Web app and hub changes reach installed
+apps on reload, no new IPA. The hub has to keep serving every released shell:
+the sign-in handoff (`/auth/mobile/complete`, `zim-auth://callback`) only
+grows; shells lag because users update when they choose.
 
-```
-https://github.com/krondor-corp/zim/releases/latest/download/sidestore.json
-```
+To release:
 
-SideStore re-signs the IPA with the user's own Apple ID, so no signing secrets
-live in CI. Pull requests touching `crates/zim-ios/`, `bin/ios-ipa`,
+1. Bump `version` in `crates/zim-ios/Cargo.toml` in a PR and merge it. It is
+   the only copy: `tauri.conf.json` has no version, so Tauri reads Cargo's.
+2. `make ios-release VERSION=0.2.0` (`bin/ios-release`): checks origin/main
+   declares that version and the tag is new, then pushes `zim-ios-v0.2.0`.
+3. `.github/workflows/release-ios.yml` builds the unsigned `Zim.ipa`
+   (`bin/ios-ipa`), checks the tag matches the crate, creates the
+   "Zim for iOS v0.2.0" release with `Zim.ipa`, `Zim.ipa.sha256` and
+   `sidestore.json` (`bin/sidestore-source`), then dispatches `pages.yml`.
+4. The Pages build copies the newest `zim-ios-v*` release's `sidestore.json`
+   to the stable source URL users add once:
+
+   ```
+   https://zim.krondor.org/ios/sidestore.json
+   ```
+
+Re-run a release (e.g. a flaky macOS runner) from Actions → Release iOS → Run
+workflow with the version; it rebuilds from the tag and re-uploads. SideStore
+re-signs the IPA with the user's own Apple ID, so no signing secrets live in
+CI. Pull requests touching `crates/zim-ios/`, `bin/ios-ipa`,
 `bin/sidestore-source` or the workflow build the same IPA (plus source and
-`Zim.ipa.sha256`) as a workflow artifact, `Zim-pr<N>-run<M>`, without
-publishing, so a broken iOS build fails the PR, not the release. The URL follows GitHub's *latest* release, so a release whose iOS
-job failed leaves the source pointing nowhere until the job is re-run
-(`workflow_dispatch` with the version). The App Store path is separate and
+checksum) as a workflow artifact, `Zim-pr<N>-run<M>`, without publishing, so a
+broken iOS build fails the PR, not the tag. The App Store path is separate and
 unchanged: a signed `cargo tauri ios build --export-method app-store-connect`
 with a development team.

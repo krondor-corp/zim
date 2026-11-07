@@ -66,8 +66,12 @@ ios: ## Run the iOS app in the simulator against this worktree's hub (starts it;
 	  --config "{\"plugins\":{\"zim-hub\":{\"url\":\"http://127.0.0.1:$$(confit export --profile dev --format shell | sed -n "s/^export HUB_PORT='\(.*\)'/\1/p")\"}}}"
 
 .PHONY: ios-ipa
-ios-ipa: ## Build an unsigned target/ios/Zim.ipa for SideStore/AltStore, against the production hub (VERSION=0.2.0; default tauri.conf.json)
+ios-ipa: ## Build an unsigned target/ios/Zim.ipa for SideStore/AltStore, against the production hub (VERSION=0.2.0; default crates/zim-ios/Cargo.toml)
 	bin/ios-ipa $(VERSION)
+
+.PHONY: ios-release
+ios-release: ## Tag origin/main as zim-ios-v$(VERSION) to release the iOS app (bump crates/zim-ios/Cargo.toml on main first)
+	bin/ios-release $(VERSION)
 
 .PHONY: ios-ipa-dev
 ios-ipa-dev: ## Build ~/Downloads/Zim-dev.ipa against this worktree's hub over Wi-Fi (run `make hub LAN=1` for the phone to reach it)

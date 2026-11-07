@@ -214,7 +214,12 @@ function verify_connection {
 # so this is identical under docker and podman. Prints the HTTP status.
 function s3 {
     local method="$1" path="$2"; shift 2
-    curl -s -o /dev/null -w '%{http_code}' -X "$method" \
+    # HEAD needs `--head`: with `-X HEAD` curl waits for the body that the
+    # response's Content-Length announces and never gets, hanging until
+    # the server drops the connection.
+    local verb=(-X "$method")
+    [[ "$method" == "HEAD" ]] && verb=(--head)
+    curl -s -o /dev/null -w '%{http_code}' "${verb[@]}" \
         --aws-sigv4 "aws:amz:us-east-1:s3" \
         --user "$MINIO_ROOT_USER:$MINIO_ROOT_PASSWORD" \
         "$@" "http://localhost:${MINIO_API_PORT}${path}"

@@ -1,6 +1,7 @@
 //! Settings: a standalone shell (no app icon-rail) for account + device
 //! management — its own grouped nav with a "back to app" link. Sections are
-//! tabs rendered into a single centred column.
+//! tabs rendered into a single centred column. On phones the nav becomes a
+//! horizontal tab strip above the content.
 
 use yew::prelude::*;
 use yew_router::prelude::*;

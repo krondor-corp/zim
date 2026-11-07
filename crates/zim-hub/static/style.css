@@ -671,21 +671,18 @@ td code { font-size: 0.75rem; }
 }
 
 /* ── Settings shell — standalone layout (own grouped nav, no app rail) ── */
-.settings-shell { display: flex; min-height: 100vh; }
+/* Lives inside `.pack-main` (under the fixed app header), so the nav is in
+ * normal flow: a sticky column on desktop, a tab strip on phones. */
+.settings-shell { display: flex; align-items: flex-start; gap: 2.5rem; }
 
 .settings-nav {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 15rem;
-  height: 100vh;
-  border-right: 1px solid hsl(var(--border));
-  background: hsl(var(--background));
-  padding: 1.25rem 0.75rem;
+  position: sticky;
+  top: calc(var(--header-h) + 1.5rem);
+  width: 12rem;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
-  overflow-y: auto;
 }
 .settings-nav__back {
   display: flex;
@@ -725,14 +722,7 @@ td code { font-size: 0.75rem; }
 .settings-link--active { color: hsl(var(--foreground)); background: hsl(var(--muted)); }
 .settings-link__icon { width: 1.1rem; text-align: center; flex-shrink: 0; }
 
-.settings-main {
-  flex: 1;
-  margin-left: 15rem;
-  padding: 3rem 2.5rem 3.5rem;
-  min-width: 0;
-  display: flex;
-  justify-content: center;
-}
+.settings-main { flex: 1; min-width: 0; }
 .settings-main__inner { width: 100%; max-width: 680px; }
 .settings-main h1 { font-size: 1.4rem; margin-bottom: 0.4rem; }
 .settings-main h2 { font-size: 1.05rem; margin: 0; color: hsl(var(--foreground)); }
@@ -807,11 +797,23 @@ td code { font-size: 0.75rem; }
 .device-row__remove { padding: 0.15rem 0.6rem; font-size: 0.75rem; flex-shrink: 0; }
 
 @media (max-width: 768px) {
-  .settings-nav { width: var(--sidebar-icon-col); padding: 0.75rem 0.4rem; }
-  .settings-nav .settings-link span:not(.settings-link__icon),
-  .settings-nav__back span:not(.settings-link__icon),
-  .settings-group { display: none; }
-  .settings-main { margin-left: var(--sidebar-icon-col); padding: 1.5rem 1.25rem; }
+  .settings-shell { flex-direction: column; align-items: stretch; gap: 1.25rem; }
+  .settings-nav {
+    position: static;
+    width: auto;
+    flex-direction: row;
+    gap: 0.35rem;
+    overflow-x: auto;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid hsl(var(--border));
+  }
+  /* The header menu already links back to the app. */
+  .settings-nav__back, .settings-group { display: none; }
+  .settings-link { flex-shrink: 0; white-space: nowrap; }
+  .settings-card__head { padding: 1rem 1rem 0.5rem; }
+  .settings-card__body { padding: 0.75rem 1rem 1rem; }
+  .settings-card__foot { padding: 0.75rem 1rem; }
+  .device-row { padding: 0.9rem 1rem; }
 }
 
 /* === Pack app chrome + editor-layout (ported from krondor-corp/pack

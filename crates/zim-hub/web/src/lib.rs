@@ -4,4 +4,5 @@
 pub mod fuzzy;
 pub mod markdown;
 pub mod nav;
+pub mod rename;
 pub mod save_queue;

@@ -39,15 +39,70 @@ pub struct EditorProps {
     pub on_change: Callback<String>,
 }
 
+/// The pane around an editor: [`EditorProps`] plus the editable title.
+#[derive(Properties, PartialEq)]
+pub struct EditorPaneProps {
+    pub file: OpenFile,
+    pub on_change: Callback<String>,
+    /// The title was edited: the file's new name (extension kept).
+    pub on_rename: Callback<String>,
+}
+
 #[function_component(EditorPane)]
-pub fn editor_pane(props: &EditorProps) -> Html {
+pub fn editor_pane(props: &EditorPaneProps) -> Html {
     let file = &props.file;
     let name = file.path.rsplit('/').next().unwrap_or_default().to_string();
-    let title = name
-        .rsplit_once('.')
-        .map(|(stem, _)| stem.to_string())
-        .unwrap_or_else(|| name.clone());
+    // The title is the name without its extension; renaming keeps it.
+    let (title, ext) = match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => (stem.to_string(), format!(".{ext}")),
+        _ => (name.clone(), String::new()),
+    };
     let editable = file.text.is_some();
+
+    // The title is an uncontrolled input too (written once per path), so
+    // a re-render mid-typing never resets it.
+    let title_ref = use_node_ref();
+    {
+        let title_ref = title_ref.clone();
+        let title = title.clone();
+        use_effect_with(file.path.clone(), move |_| {
+            if let Some(el) = title_ref.cast::<web_sys::HtmlInputElement>() {
+                el.set_value(&title);
+            }
+            || ()
+        });
+    }
+    // Enter or leaving the field renames; Escape puts the name back.
+    let commit_title = {
+        let on_rename = props.on_rename.clone();
+        let title = title.clone();
+        Callback::from(move |e: FocusEvent| {
+            let el: web_sys::HtmlInputElement = e.target_unchecked_into();
+            let typed = el.value();
+            if typed.trim().is_empty() || typed.trim() == title {
+                el.set_value(&title);
+            } else {
+                on_rename.emit(format!("{}{ext}", typed.trim()));
+            }
+        })
+    };
+    let title_keys = {
+        let title = title.clone();
+        Callback::from(move |e: KeyboardEvent| {
+            let el: web_sys::HtmlInputElement = e.target_unchecked_into();
+            match e.key().as_str() {
+                "Enter" => {
+                    e.prevent_default();
+                    let _ = el.blur();
+                }
+                "Escape" => {
+                    el.set_value(&title);
+                    let _ = el.blur();
+                }
+                _ => {}
+            }
+        })
+    };
 
     // Write the loaded text into the textarea once per load. Not via
     // `value=`: Yew re-asserts that against the DOM on every render,
@@ -75,7 +130,10 @@ pub fn editor_pane(props: &EditorProps) -> Html {
     html! {
         <div class="editor-container">
             <div class="editor-title-row">
-                <h1 class="editor-title" title={file.path.clone()}>{ title }</h1>
+                <input class="editor-title editor-title--input" key={file.path.clone()}
+                    ref={title_ref} title={file.path.clone()} aria-label="Note name"
+                    spellcheck="false" autocomplete="off"
+                    onblur={commit_title} onkeydown={title_keys} />
             </div>
             {
                 if editable && is_markdown(&file.path) {

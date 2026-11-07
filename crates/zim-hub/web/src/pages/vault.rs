@@ -33,6 +33,7 @@ use crate::pages::vault_tree::{build_rows, CtxMenu, CtxTarget, TreeNode, TreePan
 use crate::routes::Route;
 use crate::util::{jserr, sleep};
 use zim_hub_web::nav::shows_detail;
+use zim_hub_web::rename::{moved_path, renamed, RenameError};
 
 /// Which first-class dialog is open (replaces browser prompt/confirm).
 #[derive(Clone, PartialEq)]
@@ -40,6 +41,7 @@ enum Dialog {
     NewNote { dir: String },
     NewFolder { dir: String },
     Delete { path: String },
+    Rename { path: String },
     NewVault,
 }
 
@@ -649,9 +651,10 @@ pub fn vault_tree(props: &Props) -> Html {
         })
     };
 
-    // Drag & drop: move `from` into directory `into` (append its name).
-    // Pending text is written first, so it lands before the move.
-    let on_move = {
+    // Move `from` to the path `to` (rename, or drag & drop below).
+    // Pending text is written first, so it lands before the move; the open
+    // file follows when it, or a folder above it, moves.
+    let move_path = {
         let backend = backend.clone();
         let queue = queue.clone();
         let flush = flush.clone();
@@ -659,14 +662,13 @@ pub fn vault_tree(props: &Props) -> Html {
         let error = error.clone();
         let status = status.clone();
         let rebuild = rebuild.clone();
-        Callback::from(move |(from, into): (String, String)| {
+        Callback::from(move |(from, to): (String, String)| {
             let name = from.rsplit('/').next().unwrap_or_default().to_string();
-            let to = joined(&into, &name);
-            if to == from {
-                return;
-            }
             flush.emit(());
-            let follows_open = open_file.0.as_ref().is_some_and(|f| f.path == from);
+            let follows_open = open_file
+                .0
+                .as_ref()
+                .and_then(|f| moved_path(&f.path, &from, &to).map(|new| (f.path.clone(), new)));
             let backend = backend.clone();
             let queue = queue.clone();
             let open_file = open_file.dispatcher();
@@ -676,13 +678,12 @@ pub fn vault_tree(props: &Props) -> Html {
             status.set(format!("moving {name}\u{2026}"));
             yew::platform::spawn_local(async move {
                 settled(&queue).await;
-                match backend.mv(from.clone(), to.clone()).await {
+                match backend.mv(from, to).await {
                     Ok(()) => {
                         status.set(String::new());
-                        // If the open file moved, follow it to the new path.
-                        if follows_open {
-                            if let Ok(file) = load_file(&backend, to).await {
-                                open_file.dispatch(OpenAction::Moved { from, file });
+                        if let Some((old, new)) = follows_open {
+                            if let Ok(file) = load_file(&backend, new).await {
+                                open_file.dispatch(OpenAction::Moved { from: old, file });
                             }
                         }
                         rebuild.emit(());
@@ -693,6 +694,17 @@ pub fn vault_tree(props: &Props) -> Html {
                     }
                 }
             });
+        })
+    };
+    // Drag & drop: move `from` into directory `into` (append its name).
+    let on_move = {
+        let move_path = move_path.clone();
+        Callback::from(move |(from, into): (String, String)| {
+            let name = from.rsplit('/').next().unwrap_or_default();
+            let to = joined(&into, name);
+            if to != from {
+                move_path.emit((from, to));
+            }
         })
     };
     let on_drag_start = {
@@ -763,13 +775,25 @@ pub fn vault_tree(props: &Props) -> Html {
                     {
                         match &m.target {
                             CtxTarget::File(p) | CtxTarget::Folder(p) => {
-                                let dialog = dialog.clone();
-                                let ctx2 = ctx.clone();
-                                let p = p.clone();
-                                html! { { item("Delete", Callback::from(move |_: MouseEvent| {
-                                    ctx2.set(None);
-                                    dialog.set(Some(Dialog::Delete { path: p.clone() }));
-                                })) } }
+                                let rename = {
+                                    let dialog = dialog.clone();
+                                    let ctx2 = ctx.clone();
+                                    let p = p.clone();
+                                    Callback::from(move |_: MouseEvent| {
+                                        ctx2.set(None);
+                                        dialog.set(Some(Dialog::Rename { path: p.clone() }));
+                                    })
+                                };
+                                let delete = {
+                                    let dialog = dialog.clone();
+                                    let ctx2 = ctx.clone();
+                                    let p = p.clone();
+                                    Callback::from(move |_: MouseEvent| {
+                                        ctx2.set(None);
+                                        dialog.set(Some(Dialog::Delete { path: p.clone() }));
+                                    })
+                                };
+                                html! { <>{ item("Rename", rename) }{ item("Delete", delete) }</> }
                             }
                             CtxTarget::Root => html! {},
                         }
@@ -889,6 +913,11 @@ pub fn vault_tree(props: &Props) -> Html {
             PaletteAction::DeleteOpenFile => {
                 if let Some(path) = open_path.clone() {
                     dialog.set(Some(Dialog::Delete { path }));
+                }
+            }
+            PaletteAction::RenameOpenFile => {
+                if let Some(path) = open_path.clone() {
+                    dialog.set(Some(Dialog::Rename { path }));
                 }
             }
             PaletteAction::SaveNow => flush.emit(()),
@@ -1063,7 +1092,17 @@ pub fn vault_tree(props: &Props) -> Html {
                         {
                             match &open_file.0 {
                                 Some(f) => html! {
-                                    <EditorPane file={f.clone()} on_change={on_change.clone()} />
+                                    <EditorPane file={f.clone()} on_change={on_change.clone()}
+                                        on_rename={{
+                                            let path = f.path.clone();
+                                            let move_path = move_path.clone();
+                                            let error = error.clone();
+                                            Callback::from(move |name: String| match renamed(&path, &name) {
+                                                Ok(to) => move_path.emit((path.clone(), to)),
+                                                Err(RenameError::Unchanged) => {}
+                                                Err(e) => error.set(e.to_string()),
+                                            })
+                                        }} />
                                 },
                                 None => match &*syncing {
                                     Some(path) => html! {
@@ -1143,6 +1182,24 @@ pub fn vault_tree(props: &Props) -> Html {
                                         on_confirm={Callback::from(move |_| {
                                             dialog.set(None);
                                             remove_path.emit(path.clone());
+                                        })} />
+                                }
+                            }
+                            Dialog::Rename { path } => {
+                                let dialog = dialog.clone();
+                                let move_path = move_path.clone();
+                                let error = error.clone();
+                                let name = path.rsplit('/').next().unwrap_or_default().to_string();
+                                html! {
+                                    <PromptDialog title={format!("Rename {name}")} label="Name" value={name} action="Rename"
+                                        on_cancel={close}
+                                        on_submit={Callback::from(move |name: String| {
+                                            dialog.set(None);
+                                            match renamed(&path, &name) {
+                                                Ok(to) => move_path.emit((path.clone(), to)),
+                                                Err(RenameError::Unchanged) => {}
+                                                Err(e) => error.set(e.to_string()),
+                                            }
                                         })} />
                                 }
                             }

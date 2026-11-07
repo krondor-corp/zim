@@ -24,6 +24,7 @@ const MAX_ROWS: usize = 50;
 pub enum PaletteAction {
     NewNote,
     NewFolder,
+    RenameOpenFile,
     DeleteOpenFile,
     SaveNow,
     History,
@@ -131,6 +132,10 @@ pub fn palette(props: &PaletteProps) -> Html {
     ];
     if let Some(path) = &props.open_path {
         let name = path.rsplit('/').next().unwrap_or_default();
+        all.push(Item::Action(
+            PaletteAction::RenameOpenFile,
+            format!("Rename {name}"),
+        ));
         all.push(Item::Action(
             PaletteAction::DeleteOpenFile,
             format!("Delete {name}"),

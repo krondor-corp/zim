@@ -45,5 +45,32 @@ During shareholder synchronization, missing pinned blobs are requested from
 the shares' reachable peers and from the peer that supplied the chain.
 Downloaded blobs are tagged by the native provider so they remain retained.
 
+Which pins a pull fetches is the peer's pin policy (`PinPolicy` in
+`zim-peer`'s `content_cache` module):
+
+- **Full** (default; every `zim` daemon and the hub) — every pin is
+  downloaded on pull, and the reconcile sweep re-downloads any that are
+  missing.
+- **OnDemand { budget_bytes }** — for space-constrained peers (the native
+  iOS peer, laptops with large vaults). A pull downloads only structural
+  pins: the operations log and the previous manifest. Directory bodies
+  already ride in the manifest, so the tree can be listed with no content
+  local. The sweep heals the same structural set and never content.
+
+Reads go through `SyncCoordinator::cat`. On a local miss it fetches the
+file's ciphertext from the shares' reach targets plus the peer the vault was
+last pulled from. If none of them can serve it, the read fails with
+`ReadError::ContentUnavailable`, which the daemon's cat endpoint returns as
+503. Under `Full`, this same path heals a pin the sweep hasn't reached yet.
+
+Under `OnDemand`, blobs fetched on read go into an in-memory LRU. When fetched
+content exceeds the budget, the least recently read blobs are deleted from
+the local store; the blob just fetched is never deleted. The LRU tracks only
+blobs it fetched from a peer. Locally authored content is never a candidate,
+so a write nobody has acknowledged can't be evicted (the cost: authored
+content never counts toward the budget). The LRU isn't persisted, so content
+fetched before a restart stays on disk and is never evicted. Persisting the
+LRU is follow-up work.
+
 The hub stores the same signed manifests and ciphertext but never decrypts the
 filesystem. Its local or S3 backend changes durability, not the vault model.

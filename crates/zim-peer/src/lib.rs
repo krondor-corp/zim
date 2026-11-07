@@ -18,6 +18,8 @@
 //! - [`iroh_transport`] — iroh `ProtocolHandler` impl.
 //! - [`relay_pull`] — hub-mirror log-only chain pull.
 //! - [`chain`] — manifest-chain walk + ops merge primitives.
+//! - [`content_cache`] — [`PinPolicy`] (full mirror vs. on-demand
+//!   content) and the LRU that evicts fetched content under a budget.
 //!
 //! Concrete impls:
 //! - [`log::SqliteVaultLog`] / [`log::MemoryVaultLog`] — `VaultLog`
@@ -37,6 +39,7 @@
 pub mod accept;
 pub mod blobs;
 pub mod chain;
+pub mod content_cache;
 pub mod coordinator;
 mod db;
 pub mod effect;
@@ -58,7 +61,10 @@ pub use runtime::{Service, ShutdownHandle};
 pub type Vault<L> = zim_core::vault::Vault<blobs::BlobsProvider, L>;
 
 pub use accept::{AcceptAll, AcceptPolicy, IncomingSync};
-pub use coordinator::{run_effects, DaemonInfo, MemoryPeerSender, SentMessage, SyncCoordinator};
+pub use content_cache::{ContentCache, PinPolicy};
+pub use coordinator::{
+    run_effects, DaemonInfo, MemoryPeerSender, ReadError, SentMessage, SyncCoordinator,
+};
 pub use db::DatabaseError;
 pub use effect::Effect;
 pub use iroh_transport::{IrohPeerSender, SyncProtocol, ALPN};

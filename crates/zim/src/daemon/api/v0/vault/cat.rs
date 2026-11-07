@@ -9,7 +9,7 @@ use zim_core::fs::AbsPath;
 use crate::daemon::api::client::ApiRequest;
 use crate::daemon::api::v0::vault::extractor::VaultHandle;
 use crate::daemon::state::{vault_lookup_response, ServiceState};
-use zim_peer::VaultLookupError;
+use zim_peer::{ReadError, VaultLookupError};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CatRequest {
@@ -34,11 +34,18 @@ pub async fn handler(
 ) -> Result<impl IntoResponse, CatError> {
     let vault = handle.at(&state, req.at).await?;
     let abs = AbsPath::new(&req.path).ok_or_else(|| CatError::BadPath(req.path.clone()))?;
-    let bytes = vault
-        .fs()
-        .cat(&abs)
+    // Through the coordinator, not `vault.fs()`: a content blob the
+    // pull didn't land yet is fetched from a provider instead of
+    // failing the read.
+    let bytes = state
+        .peer()
+        .coord()
+        .cat(&vault, &abs)
         .await
-        .map_err(|e| CatError::Read(e.to_string()))?;
+        .map_err(|e| match e {
+            ReadError::ContentUnavailable { .. } => CatError::Unavailable(e.to_string()),
+            ReadError::Fs(e) => CatError::Read(e.to_string()),
+        })?;
     Ok((
         http::StatusCode::OK,
         Json(CatResponse {
@@ -57,6 +64,8 @@ pub enum CatError {
     BadPath(String),
     #[error("read: {0}")]
     Read(String),
+    #[error("{0}")]
+    Unavailable(String),
 }
 
 impl IntoResponse for CatError {
@@ -67,6 +76,9 @@ impl IntoResponse for CatError {
                 (http::StatusCode::BAD_REQUEST, self.to_string()).into_response()
             }
             CatError::Read(_) => (http::StatusCode::NOT_FOUND, self.to_string()).into_response(),
+            CatError::Unavailable(_) => {
+                (http::StatusCode::SERVICE_UNAVAILABLE, self.to_string()).into_response()
+            }
         }
     }
 }

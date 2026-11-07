@@ -101,6 +101,43 @@ impl BlobsProvider {
         Ok(())
     }
 
+    /// Size in bytes of a complete local blob, `None` if absent.
+    pub async fn size(&self, hash: &Hash) -> anyhow::Result<Option<u64>> {
+        let iroh_hash = crate::iroh::to_iroh_hash(*hash);
+        let status = self
+            .blobs()
+            .status(iroh_hash)
+            .await
+            .map_err(|e| anyhow!("status {hash}: {e}"))?;
+        Ok(match status {
+            BlobStatus::Complete { size } => Some(size),
+            _ => None,
+        })
+    }
+
+    /// Delete a blob from the local store now, bypassing GC protection.
+    /// Only for content another peer still serves (the on-demand cache
+    /// evicting what it fetched); a later read re-fetches it.
+    pub async fn evict(&self, hash: Hash) -> anyhow::Result<()> {
+        type ApiClient = irpc::Client<iroh_blobs::api::proto::Request>;
+        // SAFETY: `Store` is a newtype over this irpc client — the same
+        // layout `object_store::spawn_store` relies on to build one.
+        // iroh-blobs keeps its delete RPC crate-private (it expects GC
+        // to be the only deleter), so we send the request directly.
+        let client = unsafe {
+            std::mem::transmute::<&crate::iroh::Store, &ApiClient>(self.protocol.store())
+        };
+        client
+            .rpc(iroh_blobs::api::proto::BlobDeleteRequest {
+                hashes: vec![crate::iroh::to_iroh_hash(hash)],
+                force: true,
+            })
+            .await
+            .map_err(|e| anyhow!("evict {hash}: {e}"))?
+            .map_err(|e| anyhow!("evict {hash}: {e}"))?;
+        Ok(())
+    }
+
     pub async fn download_hash(
         &self,
         hash: Hash,

@@ -50,7 +50,7 @@ The browser exposes this as a read-only `WasmVersion` (no `save`) plus
 each manifest's plaintext header for its author and an `Access` of
 `Readable`, `Sealed` (no share for this browser — permanent), or
 `Unavailable` (the manifest fetch failed — transient, says nothing about
-access; the UI keeps it clickable to retry). The web workspace autosaves notes, at most every 30s of editing (plus on file switch, tab hide/close, and Cmd/Ctrl+S), and each write is a version; expect denser history from browser edits than from the daemon. Its History view restores per file —
+access; the UI keeps it clickable to retry). The web workspace autosaves notes, at most every 30s of editing by default (the hub sets it with `ZIM_HUB_AUTOSAVE_MS`; dev uses 1.5s) (plus on file switch, tab hide/close, and Cmd/Ctrl+S), and each write is a version; expect denser history from browser edits than from the daemon. Its History view restores per file —
 whole-vault restore would clobber concurrent work in unrelated paths.
 
 The daemon exposes the same two reads locally (no hub, no auth beyond the

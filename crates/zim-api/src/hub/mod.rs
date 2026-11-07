@@ -14,6 +14,7 @@ pub mod auth;
 #[cfg(feature = "vault")]
 pub mod blob;
 pub mod client;
+pub mod client_config;
 pub mod devices;
 pub mod did_doc;
 pub mod jwt;
@@ -29,6 +30,7 @@ pub use auth::{
     DeviceCodeStartBody, DeviceCodeStartRequest, Me, MeRequest,
 };
 pub use client::HubClient;
+pub use client_config::{ClientConfig, CLIENT_CONFIG_ELEMENT_ID};
 pub use devices::{Device, DeviceKind, DevicesRequest, DevicesResponse, RemoveDeviceRequest};
 pub use did_doc::{DidDoc, DidDocRequest};
 pub use resolver::HttpDidResolver;

@@ -8,15 +8,19 @@ use std::rc::Rc;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 use yew::prelude::*;
+use zim_hub_web::client_config::timeout_ms;
 use zim_hub_web::save_queue::SaveQueue;
 
 use crate::backend::VaultBackend;
-use crate::util::sleep;
+use crate::util::{client_config, sleep};
 
 /// How long an edit may sit unsaved: the first edit after a write arms
 /// one timer, and everything typed until it fires lands in one write.
-/// Every write is a version, so this bounds history density.
-pub(crate) const AUTOSAVE_MS: i32 = 30_000;
+/// Every write is a version, so this bounds history density. Set by the
+/// hub (`ZIM_HUB_AUTOSAVE_MS`); 30s by default.
+pub(crate) fn autosave_ms() -> i32 {
+    timeout_ms(client_config().autosave_ms)
+}
 
 /// How often [`settled`] re-checks a draining queue.
 const SETTLE_POLL_MS: i32 = 50;

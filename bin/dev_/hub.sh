@@ -131,9 +131,13 @@ hub_up() {
     fi
 
     # Env the hub reads. `ZIM_HUB_HOST` is percent-encoded so did:web
-    # resolves to the URL.
+    # resolves to the URL. The SPA timings are dev-fast (production: 30s
+    # autosave, 3s follow) so an edit reaches another tab in ~2s; the hub
+    # injects them into index.html. Override either by exporting it.
     local env_prefix="\
 ZIM_HUB_LISTEN='$listen_host:$HUB_PORT' \
+ZIM_HUB_AUTOSAVE_MS='${ZIM_HUB_AUTOSAVE_MS:-1500}' \
+ZIM_HUB_FOLLOW_MS='${ZIM_HUB_FOLLOW_MS:-1000}' \
 ZIM_HUB_HOME='$HUB_HOME' \
 ZIM_HUB_HOST='$did_host%3A$HUB_PORT' \
 ZIM_HUB_S3_ENDPOINT='http://localhost:$MINIO_API_PORT' \

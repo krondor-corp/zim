@@ -36,6 +36,15 @@ esac
 # The hub the app loads (`plugins.zim-hub.url`; unset = the release default).
 config="$(jq -nc --arg v "$version" --arg id "$identifier" --arg hub "${HUB_URL:-}" \
   '{version: $v, identifier: $id} + (if $hub == "" then {} else {plugins: {"zim-hub": {url: $hub}}} end)')"
+# One build at a time per checkout: builds share the Xcode project, the
+# archive path and the files restored below, so an overlapping build
+# would back up the other's half-written state and "restore" it.
+lock="$ios/gen/apple/build/.ios-ipa.lock"
+mkdir -p "$(dirname "$lock")"
+mkdir "$lock" 2>/dev/null || {
+  echo "ios-ipa: another build is running in this checkout ($lock; remove it if none is)" >&2
+  exit 1
+}
 work="$(mktemp -d)"
 # `cargo tauri ios build` writes the version into the committed Info.plist
 # and the identifier into the Xcode project; put both back so a build
@@ -46,6 +55,7 @@ for f in "${tracked[@]}"; do cp "$f" "$work/orig/$(basename "$f")"; done
 restore() {
   for f in "${tracked[@]}"; do cp "$work/orig/$(basename "$f")" "$f"; done
   rm -rf "$work"
+  rmdir "$lock" 2>/dev/null || true
 }
 trap restore EXIT
 

@@ -2,7 +2,8 @@
 # zim.krondor.org. DNS (the CNAME record) lives in zim-iac's terraform;
 # the custom domain must also be set once in Settings → Pages.
 #
-# Also serves the iOS app's SideStore source at /ios/sidestore.json:
+# Also serves the newest iOS release at stable URLs — /ios/Zim.ipa,
+# /ios/Zim.ipa.sha256 and the SideStore source /ios/sidestore.json —
 # copied from the newest zim-ios-v* release at build time. release-ios.yml
 # dispatches this workflow after each iOS release.
 
@@ -36,19 +37,21 @@ jobs:
       - run: cd web && bundle exec jekyll build
         env:
           JEKYLL_ENV: production
-      - name: SideStore source from the newest iOS release
+      - name: Newest iOS release (IPA, checksum, SideStore source)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,isDraft,isPrerelease \
             --jq '[.[] | select(.isDraft | not) | select(.isPrerelease | not) | .tagName | select(startswith("zim-ios-v"))][0] // empty')
           if [ -z "$TAG" ]; then
-            echo "no zim-ios-v* release yet; skipping /ios/sidestore.json"
+            echo "no zim-ios-v* release yet; skipping /ios/"
             exit 0
           fi
           mkdir -p web/_site/ios
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern sidestore.json --dir web/_site/ios
-          echo "serving $TAG's sidestore.json"
+          for f in Zim.ipa Zim.ipa.sha256 sidestore.json; do
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$f" --dir web/_site/ios
+          done
+          echo "serving $TAG at /ios/"
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web/_site

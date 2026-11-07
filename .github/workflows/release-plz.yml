@@ -8,9 +8,9 @@ name: Release PR
 #                     the workspace to crates.io in dependency order.
 #
 # The iOS app (crates/zim-ios, its own Cargo workspace) runs the same
-# train in parallel from crates/zim-ios/release-plz.toml: its own
-# "chore(ios): release" PR; merging it tags zim-ios-v*, which triggers
-# release-ios.yml.
+# train in parallel (jobs release-ios / release-pr-ios, bin/ios-release-pr):
+# its own "chore(ios): release" PR; merging it tags zim-ios-v*, which
+# triggers release-ios.yml.
 #
 # All jobs run with RELEASE_PAT: the release PRs get real CI, and the
 # pushed zim-v* / zim-ios-v* tags natively trigger release-cli.yml +
@@ -69,7 +69,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
 
-  # iOS app: tag zim-ios-v* when its release PR merges (no crates.io).
+  # iOS app: when its release PR merges, tag zim-ios-v<version>. The
+  # squash-merge subject is the PR title, "chore(ios): release vX (#N)";
+  # anything else (or an already-tagged version) tags nothing.
   release-ios:
     runs-on: ubuntu-latest
     steps:
@@ -78,34 +80,50 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PAT }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Tag a merged iOS release PR
+        run: |
+          VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' crates/zim-ios/Cargo.toml | head -1)
+          TAG="zim-ios-v$VERSION"
+          SUBJECT=$(git log -1 --format=%s)
+          case "$SUBJECT" in
+            "chore(ios): release v$VERSION"*) ;;
+            *) echo "not an iOS release merge: $SUBJECT"; exit 0 ;;
+          esac
+          if git rev-parse --quiet --verify "refs/tags/$TAG" >/dev/null; then
+            echo "$TAG already exists"; exit 0
+          fi
+          git tag "$TAG"
+          git push origin "$TAG"
+          echo "pushed $TAG — Release iOS takes it from here"
 
-      - name: release-plz release (iOS)
-        uses: release-plz/action@v0.5
-        with:
-          command: release
-          manifest_path: crates/zim-ios/Cargo.toml
-          config: crates/zim-ios/release-plz.toml
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
-
-  # iOS app: create/refresh its standing release PR.
+  # iOS app: create/refresh its standing release PR (bin/ios-release-pr;
+  # release-plz can't: its git-only mode needs the manifest at the repo
+  # root, and crates/zim-ios is its own workspace).
   release-pr-ios:
     runs-on: ubuntu-latest
-    needs: release-ios # serialize: never race the tagger
+    needs: release-ios # serialize: see the tag before picking a version
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PAT }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Prepare the release
+        id: prep
+        run: echo "version=$(bin/ios-release-pr "$RUNNER_TEMP/ios-release-body.md")" >> "$GITHUB_OUTPUT"
 
-      - name: release-plz release-pr (iOS)
-        uses: release-plz/action@v0.5
+      - name: Open or update the release PR
+        if: steps.prep.outputs.version != ''
+        uses: peter-evans/create-pull-request@v7
         with:
-          command: release-pr
-          manifest_path: crates/zim-ios/Cargo.toml
-          config: crates/zim-ios/release-plz.toml
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
+          token: ${{ secrets.RELEASE_PAT }}
+          branch: release-ios
+          base: main
+          title: "chore(ios): release v${{ steps.prep.outputs.version }}"
+          commit-message: "chore(ios): release v${{ steps.prep.outputs.version }}"
+          body-path: ${{ runner.temp }}/ios-release-body.md
+          add-paths: |
+            crates/zim-ios/Cargo.toml
+            crates/zim-ios/Cargo.lock
+            crates/zim-ios/CHANGELOG.md
+          delete-branch: true

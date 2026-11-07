@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Prepare the iOS app's release PR (run by the `release-pr-ios` job in
+# .github/workflows/release-plz.yml; safe to run locally, it only edits
+# files).
+#
+#   bin/ios-release-pr <body-out>
+#
+# Looks at the commits touching crates/zim-ios since the newest
+# zim-ios-v* tag. If there are none, prints nothing and changes nothing.
+# Otherwise picks the next version (first release: the crate's current
+# version; then feat or breaking `!` → minor, anything else → patch, 0.x
+# style), writes it to crates/zim-ios/Cargo.toml + Cargo.lock, prepends
+# its section to crates/zim-ios/CHANGELOG.md, writes the PR body to
+# <body-out> and prints the version.
+#
+# release-plz would do this, but its git-only mode opens the repository
+# at the manifest's directory, so it can't run on a workspace that isn't
+# at the repo root (crates/zim-ios is its own workspace).
+set -euo pipefail
+
+body_out="${1:?usage: bin/ios-release-pr <body-out>}"
+root="$(cd "$(dirname "$0")/.." && pwd)"
+crate="crates/zim-ios"
+repo="krondor-corp/zim"
+cd "$root"
+
+current="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$crate/Cargo.toml" | head -1)"
+last_tag="$(git tag --list 'zim-ios-v*' --sort=-v:refname | head -1)"
+range="HEAD"
+[[ -n "$last_tag" ]] && range="$last_tag..HEAD"
+
+# Release commits themselves (only a version bump + changelog) aren't news.
+subjects="$(git log --format=%s "$range" -- "$crate" | grep -v '^chore(ios): release v' || true)"
+if [[ -z "$subjects" ]]; then
+  echo "ios-release-pr: nothing to release since ${last_tag:-the beginning}" >&2
+  exit 0
+fi
+
+if [[ -z "$last_tag" ]]; then
+  next="$current"
+else
+  IFS=. read -r major minor patch <<<"${last_tag#zim-ios-v}"
+  if grep -qE '^feat(\(|:|!)|^[a-z]+(\([^)]*\))?!:' <<<"$subjects"; then
+    next="$major.$((minor + 1)).0"
+  else
+    next="$major.$minor.$((patch + 1))"
+  fi
+fi
+
+# Version: the [package] version (the first one) and the lockfile entry.
+awk -v v="$next" '!done && /^version = "/ { $0 = "version = \"" v "\""; done = 1 } 1' \
+  "$crate/Cargo.toml" >"$crate/Cargo.toml.tmp" && mv "$crate/Cargo.toml.tmp" "$crate/Cargo.toml"
+awk -v v="$next" 'hit && /^version = "/ { $0 = "version = \"" v "\""; hit = 0 } /^name = "zim-ios"$/ { hit = 1 } 1' \
+  "$crate/Cargo.lock" >"$crate/Cargo.lock.tmp" && mv "$crate/Cargo.lock.tmp" "$crate/Cargo.lock"
+
+# Changelog section, grouped by conventional-commit type.
+section() {
+  local title="$1" pattern="$2" lines
+  lines="$(grep -E "$pattern" <<<"$subjects" | sed 's/^/- /' || true)"
+  [[ -n "$lines" ]] && printf '### %s\n\n%s\n\n' "$title" "$lines"
+  return 0
+}
+# "Other" = everything that isn't feat/fix.
+other="$(grep -vE '^(feat|fix)(\(|:|!)' <<<"$subjects" | sed 's/^/- /' || true)"
+notes="$(
+  section "Features" '^feat(\(|:|!)'
+  section "Fixes" '^fix(\(|:|!)'
+  [[ -n "$other" ]] && printf '### Other\n\n%s\n\n' "$other"
+  true
+)"
+
+changelog="$crate/CHANGELOG.md"
+heading="## [$next](https://github.com/$repo/releases/tag/zim-ios-v$next) - $(date -u +%Y-%m-%d)"
+{
+  printf '# Changelog\n\nZim for iOS (`crates/zim-ios`). Releases are tagged `zim-ios-v*`.\n\n'
+  printf '%s\n\n%s\n' "$heading" "$notes"
+  if [[ -f "$changelog" ]]; then
+    # Keep earlier sections, dropping the old header (everything before the
+    # first "## ").
+    awk 'seen || /^## / { seen = 1; print }' "$changelog" | sed '1s/^/\n/'
+  fi
+} >"$changelog.tmp" && mv "$changelog.tmp" "$changelog"
+
+{
+  printf 'Release **Zim for iOS v%s**. Merging this PR tags `zim-ios-v%s`, which builds the unsigned IPA, publishes the "Zim for iOS" release and refreshes the SideStore source.\n\n' "$next" "$next"
+  printf 'Since %s:\n\n%s\n' "${last_tag:-the beginning}" "$notes"
+  printf '\n---\nRegenerated on every push to main by `bin/ios-release-pr` (the `release-pr-ios` job), so edits to this branch get overwritten.\n'
+} >"$body_out"
+
+echo "$next"

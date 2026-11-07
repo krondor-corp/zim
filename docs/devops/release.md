@@ -239,9 +239,10 @@ cargo smart-release zim-peer --execute --no-publish --bump patch
 The iOS app is a native shell around the hub's web app, which deploys
 continuously with the hub, so it is versioned and released on its own —
 only when `crates/zim-ios/` changes, never with `zim-v*`. It's its own Cargo
-workspace, so release-plz runs a second train for it
-(`crates/zim-ios/release-plz.toml`, jobs `release-ios` / `release-pr-ios` in
-`release-plz.yml`). Web app and hub changes reach installed
+workspace, so it gets its own train in `release-plz.yml` (jobs `release-ios`
+/ `release-pr-ios`, driven by `bin/ios-release-pr`). release-plz itself can't
+run it: its git-only mode opens the repository at the manifest's directory,
+which must then be the repo root. Web app and hub changes reach installed
 apps on reload, no new IPA. The hub has to keep serving every released shell:
 the sign-in handoff (`/auth/mobile/complete`, `zim-auth://callback`) only
 grows; shells lag because users update when they choose.
@@ -251,12 +252,13 @@ To release:
 1. Commits touching `crates/zim-ios/` refresh a standing
    "chore(ios): release vX" PR: the version bump in `crates/zim-ios/Cargo.toml`
    (the only copy: `tauri.conf.json` has no version, so Tauri reads Cargo's)
-   plus `crates/zim-ios/CHANGELOG.md`, from conventional commits. It runs in
-   git-only mode (no crates.io: the last version comes from `zim-ios-v*`
-   tags; the first PR proposes the current version as the initial release).
-2. Merging that PR is the release: release-plz tags `zim-ios-v<version>`
-   with `RELEASE_PAT` (so the tag triggers workflows). It never tags
-   otherwise (`release_always = false`).
+   plus `crates/zim-ios/CHANGELOG.md`, from the conventional-commit subjects
+   since the newest `zim-ios-v*` tag (feat or breaking `!` → minor, else
+   patch; the first PR proposes the current version as the initial release).
+   The PR lives on branch `release-ios` and is regenerated on each push.
+2. Merging that PR is the release: on the squash-merge commit
+   ("chore(ios): release vX (#N)") `release-ios` tags `zim-ios-v<version>`
+   with `RELEASE_PAT` (so the tag triggers workflows). Nothing else tags.
 3. `.github/workflows/release-ios.yml` builds the unsigned `Zim.ipa`
    (`bin/ios-ipa`), checks the tag matches the crate, creates the
    "Zim for iOS v0.2.0" release with `Zim.ipa`, `Zim.ipa.sha256` and

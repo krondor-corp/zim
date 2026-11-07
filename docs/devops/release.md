@@ -279,3 +279,14 @@ checksum) as a workflow artifact, `Zim-pr<N>-run<M>`, without publishing, so a
 broken iOS build fails the PR, not the tag. The App Store path is separate and
 unchanged: a signed `cargo tauri ios build --export-method app-store-connect`
 with a development team.
+
+## Hub deploys
+
+Every push to `main` that isn't iOS-only builds
+`ghcr.io/krondor-corp/zim-hub:sha-<short>` (`images.yml`), then sends a
+`zim-hub-image` repository_dispatch to the private krondor-corp/zim-iac repo.
+There, *Hub image* pins the tag in a `deploy(hub): sha-…` PR; merging that PR
+runs *Deploy hub* (Kamal, via confit with a 1Password service account). See
+zim-iac's `docs/setup.md` ("Automated hub deploys"). The dispatch token is
+`ZIM_IAC_DISPATCH_TOKEN` if set, else `RELEASE_PAT`; without access it only
+warns, and a deploy can be pinned by hand from zim-iac's Actions.

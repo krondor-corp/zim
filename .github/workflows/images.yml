@@ -63,3 +63,27 @@ jobs:
             service=${{ matrix.name }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,scope=${{ matrix.name }},mode=max
+
+      # Hand the new main image to krondor-corp/zim-iac, which pins it in a
+      # deploy PR (hub-image.yml there); merging that PR deploys it. Tags
+      # and manual runs don't dispatch. The token needs Contents write on
+      # zim-iac: ZIM_IAC_DISPATCH_TOKEN (a fine-grained PAT scoped to
+      # zim-iac) if set, else RELEASE_PAT. A failed dispatch warns; the
+      # image is already pushed.
+      - name: Ask zim-iac to deploy this image
+        if: matrix.name == 'zim-hub' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.ZIM_IAC_DISPATCH_TOKEN || secrets.RELEASE_PAT }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::no token for zim-iac; not asking it to deploy"
+            exit 0
+          fi
+          if gh api repos/krondor-corp/zim-iac/dispatches \
+            -f event_type=zim-hub-image \
+            -f "client_payload[version]=sha-${GITHUB_SHA::7}" \
+            -f "client_payload[commit]=$GITHUB_SHA"; then
+            echo "asked zim-iac to deploy zim-hub:sha-${GITHUB_SHA::7}"
+          else
+            echo "::warning::could not dispatch to zim-iac (token lacks access?); deploy by hand: zim-iac Actions → Hub image → sha-${GITHUB_SHA::7}"
+          fi

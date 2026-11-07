@@ -3,7 +3,8 @@
 #
 #   bin/ios-ipa [version] [out-file]    # default: tauri.conf.json version, target/ios/Zim.ipa
 #   HUB_URL=http://… bin/ios-ipa …       # build against another hub (default: production)
-#   IOS_VARIANT=dev bin/ios-ipa …        # "Zim Dev" (org.krondor.zim.dev): installs beside Zim
+#   IOS_VARIANT=dev bin/ios-ipa …        # "Zim Dev" (org.krondor.zim.dev): installs beside Zim,
+#                                        # Web Inspector on (Safari → Develop → device)
 #
 # SideStore/AltStore re-sign the IPA with the installing user's Apple ID,
 # so no team or certificate is needed here. The App Store path is
@@ -25,9 +26,10 @@ out="${2:-$root/target/ios/Zim.ipa}"
 # `make ios` simulator run of the release identifier.
 identifier="$(jq -r .identifier "$ios/tauri.conf.json")"
 display_name="Zim"
+features=()
 case "${IOS_VARIANT:-}" in
   "") ;;
-  dev) identifier="$identifier.dev"; display_name="Zim Dev" ;;
+  dev) identifier="$identifier.dev"; display_name="Zim Dev"; features=(--features devtools) ;;
   *) echo "ios-ipa: unknown IOS_VARIANT=$IOS_VARIANT (dev)" >&2; exit 1 ;;
 esac
 # The hub the app loads (`plugins.zim-hub.url`; unset = the release default).
@@ -59,7 +61,7 @@ archive="$ios/gen/apple/build/zim-ios_iOS.xcarchive"
 rm -rf "$archive"
 (
   cd "$ios"
-  PATH="$work/shim:$PATH" cargo tauri ios build --ci --config "$config" ||
+  PATH="$work/shim:$PATH" cargo tauri ios build --ci "${features[@]}" --config "$config" ||
     true # the export step fails without a team; the archive is checked below
 )
 app="$archive/Products/Applications/Zim.app"

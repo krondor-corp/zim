@@ -28,6 +28,11 @@ sha2 = "0.10"
 base64 = "0.22"
 tracing = "0.1"
 
+[features]
+# Web Inspector on a release build (Safari → Develop → device → app).
+# `bin/ios-ipa` turns it on for dev variants only.
+devtools = ["tauri/devtools"]
+
 [profile.release]
 lto = true
 codegen-units = 1

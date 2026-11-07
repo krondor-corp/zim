@@ -119,7 +119,7 @@ The hub embeds a peer (`zim::ServiceState`) and serves the web mirror. In dev it
 
 **The `.md` editor.** `.md` notes open in Milkdown (Crepe, WYSIWYG, `pages/markdown_editor.rs`); every other text file stays a textarea. Both honor the same contract (`EditorProps`: the file + `on_change`). The Crepe bundle is a vendored static asset (`crates/zim-hub/static/milkdown/`: `milkdown.js`, `milkdown.css`, KaTeX woff2 fonts), imported dynamically on the first `.md` open so the SPA's initial load doesn't carry it; it runs under the existing CSP (no `unsafe-eval`). Rebuild it with `crates/zim-hub/web/vendor/milkdown/build.sh` (node + npm; Crepe and esbuild are pinned in its `package.json`) and commit the output. Milkdown re-serializes markdown on load (list markers, escaping), so `getMarkdown()` right after mount is the baseline and `on_change` fires only for text that differs from it (`markdown::is_edit`); opening a note never autosaves. If you hand-write markdown in a non-canonical style, the first real edit will normalize the whole file to Milkdown's style.
 
-**Login.** The hub's login providers are a list in `ZIM_HUB_AUTH` (unset means `google`). Sign-in is separate from the wasm app: the hub only serves the app to signed-in, approved users and sends everyone else to the server-rendered `/auth/login` (or `/auth/pending`), a chooser with one button per enabled provider (even if there's only one) that returns you to the page you asked for (`?next=`, carried through Google's round trip in the OAuth `state` param). `hub up` builds with `--features dev-login` and defaults the list to `dev-trust`: open the hub URL from `./bin/dev ports` (`http://127.0.0.1:17190` on `main`), type any email, and you're signed in as an admin. No Google account, OAuth client, or credential store needed. Type `$ZIM_DEV_SEED_EMAIL` (default `dev@example.com`) to land on the account `hub enroll` seeds. Accounts are bound to the provider that created them and never linked, so the seeded (dev-trust) account can't be signed into through Google, and an email first used with Google can't be signed into through dev-trust. Browser page loads on any other hostname (e.g. `localhost:17190`) are redirected to `HOST_NAME` (`127.0.0.1:17190`): the hub's `did:web` identity is fixed at startup and the browser builds DIDs from the address bar, so the two must agree. Dev-trust is refused unless `HOST_NAME` is loopback, and builds without the feature (release/Docker) refuse to start if it's listed. To exercise real Google OAuth too, list both; the sign-in page then offers both:
+**Login.** The hub's login providers are a list in `ZIM_HUB_AUTH` (unset means `google`). Sign-in is separate from the wasm app: the hub only serves the app to signed-in, approved users and sends everyone else to the server-rendered `/auth/login` (or `/auth/pending`), a chooser with one button per enabled provider (even if there's only one) that returns you to the page you asked for (`?next=`, carried through Google's round trip in the OAuth `state` param). `hub up` builds with `--features dev-login` and defaults the list to `dev-trust`: open the hub URL from `./bin/dev ports` (`http://127.0.0.1:17190` on `main`), type any email, and you're signed in as an admin. No Google account, OAuth client, or credential store needed. Type `$ZIM_DEV_SEED_EMAIL` (default `dev@example.com`) to land on the account `hub enroll` seeds. Accounts are bound to the provider that created them and never linked, so the seeded (dev-trust) account can't be signed into through Google, and an email first used with Google can't be signed into through dev-trust. Browser page loads on any other hostname (e.g. `localhost:17190`) are redirected to `HOST_NAME` (`127.0.0.1:17190`): the hub's `did:web` identity is fixed at startup and the browser builds DIDs from the address bar, so the two must agree. Dev-trust is refused unless `HOST_NAME` is loopback or a `.local` (mDNS) name, and builds without the feature (release/Docker) refuse to start if it's listed. To exercise real Google OAuth too, list both; the sign-in page then offers both:
 
 ```bash
 ZIM_HUB_AUTH=dev-trust,google GOOGLE_O_AUTH_CLIENT_ID=… GOOGLE_O_AUTH_CLIENT_SECRET=… ./bin/dev hub up
@@ -175,9 +175,21 @@ make ios SIM="iPhone Air"                 # another simulator (xcrun simctl list
 app at it. iOS builds are large (~10GB); set `CARGO_TARGET_DIR` to a
 directory you can delete.
 
+**On a phone (sideloading).** `make dev IPA=1` (or `make hub IPA=1`) builds
+`~/Downloads/Zim-dev.ipa` pointed at this worktree's hub, then starts the stack
+in LAN mode; install the IPA with SideStore/iloader. LAN mode (`LAN=1`, or
+`./bin/dev hub up --lan`) listens on every interface and makes this Mac's
+Bonjour name (`http://<LocalHostName>.local:<hub port>`) the hub's public URL
+*and* its `did:web` — the app derives the hub's DID from the address it loads,
+so the two must agree. Users, keys and shares embed that DID, so a dev env is
+LAN or not for its lifetime: switch with `make dev-clean`. iOS asks once for
+Local Network access. Anyone on the same network can reach the dev-trust login
+while it's on. `make ios-ipa-dev` rebuilds just the IPA (no hub restart needed:
+the app loads the SPA from the hub, so web changes only need a reload).
+
 `make ios-ipa` (`VERSION=…`) builds an unsigned `target/ios/Zim.ipa` for
-SideStore/AltStore against the production hub; install it with SideStore, or
-see `docs/devops/release.md` for the per-release source. `bin/ios-ipa` drives
+SideStore/AltStore against the production hub (what releases ship; `HUB_URL=…`
+picks another hub); see `docs/devops/release.md` for the per-release source. `bin/ios-ipa` drives
 `cargo tauri ios build` through an `xcodebuild` shim that turns signing off,
 then zips the archive's `Zim.app` — the signed export step is expected to
 fail and is ignored.

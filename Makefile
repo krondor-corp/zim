@@ -37,8 +37,9 @@ help: ## Show this help message
 	@echo '  clean          Everything: dev-clean + rust-clean + site build artifacts'
 
 .PHONY: dev
-dev: ## Whole dev stack: daemons (with FUSE) + hub + minio + fixtures + enroll
-	ZIM_DEV_FUSE=1 ./bin/dev --hub
+dev: ## Whole dev stack: daemons (with FUSE) + hub + minio + fixtures + enroll (LAN=1: hub on your Wi-Fi; IPA=1: that + ~/Downloads/Zim-dev.ipa first)
+	$(if $(IPA),$(MAKE) ios-ipa-dev)
+	ZIM_DEV_FUSE=1 ./bin/dev --hub $(if $(LAN)$(IPA),--lan)
 
 .PHONY: dev-kill
 dev-kill: ## Kill this worktree's dev session and free its ports
@@ -54,8 +55,9 @@ e2e: ## One-shot hermetic e2e run (zim-e2e crate; free ports, own data)
 	cargo run -q -p zim-e2e
 
 .PHONY: hub
-hub: ## Start the hub in this worktree's dev tmux session (minio + dev-trust login: any email is admin)
-	./bin/dev hub up
+hub: ## Start the hub in this worktree's dev tmux session (minio + dev-trust login: any email is admin; LAN=1: also on your Wi-Fi; IPA=1: that + ~/Downloads/Zim-dev.ipa)
+	$(if $(IPA),$(MAKE) ios-ipa-dev)
+	./bin/dev hub up $(if $(LAN)$(IPA),--lan)
 
 .PHONY: ios
 ios: ## Run the iOS app in the simulator against this worktree's hub (starts it; SIM="iPhone 17 Pro")
@@ -64,8 +66,13 @@ ios: ## Run the iOS app in the simulator against this worktree's hub (starts it;
 	  --config "{\"plugins\":{\"zim-hub\":{\"url\":\"http://127.0.0.1:$$(confit export --profile dev --format shell | sed -n "s/^export HUB_PORT='\(.*\)'/\1/p")\"}}}"
 
 .PHONY: ios-ipa
-ios-ipa: ## Build an unsigned target/ios/Zim.ipa for SideStore/AltStore (VERSION=0.2.0; default tauri.conf.json)
+ios-ipa: ## Build an unsigned target/ios/Zim.ipa for SideStore/AltStore, against the production hub (VERSION=0.2.0; default tauri.conf.json)
 	bin/ios-ipa $(VERSION)
+
+.PHONY: ios-ipa-dev
+ios-ipa-dev: ## Build ~/Downloads/Zim-dev.ipa against this worktree's hub over Wi-Fi (run `make hub LAN=1` for the phone to reach it)
+	IOS_VARIANT=dev HUB_URL="http://$$(scutil --get LocalHostName).local:$$(confit export --profile dev --format shell | sed -n "s/^export HUB_PORT='\(.*\)'/\1/p")" \
+	  bin/ios-ipa "" "$$HOME/Downloads/Zim-dev.ipa"
 
 .PHONY: check
 check: ## Run the quality gate: fmt-check, clippy, cargo check (what CI runs)

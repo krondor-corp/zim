@@ -9,6 +9,10 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<!-- A dev build (`make ios-ipa-dev`) loads a hub on the developer's
+	     Mac over Wi-Fi; iOS asks once before allowing that. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Zim connects to a zim hub running on your local network.</string>
 	<!-- The hub hands a finished sign-in back to zim-auth://callback. -->
 	<key>CFBundleURLTypes</key>
 	<array>

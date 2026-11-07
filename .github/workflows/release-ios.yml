@@ -60,7 +60,7 @@ jobs:
       - name: Build IPA
         env:
           CARGO_TARGET_DIR: crates/zim-ios/target
-        run: bin/ios-ipa "${{ steps.version.outputs.version }}" "$PWD/out"
+        run: bin/ios-ipa "${{ steps.version.outputs.version }}" "$PWD/out/Zim.ipa"
 
       - name: Write SideStore source
         run: bin/sidestore-source "${{ steps.version.outputs.version }}" out/Zim.ipa > out/sidestore.json

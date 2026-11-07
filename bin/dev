@@ -52,6 +52,7 @@ Commands:
       [--hub]            ...then start the hub, seed fixtures, and enroll
                           the daemons — the whole stack in one command
                           (\`./bin/dev --hub\` works too). Needs docker or podman.
+      [--lan]             ...with --hub: also serve the hub to this Wi-Fi
   clean                   Remove all data under $DATA_DIR
   kill [-f|--force]       Kill the tmux session; -f also frees ports
   status                  Show which daemons are up
@@ -67,7 +68,7 @@ Commands:
   fixtures [apply|list]   Apply (or list) the declarative fixtures in
                           bin/dev_/fixtures.toml
   fuse-check              Report whether FUSE fixtures will run here
-  hub [up|enroll|did|down]
+  hub [up [--lan]|enroll|did|down]
                           Run zim-hub in a tmux window (dev-trust login:
                           any email is admin; minio needs docker or
                           podman). \`enroll\` seeds

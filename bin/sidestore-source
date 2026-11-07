@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Print a SideStore/AltStore source (JSON) listing one Zim.ipa release.
+#
+#   bin/sidestore-source <version> <ipa> [date]
+#
+# The release workflow attaches the output to the zim-ios-v<version>
+# GitHub Release, and the docs site republishes the newest one at the
+# stable source URL
+#   https://zim.krondor.org/ios/sidestore.json
+# SideStore re-signs the unsigned IPA with the user's own Apple ID;
+# nothing here is signed.
+set -euo pipefail
+
+version="${1:?version (e.g. 0.2.0)}"
+ipa="${2:?path to Zim.ipa}"
+date="${3:-$(date -u +%Y-%m-%d)}"
+repo="krondor-corp/zim"
+
+size=$(wc -c <"$ipa" | tr -d ' ')
+min_os=$(jq -r '.bundle.iOS.minimumSystemVersion' "$(dirname "$0")/../crates/zim-ios/tauri.conf.json")
+
+jq -n \
+  --arg version "$version" \
+  --arg date "$date" \
+  --argjson size "$size" \
+  --arg minOS "$min_os" \
+  --arg source "https://zim.krondor.org/ios/sidestore.json" \
+  --arg ipa "https://github.com/$repo/releases/download/zim-ios-v$version/Zim.ipa" \
+  --arg icon "https://raw.githubusercontent.com/$repo/main/crates/zim-ios/icons/icon.png" \
+  '{
+    name: "Zim",
+    identifier: "org.krondor.zim.source",
+    sourceURL: $source,
+    apps: [{
+      name: "Zim",
+      bundleIdentifier: "org.krondor.zim",
+      developerName: "Krondor",
+      subtitle: "End-to-end encrypted vaults",
+      localizedDescription: "Your zim vaults on the phone, through your hub. Sign in with Google, unlock with your passphrase.",
+      iconURL: $icon,
+      versions: [{
+        version: $version,
+        date: $date,
+        size: $size,
+        downloadURL: $ipa,
+        minOSVersion: $minOS
+      }],
+      appPermissions: { entitlements: [], privacy: {} }
+    }],
+    news: []
+  }'

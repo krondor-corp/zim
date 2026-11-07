@@ -10,7 +10,9 @@
 #   - hub port        HUB_PORT              (+ its did:web and cookie name)
 #   - tmux session    zim-dev[-<slug>]
 #   - minio bucket    zim-blobs[-<slug>]    (the container itself is shared)
-# minio's ports are `ports.infra.*`: the same on every branch.
+# minio's ports are `ports.infra.*`: the same on every branch. So is the
+# LAN hub's (LAN_HUB_PORT): a dev env created with `--lan` (marked by
+# data/.lan, see hub_up) serves its hub there instead of HUB_PORT.
 
 CONFIT_INSTALL="curl -fsSL https://raw.githubusercontent.com/krondor-corp/confit/main/install.sh | bash"
 
@@ -41,6 +43,9 @@ else
     HUB_BUCKET="${HUB_BUCKET%-}"
 fi
 
+LAN_MARKER="$DATA_DIR/.lan"
+[[ -e "$LAN_MARKER" ]] && HUB_PORT="$LAN_HUB_PORT"
+
 # `./bin/dev ports` — this worktree's slot, ports, and names.
 cmd_ports() {
     local branch
@@ -51,7 +56,11 @@ cmd_ports() {
     for node in $(get_node_names); do
         printf "%-14s %s\n" "$node" "$(get_api_port "$node")"
     done
-    printf "%-14s %s\n" "hub" "$HUB_PORT"
+    if [[ -e "$LAN_MARKER" ]]; then
+        printf "%-14s %s  (LAN, shared)\n" "hub" "$HUB_PORT"
+    else
+        printf "%-14s %s\n" "hub" "$HUB_PORT"
+    fi
     printf "%-14s %s  (shared)\n" "minio api" "$MINIO_API_PORT"
     printf "%-14s %s  (shared)\n" "minio console" "$MINIO_CONSOLE_PORT"
     echo ""

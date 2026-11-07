@@ -206,6 +206,7 @@ cmd_run() {
             --background|-b) background=true ;;
             --fuse)          export ZIM_DEV_FUSE=1 ;;
             --hub)           hub=true ;;
+            --lan)           enable_lan || exit 1 ;;  # with --hub: see hub_up
             *) echo -e "${RED}unknown run arg: $1${NC}"; exit 1 ;;
         esac
         shift

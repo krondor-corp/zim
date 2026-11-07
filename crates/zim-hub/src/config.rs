@@ -150,9 +150,9 @@ pub enum ConfigError {
     #[error("ZIM_HUB_AUTH lists no providers")]
     NoAuthProviders,
     #[error(
-        "ZIM_HUB_AUTH={provider} is only honoured when HOST_NAME is loopback; got {host_name}"
+        "ZIM_HUB_AUTH={provider} is only honoured when HOST_NAME is loopback or a .local name; got {host_name}"
     )]
-    LoopbackOnlyProvider {
+    LocalOnlyProvider {
         provider: crate::database::types::DbAuthProvider,
         host_name: String,
     },

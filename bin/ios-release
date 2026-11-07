@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Release the iOS app: tag origin/main as zim-ios-v<version>.
+#
+#   bin/ios-release <version>        # e.g. bin/ios-release 0.2.0
+#
+# Bump `version` in crates/zim-ios/Cargo.toml in a PR first and merge it;
+# this only tags. The tag triggers .github/workflows/release-ios.yml
+# (build Zim.ipa, create the "Zim for iOS" release, refresh the SideStore
+# source on the docs site).
+set -euo pipefail
+
+version="${1:?usage: bin/ios-release <version> (bump crates/zim-ios/Cargo.toml on main first)}"
+tag="zim-ios-v$version"
+
+git fetch --quiet origin main --tags
+declared=$(git show origin/main:crates/zim-ios/Cargo.toml 2>/dev/null | sed -n 's/^version = "\(.*\)"$/\1/p' | head -1 || true)
+if [[ -z "$declared" ]]; then
+  echo "ios-release: origin/main has no crates/zim-ios/Cargo.toml yet" >&2
+  exit 1
+fi
+if [[ "$declared" != "$version" ]]; then
+  echo "ios-release: origin/main's crates/zim-ios/Cargo.toml is $declared, not $version — merge the bump first" >&2
+  exit 1
+fi
+if git rev-parse --quiet --verify "refs/tags/$tag" >/dev/null; then
+  echo "ios-release: $tag already exists (rebuild it from Actions → Release iOS → Run workflow)" >&2
+  exit 1
+fi
+
+git tag -a "$tag" origin/main -m "Zim for iOS v$version"
+git push origin "$tag"
+echo "ios-release: pushed $tag — watch it in Actions → Release iOS"

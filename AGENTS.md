@@ -14,6 +14,10 @@ cargo fmt                    # Format code
 cargo fmt -- --check         # Check formatting
 make hub                     # Start the hub in the dev tmux session (hot reload)
 make dev                     # Whole dev stack in tmux: daemons + hub + fixtures + enroll
+make ios                     # iOS app in the simulator against this worktree's hub
+make ios-ipa                 # Unsigned target/ios/Zim.ipa for SideStore/AltStore (production hub)
+make dev IPA=1               # ...plus ~/Downloads/Zim-dev.ipa against this worktree's hub over Wi-Fi
+make ios-release VERSION=x   # Tag zim-ios-vX: CI builds + publishes the iOS release (bump crates/zim-ios first)
 make dev-clean               # Kill the dev session, wipe ./data + minio state
 ./bin/dev ports              # This worktree's dev ports/tmux session (per-worktree via confit)
 make e2e                     # One-shot e2e: clean start, fixtures, sync checks
@@ -31,7 +35,8 @@ crates/
 ├── zim-peer/      # Peer machinery: sync coordinator, blob/log/contact stores, iroh transport, runtime
 ├── zim/           # Daemon binary `zim` + CLI + HTTP API + FUSE mounts (feature `fuse`)
 ├── zim-hub/       # Hub server: ciphertext mirror + did:web identity (+ wasm/ browser SDK, web/ Yew SPA)
-└── zim-e2e/       # E2E harness bin: hermetic daemons + fixtures + convergence verdicts (never published)
+├── zim-e2e/       # E2E harness bin: hermetic daemons + fixtures + convergence verdicts (never published)
+└── zim-ios/       # iOS shell (Tauri 2, own workspace, excluded from `cargo build`): hub SPA in a webview + system-sheet sign-in
 
 docs/              # Contributor/agent documentation
 web/               # Site: homepage + end-user docs (Jekyll, pack-style)

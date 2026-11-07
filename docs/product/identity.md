@@ -57,3 +57,25 @@ device grants.
 A `did:web` identity trusts its named hub to publish the correct key roster.
 The roster is intentionally minimal and does not claim the complete semantics
 of W3C DID Core.
+
+## Mobile Sign-In Handoff
+
+The iOS app is a hosted device like the browser: the same account session, the
+same escrowed browser key, the same passphrase unlock. It has no device key of
+its own. Google refuses sign-in inside embedded webviews, so the app runs the
+sign-in in the system web-auth sheet and hands the result back:
+
+1. The app keeps a random verifier and sends its SHA-256 (`mobile_challenge`)
+   when it starts the provider's sign-in in the sheet.
+2. After the normal handshake the hub issues a one-time token (random, stored
+   only as a hash, valid about 60 seconds) and redirects the sheet to
+   `zim-auth://callback?token=…`. No cookie is set in the system browser.
+3. The app's webview loads `/auth/mobile/complete?token=…&verifier=…`. The hub
+   deletes the token, checks the verifier against the challenge, and only then
+   sets the ordinary session cookie in the webview and lands on the SPA, which
+   continues to the passphrase unlock.
+
+Another app can claim the `zim-auth` scheme and read the token. It cannot
+redeem it without the verifier, which never leaves the app, and a wrong attempt
+still burns the token. Failures hand `zim-auth://callback?error=failed` back so
+the sheet closes and the app returns to the sign-in page.

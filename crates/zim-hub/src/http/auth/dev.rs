@@ -8,14 +8,14 @@
 use askama::Template;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Form, Router};
 use serde::Deserialize;
 
 use crate::http::auth::login::LoginError;
-use crate::http::auth::return_to;
-use crate::http::auth::session::{mint_session, Authority};
+use crate::http::auth::session::{sign_in, Authority, Destination};
+use crate::http::auth::{mobile, return_to};
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -25,11 +25,17 @@ pub fn router() -> Router<AppState> {
 #[derive(Deserialize)]
 struct FormQuery {
     next: Option<String>,
+    /// From the native app; carried through the form (see [`super::mobile`]).
+    mobile_challenge: Option<String>,
 }
 
 async fn form(Query(query): Query<FormQuery>) -> Response {
     let next = return_to::sanitize(query.next.as_deref());
-    form_page(next).into_response()
+    let challenge = query.mobile_challenge.as_deref();
+    if challenge.is_some_and(|c| !mobile::valid_challenge(c)) {
+        return (StatusCode::BAD_REQUEST, "malformed mobile_challenge").into_response();
+    }
+    form_page(next, challenge).into_response()
 }
 
 /// `templates/auth/dev_login.html`: the email form.
@@ -39,12 +45,14 @@ struct DevLoginPage<'a> {
     heading: &'static str,
     next: &'a str,
     next_encoded: String,
+    mobile_challenge: Option<&'a str>,
 }
 
-fn form_page(next: &str) -> DevLoginPage<'_> {
+fn form_page<'a>(next: &'a str, mobile_challenge: Option<&'a str>) -> DevLoginPage<'a> {
     DevLoginPage {
         heading: "Dev login",
         next,
+        mobile_challenge,
         next_encoded: urlencoding::encode(next).into_owned(),
     }
 }
@@ -54,6 +62,8 @@ struct Submit {
     email: String,
     #[serde(default)]
     next: Option<String>,
+    #[serde(default)]
+    mobile_challenge: Option<String>,
 }
 
 async fn submit(State(state): State<AppState>, Form(f): Form<Submit>) -> Response {
@@ -63,11 +73,16 @@ async fn submit(State(state): State<AppState>, Form(f): Form<Submit>) -> Respons
     }
     let name = email.split('@').next().unwrap_or("dev").to_string();
     let next = return_to::sanitize(f.next.as_deref());
-    match mint_session(&state, &email, &name, Authority::DevTrust, next).await {
+    let dest = match f.mobile_challenge.as_deref() {
+        Some(challenge) if mobile::valid_challenge(challenge) => Destination::App { challenge },
+        Some(_) => return (StatusCode::BAD_REQUEST, "malformed mobile_challenge").into_response(),
+        None => Destination::Web { next },
+    };
+    match sign_in(&state, &email, &name, Authority::DevTrust, dest).await {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!("dev sign-in refused: {e}");
-            Redirect::to(&LoginError::from(&e).url(next)).into_response()
+            dest.failure(LoginError::from(&e))
         }
     }
 }
@@ -78,10 +93,18 @@ mod tests {
 
     #[test]
     fn the_dev_form_keeps_next_and_links_back_to_the_chooser() {
-        let html = form_page("/v/a?b=1&c=\"2\"").render().unwrap();
+        let html = form_page("/v/a?b=1&c=\"2\"", None).render().unwrap();
         // The quote is escaped, so `next` can't break out of its attribute.
         assert!(html.contains(r#"name="next" value="/v/a?b=1&amp;c=&quot;2&quot;""#));
         assert!(html.contains("Other sign-in options"));
         assert!(html.contains(r#"href="/auth/login?next=%2Fv%2Fa%3Fb%3D1%26c%3D%222%22""#));
+    }
+
+    #[test]
+    fn alices_phone_carries_its_challenge_through_the_dev_form() {
+        let html = form_page("/", Some("abc_-123")).render().unwrap();
+        assert!(html.contains(r#"name="mobile_challenge" value="abc_-123""#));
+        let web = form_page("/", None).render().unwrap();
+        assert!(!web.contains("mobile_challenge"));
     }
 }

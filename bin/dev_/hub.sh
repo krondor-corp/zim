@@ -38,18 +38,56 @@ HUB_WINDOW="hub"
 SEED_EMAIL="${ZIM_DEV_SEED_EMAIL:-dev@example.com}"
 
 hub_url() { echo "http://127.0.0.1:$HUB_PORT"; }
+# The same hub as other devices on the Wi-Fi see it (the phone, for
+# `make ios-ipa-dev`): this Mac's Bonjour name. Only reachable when the
+# hub was started with `hub up --lan`.
+# Lowercased: browsers lowercase hosts, and the hub's did:web must match
+# the DID the app derives from its address bar.
+# Mark this dev env as LAN (data/.lan) and move the hub to LAN_HUB_PORT.
+# Refused once the env already has a hub: its identity is 127.0.0.1.
+enable_lan() {
+    [[ -e "$LAN_MARKER" ]] && return 0
+    if [[ -d "$HUB_HOME" ]]; then
+        echo -e "${RED}this dev env already has a hub that is not on the LAN port (its did:web would change); run \`make dev-clean\` first${NC}"
+        return 1
+    fi
+    mkdir -p "$DATA_DIR" && touch "$LAN_MARKER"
+    HUB_PORT="$LAN_HUB_PORT"
+}
+
+lan_host() { echo "$(scutil --get LocalHostName | tr '[:upper:]' '[:lower:]').local"; }
+lan_hub_url() { echo "http://$(lan_host):$HUB_PORT"; }
 
 cmd_hub() {
     case "${1:-up}" in
-        up)     hub_up ;;
+        up)     shift; hub_up "$@" ;;
         enroll) hub_enroll ;;
         did)    hub_did ;;
         down)   hub_down ;;
-        *)      echo -e "${RED}usage: ./bin/dev hub [up|enroll|did|down]${NC}"; exit 1 ;;
+        *)      echo -e "${RED}usage: ./bin/dev hub [up [--lan]|enroll|did|down]${NC}"; exit 1 ;;
     esac
 }
 
 hub_up() {
+    # --lan: listen on every interface so a phone on the same Wi-Fi can
+    # reach the hub, and answer as this Mac's Bonjour name — both the
+    # public URL (page loads on other hosts redirect there,
+    # http/canonical_host.rs) and the did:web (the app derives the hub's
+    # DID from the address it loaded, so they must agree). Users, keys and
+    # shares embed that DID, so a dev env is LAN or not for its lifetime
+    # (see enable_lan): later `hub up`s stay LAN, and switching needs
+    # `make dev-clean`. It serves on the fixed LAN_HUB_PORT, so one dev
+    # IPA reaches whichever worktree is serving — one at a time. Anyone on
+    # the network can reach the dev-trust login while it's on.
+    case "${1:-}" in
+        "") ;;
+        --lan) enable_lan || exit 1 ;;
+        *) echo -e "${RED}usage: ./bin/dev hub up [--lan]${NC}"; exit 1 ;;
+    esac
+    local listen_host="127.0.0.1" did_host="127.0.0.1" lan=""
+    if [[ -e "$LAN_MARKER" ]]; then
+        listen_host="0.0.0.0"; did_host="$(lan_host)"; lan=1
+    fi
     command -v tmux >/dev/null 2>&1 || { echo -e "${RED}tmux not installed${NC}"; exit 1; }
 
     echo -e "${BLUE}Starting minio (blob store)…${NC}"
@@ -87,19 +125,27 @@ hub_up() {
         echo -e "${YELLOW}hub window already running${NC}"
         return 0
     fi
+    if [[ -n "$lan" ]] && lsof -ti tcp:"$HUB_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+        echo -e "${RED}LAN port $HUB_PORT is taken — another worktree's LAN hub? Stop it there (./bin/dev hub down) first.${NC}"
+        exit 1
+    fi
 
     # Env the hub reads. `ZIM_HUB_HOST` is percent-encoded so did:web
     # resolves to the URL.
     local env_prefix="\
-ZIM_HUB_LISTEN='127.0.0.1:$HUB_PORT' \
+ZIM_HUB_LISTEN='$listen_host:$HUB_PORT' \
 ZIM_HUB_HOME='$HUB_HOME' \
-ZIM_HUB_HOST='127.0.0.1%3A$HUB_PORT' \
+ZIM_HUB_HOST='$did_host%3A$HUB_PORT' \
 ZIM_HUB_S3_ENDPOINT='http://localhost:$MINIO_API_PORT' \
 ZIM_HUB_S3_ACCESS_KEY='minioadmin' \
 ZIM_HUB_S3_SECRET_KEY='minioadmin' \
 ZIM_HUB_S3_BUCKET='$HUB_BUCKET'"
     # Google sign-in settings, forwarded only when the caller set them:
     # the tmux pane gets the tmux server's env, not ours.
+    if [[ -n "$lan" ]]; then
+        env_prefix="$env_prefix HOST_NAME='$(lan_hub_url)'"
+        echo -e "${YELLOW}LAN mode: hub reachable at $(lan_hub_url) from this network${NC}"
+    fi
     local var
     for var in GOOGLE_O_AUTH_CLIENT_ID GOOGLE_O_AUTH_CLIENT_SECRET ZIM_HUB_ADMIN_EMAILS; do
         [[ -n "${!var:-}" ]] && env_prefix="$env_prefix $var='${!var}'"
@@ -181,7 +227,7 @@ hub_enroll() {
         # writes fanned out over iroh) are gated by ContactsAcceptPolicy,
         # and `hub peers sync` only adds roster *devices*. A real
         # `zim hub login` does this; the dev stand-in must too.
-        seed_cli "$n" peers add hub "did:web:127.0.0.1%3A$HUB_PORT" >/dev/null 2>&1 || true
+        seed_cli "$n" peers add hub "$(hub_did)" >/dev/null 2>&1 || true
         seed_cli "$n" hub peers sync >/dev/null 2>&1 \
             && echo -e "  ${GREEN}$n${NC} synced peer book from hub roster" \
             || echo -e "  ${YELLOW}$n${NC} hub peers sync failed (is the hub up?)"
@@ -206,5 +252,13 @@ hub_down() {
         echo -e "${GREEN}hub window killed${NC}"
     else
         echo -e "${YELLOW}no hub window running${NC}"
+    fi
+    # `cargo watch` can leave the hub it spawned running after its window
+    # dies, still holding the port; the next `hub up` would then talk to
+    # the old hub (or fail to bind). Listener only, this worktree's port.
+    local pid
+    pid=$(lsof -ti tcp:"$HUB_PORT" -sTCP:LISTEN 2>/dev/null) || true
+    if [[ -n "$pid" ]]; then
+        kill $pid 2>/dev/null && echo -e "${GREEN}stopped hub process $pid on :$HUB_PORT${NC}"
     fi
 }

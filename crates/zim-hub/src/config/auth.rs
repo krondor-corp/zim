@@ -8,7 +8,8 @@
 //!   `GOOGLE_O_AUTH_CLIENT_ID` / `GOOGLE_O_AUTH_CLIENT_SECRET`.
 //! - `dev-trust` — the operator types an email and gets an admin
 //!   session. Exists only in `--features dev-login` builds and is
-//!   refused unless `HOST_NAME` is loopback.
+//!   refused unless `HOST_NAME` is loopback or a `.local` name (see
+//!   [`is_local`]).
 //!
 //! Several can be on at once (`ZIM_HUB_AUTH=dev-trust,google`); the
 //! sign-in page then offers a choice.
@@ -84,8 +85,9 @@ impl AuthProvider {
         }
     }
 
-    /// Providers that trust the operator may only answer on loopback.
-    fn is_loopback_only(&self) -> bool {
+    /// Providers that trust the operator may only answer on this
+    /// machine or the local network.
+    fn is_local_only(&self) -> bool {
         match self {
             AuthProvider::Google(_) => false,
             #[cfg(feature = "dev-login")]
@@ -115,9 +117,11 @@ impl AuthConfig {
 
         // `HOST_NAME` matches generic. `ZIM_HUB_BASE_URL` was the
         // earlier zim-hub name; accept both for one release.
-        let host_name = env_first(&["HOST_NAME", "ZIM_HUB_BASE_URL"])
-            .or_else(|| file.host_name.clone())
-            .unwrap_or_else(|| format!("http://{listen_address}"));
+        let host_name = canonical_url(
+            &env_first(&["HOST_NAME", "ZIM_HUB_BASE_URL"])
+                .or_else(|| file.host_name.clone())
+                .unwrap_or_else(|| format!("http://{listen_address}")),
+        );
 
         let admin_emails: Vec<String> = match env::var("ZIM_HUB_ADMIN_EMAILS") {
             Ok(s) => s
@@ -196,7 +200,7 @@ impl AuthConfig {
     }
 }
 
-/// `session`, or `session-<port>` for a loopback hub on an explicit
+/// `session`, or `session-<port>` for a local hub on an explicit
 /// port. Browsers scope cookies by host and ignore the port, so two dev
 /// hubs (one per worktree, `127.0.0.1:<a>` and `127.0.0.1:<b>`) sharing
 /// one name would overwrite each other's cookie, and each would reject
@@ -204,7 +208,7 @@ impl AuthConfig {
 fn session_cookie_name(host_name: &str) -> String {
     let port = url::Url::parse(host_name)
         .ok()
-        .filter(|_| is_loopback(host_name))
+        .filter(|_| is_local(host_name))
         .and_then(|u| u.port());
     match port {
         Some(port) => format!("session-{port}"),
@@ -214,7 +218,7 @@ fn session_cookie_name(host_name: &str) -> String {
 
 /// Parse the `ZIM_HUB_AUTH` provider list (unset → `google`). Fails
 /// closed: an unknown or not-compiled-in provider, a provider missing
-/// its credentials, or a loopback-only provider on a public host all
+/// its credentials, or a local-only provider on a public host all
 /// refuse to start rather than quietly dropping the provider.
 fn resolve_providers(
     spec: Option<&str>,
@@ -256,8 +260,8 @@ fn resolve_providers(
             #[cfg(not(feature = "dev-login"))]
             DbAuthProvider::DevTrust => return Err(unknown()),
         };
-        if provider.is_loopback_only() && !is_loopback(host_name) {
-            return Err(ConfigError::LoopbackOnlyProvider {
+        if provider.is_local_only() && !is_local(host_name) {
+            return Err(ConfigError::LocalOnlyProvider {
                 provider: provider.kind(),
                 host_name: host_name.to_string(),
             });
@@ -270,13 +274,32 @@ fn resolve_providers(
     Ok(providers)
 }
 
-/// True when `host_name` is a URL on this machine.
-fn is_loopback(host_name: &str) -> bool {
+/// `url` as browsers spell it: parsed (scheme and host lowercased, as
+/// every URL parser does), without a trailing slash. Clients build JWT
+/// audiences and hub DIDs from their parsed page URL, so a `HOST_NAME`
+/// typed with capitals (`My-Mac.local`) would otherwise reject every
+/// bearer token. Left as given when it doesn't parse.
+fn canonical_url(url: &str) -> String {
+    url::Url::parse(url)
+        .map(|u| u.as_str().trim_end_matches('/').to_string())
+        .unwrap_or_else(|_| url.to_string())
+}
+
+/// True when `host_name` is a URL on this machine (loopback) or on the
+/// local network by its mDNS name (`<machine>.local`, what `bin/dev hub
+/// up --lan` uses so a phone on the same Wi-Fi can sign in). `.local`
+/// names resolve only via multicast DNS on the local link, never through
+/// public DNS, so a hub configured for one can't be an internet-facing
+/// host.
+fn is_local(host_name: &str) -> bool {
     url::Url::parse(host_name)
         .ok()
         .and_then(|u| {
-            u.host_str()
-                .map(|h| matches!(h, "127.0.0.1" | "localhost" | "[::1]"))
+            u.host_str().map(|h| {
+                matches!(h, "127.0.0.1" | "localhost" | "[::1]")
+                    || h.strip_suffix(".local")
+                        .is_some_and(|name| !name.is_empty())
+            })
         })
         .unwrap_or(false)
 }
@@ -375,7 +398,7 @@ mod tests {
         }
     }
 
-    // ── dev-login build: trust mode, loopback only ─────────────────
+    // ── dev-login build: trust mode, this machine / local network only ──
 
     #[cfg(feature = "dev-login")]
     #[test]
@@ -386,6 +409,47 @@ mod tests {
         }
     }
 
+    #[test]
+    fn host_name_is_spelled_the_way_browsers_spell_it() {
+        // Alice's Mac is "Alices-MacBook.local"; her browser lowercases
+        // the host when it mints a token's audience, so the hub must too.
+        assert_eq!(
+            canonical_url("http://Alices-MacBook.local:17190/"),
+            "http://alices-macbook.local:17190"
+        );
+        assert_eq!(canonical_url(PUBLIC), PUBLIC);
+        assert_eq!(canonical_url(LOOPBACK), LOOPBACK);
+    }
+
+    #[cfg(feature = "dev-login")]
+    #[test]
+    fn alice_signs_in_from_her_phone_on_the_same_wifi() {
+        // Alice's dev hub answers as her Mac's Bonjour name, so her phone
+        // on the same network can reach it; dev-trust still starts.
+        let host = "http://alices-macbook.local:17190";
+        let providers = resolve_providers(Some("dev-trust"), host, None, None).unwrap();
+        assert_eq!(kinds(&providers), [DbAuthProvider::DevTrust]);
+    }
+
+    #[cfg(feature = "dev-login")]
+    #[test]
+    fn dev_trust_refuses_names_that_only_look_local() {
+        // A public domain that merely contains or ends near "local" is
+        // still public; so is a bare ".local" with no machine name.
+        for host in [
+            "https://local.example.org",
+            "https://hub.local.example.org",
+            "https://hub.localhost.example.org",
+            "http://.local:17190",
+        ] {
+            let err = resolve_providers(Some("dev-trust"), host, None, None).unwrap_err();
+            assert!(
+                matches!(err, ConfigError::LocalOnlyProvider { .. }),
+                "{host}: {err}"
+            );
+        }
+    }
+
     #[cfg(feature = "dev-login")]
     #[test]
     fn dev_trust_on_a_public_host_refuses_to_start() {
@@ -393,7 +457,7 @@ mod tests {
         let err = resolve_providers(Some("google,dev-trust"), PUBLIC, id, secret).unwrap_err();
         assert!(matches!(
             err,
-            ConfigError::LoopbackOnlyProvider {
+            ConfigError::LocalOnlyProvider {
                 provider: DbAuthProvider::DevTrust,
                 ..
             }

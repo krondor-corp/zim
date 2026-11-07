@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Build an unsigned Zim.ipa for sideloading.
+#
+#   bin/ios-ipa [version] [out-file]    # default: crates/zim-ios version, target/ios/Zim.ipa
+#   HUB_URL=http://… bin/ios-ipa …       # build against another hub (default: production)
+#   IOS_VARIANT=dev bin/ios-ipa …        # "Zim Dev" (org.krondor.zim.dev): installs beside Zim,
+#                                        # amber icon (AppIcon-Dev), Web Inspector on
+#
+# SideStore/AltStore re-sign the IPA with the installing user's Apple ID,
+# so no team or certificate is needed here. The App Store path is
+# untouched: `cargo tauri ios build --export-method app-store-connect`
+# with a development team still signs and exports as usual.
+#
+# `cargo tauri ios build` always signs, so xcodebuild runs through a shim
+# that turns signing off for the build/archive steps. The signed export
+# then fails (no team); the archive it leaves behind is all we need.
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+ios="$root/crates/zim-ios"
+# The app's version lives in its Cargo.toml (tauri.conf.json has none, so
+# Tauri reads it from there too); `zim-ios-v<version>` tags release it.
+version="${1:-$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ios/Cargo.toml" | head -1)}"
+out="${2:-$root/target/ios/Zim.ipa}"
+# A dev variant is its own app: another bundle id (so it installs next to
+# the release Zim with its own data) and home-screen name. The identifier
+# also names tauri's CLI-server address file, so a dev build can't race a
+# `make ios` simulator run of the release identifier.
+identifier="$(jq -r .identifier "$ios/tauri.conf.json")"
+display_name="Zim"
+features=()
+appicon=AppIcon
+case "${IOS_VARIANT:-}" in
+  "") ;;
+  dev) identifier="$identifier.dev"; display_name="Zim Dev"; features=(--features devtools); appicon=AppIcon-Dev ;;
+  *) echo "ios-ipa: unknown IOS_VARIANT=$IOS_VARIANT (dev)" >&2; exit 1 ;;
+esac
+# The hub the app loads (`plugins.zim-hub.url`; unset = the release default).
+config="$(jq -nc --arg v "$version" --arg id "$identifier" --arg hub "${HUB_URL:-}" \
+  '{version: $v, identifier: $id} + (if $hub == "" then {} else {plugins: {"zim-hub": {url: $hub}}} end)')"
+# One build at a time per checkout: builds share the Xcode project, the
+# archive path and the files restored below, so an overlapping build
+# would back up the other's half-written state and "restore" it.
+lock="$ios/gen/apple/build/.ios-ipa.lock"
+mkdir -p "$(dirname "$lock")"
+mkdir "$lock" 2>/dev/null || {
+  echo "ios-ipa: another build is running in this checkout ($lock; remove it if none is)" >&2
+  exit 1
+}
+work="$(mktemp -d)"
+# `cargo tauri ios build` writes the version into the committed Info.plist
+# and the identifier into the Xcode project; put both back so a build
+# leaves the tree clean (the App Store path keeps org.krondor.zim).
+tracked=("$ios/gen/apple/zim-ios_iOS/Info.plist" "$ios/gen/apple/zim-ios.xcodeproj/project.pbxproj")
+mkdir -p "$work/orig"
+for f in "${tracked[@]}"; do cp "$f" "$work/orig/$(basename "$f")"; done
+restore() {
+  for f in "${tracked[@]}"; do cp "$work/orig/$(basename "$f")" "$f"; done
+  rm -rf "$work"
+  rmdir "$lock" 2>/dev/null || true
+}
+trap restore EXIT
+
+mkdir -p "$work/shim"
+cat >"$work/shim/xcodebuild" <<'EOF'
+#!/usr/bin/env bash
+real="$(PATH="${PATH#*/shim:}" command -v xcodebuild)"
+for a in "$@"; do [[ "$a" == "-exportArchive" ]] && exec "$real" "$@"; done
+exec "$real" "$@" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM= \
+  ASSETCATALOG_COMPILER_APPICON_NAME="$(cat "$(dirname "$0")/appicon")"
+EOF
+# `cargo tauri` doesn't pass our environment on to xcodebuild, so the
+# shim reads its settings from a file beside it.
+echo "$appicon" >"$work/shim/appicon"
+chmod +x "$work/shim/xcodebuild"
+
+archive="$ios/gen/apple/build/zim-ios_iOS.xcarchive"
+rm -rf "$archive"
+(
+  cd "$ios"
+  PATH="$work/shim:$PATH" cargo tauri ios build --ci ${features[@]+"${features[@]}"} --config "$config" ||
+    true # the export step fails without a team; the archive is checked below
+)
+app="$archive/Products/Applications/Zim.app"
+[[ -x "$app/Zim" ]] || { echo "ios-ipa: no app in $archive (build failed above)" >&2; exit 1; }
+
+mkdir -p "$work/Payload" "$(dirname "$out")"
+cp -R "$app" "$work/Payload/"
+plist="$work/Payload/Zim.app/Info.plist"
+plutil -replace CFBundleShortVersionString -string "$version" "$plist"
+plutil -replace CFBundleVersion -string "$version" "$plist"
+plutil -replace CFBundleIdentifier -string "$identifier" "$plist"
+plutil -replace CFBundleDisplayName -string "$display_name" "$plist"
+rm -f "$out"
+(cd "$work" && zip -qry "$out" Payload)
+echo "ios-ipa: built $display_name ($identifier, $version) — the 'EXPORT FAILED' above is expected: unsigned builds skip the signed export" >&2
+echo "$out"

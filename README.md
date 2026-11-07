@@ -28,6 +28,23 @@ curl -fsSL https://raw.githubusercontent.com/zim/zim/main/install.sh | sh
 
 See [source installation](docs/dx/install.md) for system-package and source builds.
 
+### iOS
+
+The iOS app isn't on the App Store yet; it installs as an unsigned IPA that
+your sideloading tool signs with your own Apple ID.
+
+```bash
+# Newest release (+ checksum)
+curl -fsSLO https://zim.krondor.org/ios/Zim.ipa
+curl -fsSL https://zim.krondor.org/ios/Zim.ipa.sha256 | shasum -a 256 -c
+```
+
+Install it with [iloader](https://github.com/nab138/iloader) (or AltServer /
+Sideloadly) from a Mac, or open it in [SideStore](https://sidestore.io) on the
+phone. With SideStore you can instead add the source
+`https://zim.krondor.org/ios/sidestore.json` once and get each new release
+there.
+
 ## Quick start
 
 ```bash

@@ -11,13 +11,12 @@ use std::fmt;
 
 use async_trait::async_trait;
 use clap::Args;
-use service_manager::ServiceStartCtx;
 
 use crate::cli::op::Op;
 use crate::cli::ui;
 use crate::context::{ApiContext, ContextError};
 
-use super::{label, manager, probe};
+use super::{backend, label, probe};
 
 #[derive(Args, Debug, Clone)]
 pub struct Start;
@@ -32,8 +31,6 @@ pub struct StartOutput {
 pub enum StartError {
     #[error(transparent)]
     Context(#[from] ContextError),
-    #[error("service manager: {0}")]
-    Manager(std::io::Error),
     #[error("start: {0}")]
     Start(std::io::Error),
 }
@@ -64,9 +61,7 @@ impl Op for Start {
 
 /// Ask the OS service manager to start the daemon.
 pub fn start_service() -> Result<(), StartError> {
-    let mgr = manager().map_err(StartError::Manager)?;
-    mgr.start(ServiceStartCtx { label: label() })
-        .map_err(StartError::Start)
+    backend::start().map_err(StartError::Start)
 }
 
 impl fmt::Display for StartOutput {

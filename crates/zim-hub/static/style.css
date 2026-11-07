@@ -1786,7 +1786,8 @@ html { background-color: hsl(var(--background)); }
 /* === Narrow screens (phones) — keep in step with docs/dx/local.md =====
  * Everything at <=700px lives here so the desktop rules above stay
  * untouched. The vault page is list -> detail: the tree fills the screen
- * until a file opens (`.editor-layout--detail`), then the editor does. */
+ * until a file opens (`.editor-layout--detail`), then the editor does;
+ * History steps versions -> folder -> file the same way. */
 @media (max-width: 700px) {
   html { font-size: 16px; }
 
@@ -1843,11 +1844,17 @@ html { background-color: hsl(var(--background)); }
   .editor-body .error { margin-left: 1rem !important; margin-right: 1rem !important; }
   .doc-empty { padding: 1rem; text-align: center; }
 
-  /* History: versions, then folder, then the viewer — stacked. */
-  .history-layout { flex-direction: column; overflow-y: auto; }
-  .history-layout .tree-pane { flex-shrink: 0; max-height: 30vh; border-bottom: 1px solid hsl(var(--border)); }
-  .history-layout .editor-main { flex: 1 0 auto; min-height: 50vh; }
-  .history-banner { flex-wrap: wrap; margin: 0.5rem 0.75rem 0; }
+  /* History: nested pages — the versions, then one version's folder
+   * (`.history-layout--folder`), then the viewer (`--detail`); the header
+   * back arrow steps out. The banner ("Back to live") tops every page. */
+  .history-layout { flex-direction: column; }
+  .history-layout .tree-pane { flex: 1 1 auto; min-height: 0; }
+  .history-layout > .editor-main { order: -1; flex: 0 0 auto; }
+  .history-layout.editor-layout--detail > .editor-main { flex: 1 1 auto; min-height: 0; }
+  .history-layout:not(.editor-layout--detail) .editor-body { display: none; }
+  .history-layout--folder > .history-pane--versions,
+  .history-layout:not(.history-layout--folder) > .history-pane--folder { display: none; }
+  .history-banner { flex-wrap: wrap; margin: 0.5rem 0.75rem; }
 
   /* Onboarding / gate: top-aligned, full-width, thumb-sized. */
   .onb__bar {

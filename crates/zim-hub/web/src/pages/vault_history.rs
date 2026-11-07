@@ -5,12 +5,16 @@
 //! which has no `save`; restoring hands the old bytes to the parent, which
 //! writes them forward on the live vault as a normal save. The chain is
 //! append-only — nothing here rewrites it.
+//!
+//! On phones the columns become nested pages (versions → folder → file,
+//! [`HistoryPage`]); the page hands the header its step back via `on_nav`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use yew::prelude::*;
 use zim_core::vault::VaultId;
+use zim_hub_web::nav::HistoryPage;
 use zim_wasm::{DirEntry, VersionSummary, WasmVersion, BLOB_PENDING};
 
 use crate::api::Device;
@@ -40,6 +44,9 @@ pub struct HistoryProps {
     pub on_restore: Callback<Restore>,
     /// Why the parent's last restore save failed; empty when it didn't.
     pub restore_error: String,
+    /// The header back arrow's action for the current phone page — `None`
+    /// on the version list, where "Back to live" leaves instead.
+    pub on_nav: Callback<Option<Callback<()>>>,
 }
 
 type Snapshot = Rc<RefCell<Option<Rc<WasmVersion>>>>;
@@ -365,6 +372,52 @@ pub fn history_view(props: &HistoryProps) -> Html {
         })
     };
 
+    // Phones: one pane at a time. Back from the viewer drops the file
+    // (and any error); back from a folder lets go of the version.
+    let page = HistoryPage::of(
+        selected.is_some(),
+        preview.is_some() || syncing.is_some() || !error.is_empty(),
+    );
+    let close_file = {
+        let file_seq = file_seq.clone();
+        let preview = preview.clone();
+        let syncing = syncing.clone();
+        let error = error.clone();
+        Callback::from(move |_: ()| {
+            *file_seq.borrow_mut() += 1;
+            preview.set(None);
+            syncing.set(None);
+            error.set(String::new());
+        })
+    };
+    let close_version = {
+        let seq = seq.clone();
+        let snap = snap.clone();
+        let selected = selected.clone();
+        let dir = dir.clone();
+        let entries = entries.clone();
+        let close_file = close_file.clone();
+        Callback::from(move |_: ()| {
+            *seq.borrow_mut() += 1;
+            *snap.borrow_mut() = None;
+            selected.set(None);
+            dir.set("/".to_string());
+            entries.set(None);
+            close_file.emit(());
+        })
+    };
+    {
+        let on_nav = props.on_nav.clone();
+        use_effect_with(page, move |page| {
+            on_nav.emit(match page {
+                HistoryPage::Versions => None,
+                HistoryPage::Folder => Some(close_version),
+                HistoryPage::File => Some(close_file),
+            });
+            move || on_nav.emit(None)
+        });
+    }
+
     let picked = (*selected).and_then(|h| versions.iter().find(|v| v.height == h));
     let close = {
         let on_close = props.on_close.clone();
@@ -372,8 +425,12 @@ pub fn history_view(props: &HistoryProps) -> Html {
     };
 
     html! {
-        <div class="editor-layout history-layout">
-            <aside class="tree-pane">
+        <div class={classes!(
+            "editor-layout", "history-layout",
+            (page == HistoryPage::Folder).then_some("history-layout--folder"),
+            (page == HistoryPage::File).then_some("editor-layout--detail"),
+        )}>
+            <aside class="tree-pane history-pane--versions">
                 <div class="history-pane__title">{ "Versions" }</div>
                 <div class="tree-pane__list">
                     { for versions.iter().map(|v| version_row(v, *head, *selected, &props.devices, &pick)) }
@@ -385,7 +442,7 @@ pub fn history_view(props: &HistoryProps) -> Html {
                     }
                 </div>
             </aside>
-            <aside class="tree-pane">
+            <aside class="tree-pane history-pane--folder">
                 <div class="history-pane__title" title={(*dir).clone()}>{ (*dir).clone() }</div>
                 <div class="tree-pane__list">
                     { tree_list(&dir, entries.as_ref(), preview.as_ref().map(|p| p.path.as_str()), &browse, &open_file) }

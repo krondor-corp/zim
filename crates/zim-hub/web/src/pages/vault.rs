@@ -126,6 +126,8 @@ pub fn vault_tree(props: &Props) -> Html {
     let web_did = use_state(String::new);
     let show_details = use_state(|| false);
     let show_history = use_state(|| false);
+    // History's phone back step (None on its version list), from `on_nav`.
+    let history_back = use_state(|| None::<Callback<()>>);
     let show_palette = use_state(|| false);
     // A failed restore, shown inside the history view (the live error
     // banner is hidden under it) — the view stays open to retry.
@@ -828,12 +830,17 @@ pub fn vault_tree(props: &Props) -> Html {
     // `--detail` modifier); the header back control returns to the tree.
     let detail = shows_detail(open_file.0.is_some(), syncing.is_some(), !error.is_empty());
     let on_back = {
+        let history_back = (*history_back).clone();
         let flush = flush.clone();
         let open_file = open_file.dispatcher();
         let syncing = syncing.clone();
         let open_seq = open_seq.clone();
         let error = error.clone();
         Callback::from(move |_: MouseEvent| {
+            if let Some(back) = &history_back {
+                back.emit(());
+                return;
+            }
             flush.emit(());
             *open_seq.borrow_mut() += 1;
             open_file.dispatch(OpenAction::Show(None));
@@ -966,7 +973,7 @@ pub fn vault_tree(props: &Props) -> Html {
 
     html! {
         <>
-            <header class={classes!("app-header", (detail && !*show_history).then_some("app-header--detail"))}>
+            <header class={classes!("app-header", (if *show_history { history_back.is_some() } else { detail }).then_some("app-header--detail"))}>
                 <HeaderMenu trigger={menu_icon()}>
                     <Link<Route> to={Route::Settings} classes="app-menu__item">{ "Settings" }</Link<Route>>
                     <SignOutItem />
@@ -1000,6 +1007,10 @@ pub fn vault_tree(props: &Props) -> Html {
             if *show_history {
                 <HistoryView vault_id={props.vault_id} devices={(*devices).clone()}
                     restore_error={(*restore_error).clone()}
+                    on_nav={{
+                        let history_back = history_back.setter();
+                        Callback::from(move |back| history_back.set(back))
+                    }}
                     on_close={{
                         let show_history = show_history.clone();
                         let restore_error = restore_error.clone();

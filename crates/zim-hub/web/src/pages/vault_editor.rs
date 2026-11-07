@@ -132,7 +132,7 @@ pub fn editor_pane(props: &EditorPaneProps) -> Html {
             <div class="editor-title-row">
                 <input class="editor-title editor-title--input" key={file.path.clone()}
                     ref={title_ref} title={file.path.clone()} aria-label="Note name"
-                    spellcheck="false" autocomplete="off"
+                    spellcheck="false" autocomplete="off" enterkeyhint="done"
                     onblur={commit_title} onkeydown={title_keys} />
             </div>
             {

@@ -11,8 +11,7 @@ use web_sys::{DragEvent, Element};
 use yew::prelude::*;
 
 use crate::components::icon::{icon, Icon};
-use crate::util::sleep;
-use zim_hub_web::long_press::{Press, HOLD_MS};
+use crate::components::long_press::{use_long_press, Held};
 use zim_wasm::{DirEntry, EntryKind};
 
 /// One rendered row. The tree is a FLAT vec — depth is presentation.
@@ -118,51 +117,18 @@ pub fn tree_pane(props: &TreePaneProps) -> Html {
             });
         })
     };
-    // Touch browsers don't fire `contextmenu` (iOS never does), so a held
-    // finger opens the menu too. One press for the whole list: the row
-    // under the finger is found from the touch target's `data-path`.
-    let press = use_mut_ref(Press::default);
-    let ontouchstart = {
-        let press = press.clone();
+    // A held finger opens the menu too. The row under it is found from
+    // the touch target's `data-path`, so one handler covers the list.
+    let press = use_long_press({
         let on_ctx = props.on_ctx.clone();
-        Callback::from(move |e: TouchEvent| {
-            let touches = e.touches();
-            let touch = match touches.get(0) {
-                Some(t) if touches.length() == 1 => t,
-                _ => return press.borrow_mut().cancel(),
-            };
-            let (x, y) = (touch.client_x(), touch.client_y());
-            let target = ctx_target(e.target());
-            let generation = press.borrow_mut().start(x, y);
-            let press = press.clone();
-            let on_ctx = on_ctx.clone();
-            yew::platform::spawn_local(async move {
-                sleep(HOLD_MS).await;
-                let held = press.borrow_mut().elapsed(generation);
-                if let Some((x, y)) = held {
-                    on_ctx.emit(CtxMenu { x, y, target });
-                }
-            });
+        Callback::from(move |h: Held| {
+            on_ctx.emit(CtxMenu {
+                x: h.x,
+                y: h.y,
+                target: ctx_target(h.target),
+            })
         })
-    };
-    let ontouchmove = {
-        let press = press.clone();
-        Callback::from(move |e: TouchEvent| {
-            if let Some(t) = e.touches().get(0) {
-                press.borrow_mut().moved(t.client_x(), t.client_y());
-            }
-        })
-    };
-    let ontouchend = {
-        let press = press.clone();
-        Callback::from(move |e: TouchEvent| {
-            // The menu opened: don't also tap (open) the row under it.
-            if press.borrow_mut().end() {
-                e.prevent_default();
-            }
-        })
-    };
-    let ontouchcancel = Callback::from(move |_: TouchEvent| press.borrow_mut().cancel());
+    });
     // Dragging rows is a mouse affair: on touch, a held row is the menu.
     let draggable = !coarse_pointer();
     let new_note = {
@@ -176,7 +142,8 @@ pub fn tree_pane(props: &TreePaneProps) -> Html {
     html! {
         <aside id="tree-pane" class="tree-pane">
             <nav class="tree-pane__list" oncontextmenu={root_ctx}
-                {ontouchstart} {ontouchmove} {ontouchend} {ontouchcancel}
+                ontouchstart={press.start} ontouchmove={press.moved}
+                ontouchend={press.end} ontouchcancel={press.cancel}
                 ondragover={Callback::from(|e: DragEvent| e.prevent_default())}
                 ondrop={
                     let on_move = props.on_move.clone();

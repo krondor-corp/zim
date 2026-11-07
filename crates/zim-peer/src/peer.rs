@@ -37,6 +37,7 @@ use crate::runtime::Service;
 use zim_crypto::{PrivateKey, PublicKey};
 
 use crate::accept::{AcceptAll, AcceptPolicy};
+use crate::content_cache::PinPolicy;
 use crate::coordinator::{run_effects, SyncCoordinator};
 use crate::effect::Effect;
 use crate::iroh_transport::{IrohPeerSender, SyncProtocol, ALPN};
@@ -416,6 +417,7 @@ pub struct PeerBuilder<L: VaultLog> {
     discovery: Discovery,
     effect_queue_size: Option<usize>,
     info: Option<crate::coordinator::DaemonInfo>,
+    pin_policy: PinPolicy,
 }
 
 impl<L: VaultLog> Default for PeerBuilder<L> {
@@ -428,6 +430,7 @@ impl<L: VaultLog> Default for PeerBuilder<L> {
             discovery: Discovery::Off,
             effect_queue_size: None,
             info: None,
+            pin_policy: PinPolicy::Full,
             sync_interval: Some(std::time::Duration::from_secs(300)),
         }
     }
@@ -487,6 +490,15 @@ where
         self
     }
 
+    /// Set which pinned blobs this peer keeps local. Defaults to
+    /// [`PinPolicy::Full`]; space-constrained peers pick
+    /// [`PinPolicy::OnDemand`] and read through
+    /// [`SyncCoordinator::cat`].
+    pub fn with_pin_policy(mut self, policy: PinPolicy) -> Self {
+        self.pin_policy = policy;
+        self
+    }
+
     /// Bind the endpoint, build the coordinator, register both
     /// ALPNs, spawn the effect runner. Returns a running [`Peer`].
     pub async fn build(self) -> anyhow::Result<Peer<L>> {
@@ -526,6 +538,7 @@ where
             sender,
             effect_queue_size,
             info,
+            self.pin_policy,
         );
 
         // Spawn the effect runner with its own shutdown channel.

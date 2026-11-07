@@ -23,7 +23,8 @@
 //! The split keeps reply latency tight: any `handle_*_request` call
 //! is just one log query plus a struct allocation.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc;
 use zim_crypto::{PrivateKey, PublicKey};
@@ -37,6 +38,7 @@ use zim_core::vault::{Head, VaultId, VaultLog};
 
 use crate::accept::{AcceptPolicy, IncomingSync};
 use crate::chain;
+use crate::content_cache::{ContentCache, PinPolicy};
 use crate::effect::Effect;
 use crate::messages::{
     Ack, AncestorReply, AncestorRequest, HeadAdvanced, HeadReply, HeadRequest, PingRequest,
@@ -44,6 +46,9 @@ use crate::messages::{
 };
 use crate::wire_protocol::PeerSender;
 use crate::Vault;
+
+mod read;
+pub use read::ReadError;
 
 /// Identity and runtime info the coordinator reports in `Pong`
 /// replies — set once at construction.
@@ -82,6 +87,15 @@ pub struct SyncCoordinator<L: VaultLog + 'static> {
     /// `submit` so the channel survives even if the runner exits.
     effect_tx: mpsc::Sender<Effect>,
     info: DaemonInfo,
+    /// Which pins a pull downloads. See [`PinPolicy`].
+    pin_policy: PinPolicy,
+    /// LRU over content fetched on read. `Some` iff the policy is
+    /// [`PinPolicy::OnDemand`].
+    content_cache: Option<ContentCache>,
+    /// The peer each vault was last pulled from — an extra provider for
+    /// on-demand reads (a relay that mirrors the vault may not be a
+    /// shareholder, so share reach targets alone can miss it).
+    pull_sources: Mutex<HashMap<VaultId, Vec<PublicKey>>>,
 }
 
 impl<L> SyncCoordinator<L>
@@ -111,12 +125,13 @@ where
             peer_sender,
             effect_queue_size,
             DaemonInfo::default(),
+            PinPolicy::Full,
         )
     }
 
     /// As [`Self::new`] but with caller-supplied identity/version
-    /// metadata reported in `Pong` replies. The daemon builds via
-    /// this; tests use the no-arg variant.
+    /// metadata reported in `Pong` replies and a [`PinPolicy`]. The
+    /// daemon builds via this; tests use the no-arg variant.
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_info(
         blobs: BlobsProvider,
@@ -127,8 +142,13 @@ where
         peer_sender: Arc<dyn PeerSender>,
         effect_queue_size: usize,
         info: DaemonInfo,
+        pin_policy: PinPolicy,
     ) -> (Arc<Self>, mpsc::Receiver<Effect>) {
         let (effect_tx, effect_rx) = mpsc::channel(effect_queue_size);
+        let content_cache = match pin_policy {
+            PinPolicy::Full => None,
+            PinPolicy::OnDemand { budget_bytes } => Some(ContentCache::new(budget_bytes)),
+        };
         let coord = Arc::new(Self {
             blobs,
             log,
@@ -138,12 +158,24 @@ where
             peer_sender,
             effect_tx,
             info,
+            pin_policy,
+            content_cache,
+            pull_sources: Mutex::new(HashMap::new()),
         });
         (coord, effect_rx)
     }
 
     pub fn log(&self) -> &L {
         &self.log
+    }
+
+    pub fn pin_policy(&self) -> PinPolicy {
+        self.pin_policy
+    }
+
+    /// The on-demand content cache, if the policy has one.
+    pub fn content_cache(&self) -> Option<&ContentCache> {
+        self.content_cache.as_ref()
     }
 
     /// The accept policy — shared with the blob-ALPN gate in `Peer`.
@@ -190,7 +222,8 @@ where
             // best-effort, and once heads converge the up-to-date gate
             // means no pull ever retries a pin that got away. The sweep
             // is the retry. Cheap when whole: `download_hash` stats
-            // local presence before dialing anyone.
+            // local presence before dialing anyone. Under `OnDemand`
+            // this heals structural pins only — content is read-driven.
             if let Err(e) = self.download_pins(&manifest, &[]).await {
                 tracing::debug!(%vault_id, "reconcile: pin heal: {e}");
             }
@@ -723,6 +756,12 @@ where
             .verify_author(trusted_base.as_ref())
             .map_err(|e| anyhow::anyhow!("verify author: {e}"))?;
 
+        if !peer_ids.is_empty() {
+            self.pull_sources
+                .lock()
+                .unwrap()
+                .insert(vault_id, peer_ids.clone());
+        }
         for (manifest, link) in &manifests {
             self.append_manifest(vault_id, manifest, link).await?;
             // `peer_ids` is the source we pulled the chain from (the
@@ -975,11 +1014,13 @@ where
         Ok(manifests)
     }
 
+    /// Download the pins of `manifest` the [`PinPolicy`] keeps local.
     async fn download_pins(
         &self,
         manifest: &Manifest,
         source_peers: &[PublicKey],
     ) -> anyhow::Result<()> {
+        let pins = self.pin_policy.pins_to_fetch(manifest);
         // Providers are share **reach** targets, not recipients. A browser
         // share's recipient has no iroh endpoint; its `via` host (the hub)
         // is what mirrors the blobs. Using `reach()` folds the relay in and
@@ -998,7 +1039,7 @@ where
 
         tracing::debug!(
             height = manifest.height(),
-            pins = manifest.pins().iter().count(),
+            pins = pins.len(),
             providers = peer_ids.len(),
             sources = source_peers.len(),
             "download_pins: fetching content blobs"
@@ -1013,7 +1054,7 @@ where
         // working copy materialises whatever it could fetch, and a later
         // pull retries the gaps.
         let mut failed = 0usize;
-        for hash in manifest.pins().iter() {
+        for hash in pins.iter() {
             if let Err(e) = self.download_hash(*hash, &peer_ids).await {
                 tracing::warn!(hash = %hash, "download_pins: pin unavailable, skipping: {e}");
                 failed += 1;

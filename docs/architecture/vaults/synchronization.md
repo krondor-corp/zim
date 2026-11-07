@@ -25,7 +25,8 @@ The receiver:
 
 A pull requests the remote head, compares local height, probes for common
 history, downloads and verifies the missing manifest chain, appends links to
-the vault log, downloads pinned blobs, merges operations for a shareholder,
+the vault log, downloads pinned blobs (all of them, or only structural ones
+under an on-demand pin policy; see [Storage](storage.md#download)), merges operations for a shareholder,
 and saves a new local manifest. A relay that cannot recover a vault secret uses
 a separate log-only path.
 

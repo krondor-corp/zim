@@ -57,6 +57,12 @@ e2e: ## One-shot hermetic e2e run (zim-e2e crate; free ports, own data)
 hub: ## Start the hub in this worktree's dev tmux session (minio + dev-trust login: any email is admin)
 	./bin/dev hub up
 
+.PHONY: ios
+ios: ## Run the iOS app in the simulator against this worktree's hub (starts it; SIM="iPhone 17 Pro")
+	./bin/dev hub up
+	cd crates/zim-ios && cargo tauri ios dev "$(or $(SIM),iPhone 17 Pro)" --no-dev-server-wait \
+	  --config "{\"plugins\":{\"zim-hub\":{\"url\":\"http://127.0.0.1:$$(confit export --profile dev --format shell | sed -n "s/^export HUB_PORT='\(.*\)'/\1/p")\"}}}"
+
 .PHONY: check
 check: ## Run the quality gate: fmt-check, clippy, cargo check (what CI runs)
 	cargo fmt --all -- --check

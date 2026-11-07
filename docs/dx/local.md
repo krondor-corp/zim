@@ -167,13 +167,13 @@ its own Cargo workspace (excluded from the root `cargo build`) and needs Xcode
 plus `rustup target add aarch64-apple-ios-sim` and `cargo install tauri-cli`.
 
 ```bash
-make hub                                  # a dev hub (dev-trust login)
-./bin/dev ports                           # note this worktree's hub port
-cd crates/zim-ios
-export CARGO_TARGET_DIR=…                 # iOS builds are large; share one dir
-cargo tauri ios dev "iPhone 17 Pro" --no-dev-server-wait \
-  --config '{"plugins":{"zim-hub":{"url":"http://127.0.0.1:<hub port>"}}}'
+make ios                                  # this worktree's hub + the app in the simulator
+make ios SIM="iPhone Air"                 # another simulator (xcrun simctl list devices)
 ```
+
+`make ios` starts the hub (`make hub`) if it isn't running and points the
+app at it. iOS builds are large (~10GB); set `CARGO_TARGET_DIR` to a
+directory you can delete.
 
 The hub URL comes from `plugins.zim-hub.url`; default is the production hub
 in release builds and `http://127.0.0.1:17190` in debug. The simulator shares

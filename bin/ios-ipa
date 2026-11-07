@@ -74,4 +74,5 @@ plutil -replace CFBundleIdentifier -string "$identifier" "$plist"
 plutil -replace CFBundleDisplayName -string "$display_name" "$plist"
 rm -f "$out"
 (cd "$work" && zip -qry "$out" Payload)
+echo "ios-ipa: built $display_name ($identifier, $version) — the 'EXPORT FAILED' above is expected: unsigned builds skip the signed export" >&2
 echo "$out"

@@ -7,10 +7,15 @@ name: Release PR
 #   merge that PR   → `release` tags every released crate and publishes
 #                     the workspace to crates.io in dependency order.
 #
-# Both jobs run with RELEASE_PAT: the release PR gets real CI, and the
-# pushed zim-v* tag natively triggers release-cli.yml + images.yml
-# (GITHUB_TOKEN-pushed tags never trigger workflows — GitHub's
-# recursion guard).
+# The iOS app (crates/zim-ios, its own Cargo workspace) runs the same
+# train in parallel from crates/zim-ios/release-plz.toml: its own
+# "chore(ios): release" PR; merging it tags zim-ios-v*, which triggers
+# release-ios.yml.
+#
+# All jobs run with RELEASE_PAT: the release PRs get real CI, and the
+# pushed zim-v* / zim-ios-v* tags natively trigger release-cli.yml +
+# images.yml / release-ios.yml (GITHUB_TOKEN-pushed tags never trigger
+# workflows — GitHub's recursion guard).
 
 on:
   push:
@@ -61,5 +66,46 @@ jobs:
         uses: release-plz/action@v0.5
         with:
           command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
+
+  # iOS app: tag zim-ios-v* when its release PR merges (no crates.io).
+  release-ios:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: release-plz release (iOS)
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+          manifest_path: crates/zim-ios/Cargo.toml
+          config: crates/zim-ios/release-plz.toml
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
+
+  # iOS app: create/refresh its standing release PR.
+  release-pr-ios:
+    runs-on: ubuntu-latest
+    needs: release-ios # serialize: never race the tagger
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: release-plz release-pr (iOS)
+        uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+          manifest_path: crates/zim-ios/Cargo.toml
+          config: crates/zim-ios/release-plz.toml
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}

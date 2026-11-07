@@ -4,8 +4,8 @@ name: Release iOS
 # hub's web app (which deploys continuously), so it only needs a release
 # when crates/zim-ios itself changes — not with every zim-v* release.
 #
-#   bump crates/zim-ios/Cargo.toml version in a PR → merge →
-#   bin/ios-release <version> tags origin/main as zim-ios-v<version> →
+#   merge the "chore(ios): release" PR (release-plz, see
+#   crates/zim-ios/release-plz.toml) → it tags zim-ios-v<version> →
 #   this workflow builds an unsigned Zim.ipa, creates the "Zim for iOS"
 #   GitHub Release (IPA, checksum, SideStore source) and redeploys the
 #   docs site, which republishes the newest source at the stable URL

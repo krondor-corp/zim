@@ -1,0 +1,27 @@
+# Release train for the iOS app (see .github/workflows/release-plz.yml,
+# jobs `release-ios` / `release-pr-ios`). This is its own Cargo workspace,
+# so the root release-plz.toml never sees it.
+#
+#   push to main touching crates/zim-ios → a standing "chore(ios): release"
+#   PR (version bump + CHANGELOG.md); merging it tags zim-ios-v<version>,
+#   which triggers release-ios.yml (build Zim.ipa, create the "Zim for iOS"
+#   release, refresh the SideStore source on the docs site).
+
+[workspace]
+# Never on crates.io: the released version is read from zim-ios-v* tags.
+git_only = true
+publish = false
+# release-ios.yml owns the GitHub Release (IPA, checksum, SideStore source).
+git_release_enable = false
+# Tag only when the release PR merges, never for an untagged version that
+# just happens to be on main.
+release_always = false
+dependencies_update = false
+# Its own PR branch, so it never collides with the CLI's release PR.
+pr_branch_prefix = "release-plz-ios-"
+pr_name = "chore(ios): release v{{ version }}"
+
+[[package]]
+name = "zim-ios"
+git_tag_name = "zim-ios-v{{ version }}"
+semver_check = false

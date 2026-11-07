@@ -117,9 +117,11 @@ impl AuthConfig {
 
         // `HOST_NAME` matches generic. `ZIM_HUB_BASE_URL` was the
         // earlier zim-hub name; accept both for one release.
-        let host_name = env_first(&["HOST_NAME", "ZIM_HUB_BASE_URL"])
-            .or_else(|| file.host_name.clone())
-            .unwrap_or_else(|| format!("http://{listen_address}"));
+        let host_name = canonical_url(
+            &env_first(&["HOST_NAME", "ZIM_HUB_BASE_URL"])
+                .or_else(|| file.host_name.clone())
+                .unwrap_or_else(|| format!("http://{listen_address}")),
+        );
 
         let admin_emails: Vec<String> = match env::var("ZIM_HUB_ADMIN_EMAILS") {
             Ok(s) => s
@@ -272,6 +274,17 @@ fn resolve_providers(
     Ok(providers)
 }
 
+/// `url` as browsers spell it: parsed (scheme and host lowercased, as
+/// every URL parser does), without a trailing slash. Clients build JWT
+/// audiences and hub DIDs from their parsed page URL, so a `HOST_NAME`
+/// typed with capitals (`My-Mac.local`) would otherwise reject every
+/// bearer token. Left as given when it doesn't parse.
+fn canonical_url(url: &str) -> String {
+    url::Url::parse(url)
+        .map(|u| u.as_str().trim_end_matches('/').to_string())
+        .unwrap_or_else(|_| url.to_string())
+}
+
 /// True when `host_name` is a URL on this machine (loopback) or on the
 /// local network by its mDNS name (`<machine>.local`, what `bin/dev hub
 /// up --lan` uses so a phone on the same Wi-Fi can sign in). `.local`
@@ -394,6 +407,18 @@ mod tests {
             let providers = resolve_providers(Some("dev-trust"), host, None, None).unwrap();
             assert_eq!(kinds(&providers), [DbAuthProvider::DevTrust], "{host}");
         }
+    }
+
+    #[test]
+    fn host_name_is_spelled_the_way_browsers_spell_it() {
+        // Alice's Mac is "Alices-MacBook.local"; her browser lowercases
+        // the host when it mints a token's audience, so the hub must too.
+        assert_eq!(
+            canonical_url("http://Alices-MacBook.local:17190/"),
+            "http://alices-macbook.local:17190"
+        );
+        assert_eq!(canonical_url(PUBLIC), PUBLIC);
+        assert_eq!(canonical_url(LOOPBACK), LOOPBACK);
     }
 
     #[cfg(feature = "dev-login")]

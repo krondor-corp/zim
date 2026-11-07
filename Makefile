@@ -71,7 +71,7 @@ ios-ipa: ## Build an unsigned target/ios/Zim.ipa for SideStore/AltStore, against
 
 .PHONY: ios-ipa-dev
 ios-ipa-dev: ## Build ~/Downloads/Zim-dev.ipa against this worktree's hub over Wi-Fi (run `make hub LAN=1` for the phone to reach it)
-	IOS_VARIANT=dev HUB_URL="http://$$(scutil --get LocalHostName).local:$$(confit export --profile dev --format shell | sed -n "s/^export HUB_PORT='\(.*\)'/\1/p")" \
+	IOS_VARIANT=dev HUB_URL="http://$$(scutil --get LocalHostName | tr '[:upper:]' '[:lower:]').local:$$(confit export --profile dev --format shell | sed -n "s/^export HUB_PORT='\(.*\)'/\1/p")" \
 	  bin/ios-ipa "" "$$HOME/Downloads/Zim-dev.ipa"
 
 .PHONY: check

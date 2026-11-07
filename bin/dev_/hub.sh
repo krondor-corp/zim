@@ -41,7 +41,9 @@ hub_url() { echo "http://127.0.0.1:$HUB_PORT"; }
 # The same hub as other devices on the Wi-Fi see it (the phone, for
 # `make ios-ipa-dev`): this Mac's Bonjour name. Only reachable when the
 # hub was started with `hub up --lan`.
-lan_host() { echo "$(scutil --get LocalHostName).local"; }
+# Lowercased: browsers lowercase hosts, and the hub's did:web must match
+# the DID the app derives from its address bar.
+lan_host() { echo "$(scutil --get LocalHostName | tr '[:upper:]' '[:lower:]').local"; }
 lan_hub_url() { echo "http://$(lan_host):$HUB_PORT"; }
 
 cmd_hub() {

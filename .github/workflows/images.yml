@@ -14,6 +14,13 @@ name: Hub Image
 on:
   push:
     branches: [main]
+    # iOS-only pushes (e.g. an iOS release merge) don't change the hub.
+    # Path filters don't apply to tag pushes, so zim-v* always builds.
+    paths-ignore:
+      - "crates/zim-ios/**"
+      - "bin/ios-ipa"
+      - "bin/ios-release-pr"
+      - "bin/sidestore-source"
     tags: ["zim-v*"]
   workflow_dispatch:
 

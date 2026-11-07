@@ -259,6 +259,9 @@ To release:
 2. Merging that PR is the release: on the squash-merge commit
    ("chore(ios): release vX (#N)") `release-ios` tags `zim-ios-v<version>`
    with `RELEASE_PAT` (so the tag triggers workflows). Nothing else tags.
+   An iOS-only push (`crates/zim-ios/**`, `bin/ios-*`, `bin/sidestore-source`)
+   skips CI and the hub image, and the release PR itself skips the PR IPA
+   build — the tag builds the release.
 3. `.github/workflows/release-ios.yml` builds the unsigned `Zim.ipa`
    (`bin/ios-ipa`), checks the tag matches the crate, creates the
    "Zim for iOS v0.2.0" release with `Zim.ipa`, `Zim.ipa.sha256` and

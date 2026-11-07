@@ -43,6 +43,9 @@ permissions:
 jobs:
   ipa:
     name: Build Zim.ipa
+    # The iOS release PR only bumps the version and changelog; the code it
+    # releases was built when it merged, and the tag builds it again.
+    if: github.event_name != 'pull_request' || github.head_ref != 'release-ios'
     runs-on: macos-latest
     steps:
       - name: Resolve version

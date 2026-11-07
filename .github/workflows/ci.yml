@@ -1,10 +1,23 @@
 name: CI
 
+# Changes that touch only the iOS app skip this: crates/zim-ios is its
+# own Cargo workspace (not built here) and release-ios.yml builds it on
+# its PRs. A change touching anything else still runs everything.
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - "crates/zim-ios/**"
+      - "bin/ios-ipa"
+      - "bin/ios-release-pr"
+      - "bin/sidestore-source"
   pull_request:
     branches: [ main ]
+    paths-ignore:
+      - "crates/zim-ios/**"
+      - "bin/ios-ipa"
+      - "bin/ios-release-pr"
+      - "bin/sidestore-source"
 
 jobs:
   # Rust CI (daemon + library crates)

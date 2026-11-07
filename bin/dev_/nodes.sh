@@ -175,7 +175,7 @@ wait_for_hub() {
 # `--hub` end-to-end: once the daemons are up, start the hub, seed vault
 # fixtures, and enroll the daemons (stands in for `zim login`). Leaves a
 # fully-wired environment you only have to sign into.
-orchestrate_hub() {  # [--lan], passed to hub_up
+orchestrate_hub() {
     echo -e "${BLUE}[--hub] waiting for daemons…${NC}"
     if ! wait_for_daemons; then
         echo -e "${RED}[--hub] daemons did not come up — skipping hub setup${NC}"
@@ -183,7 +183,7 @@ orchestrate_hub() {  # [--lan], passed to hub_up
     fi
 
     echo -e "${BLUE}[--hub] starting hub (minio + zim-hub)…${NC}"
-    hub_up "$@"
+    hub_up
 
     echo -e "${BLUE}[--hub] waiting for hub to boot…${NC}"
     if ! wait_for_hub; then
@@ -200,13 +200,13 @@ orchestrate_hub() {  # [--lan], passed to hub_up
 }
 
 cmd_run() {
-    local background=false hub=false hub_args=()
+    local background=false hub=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --background|-b) background=true ;;
             --fuse)          export ZIM_DEV_FUSE=1 ;;
             --hub)           hub=true ;;
-            --lan)           hub_args=(--lan) ;;  # with --hub: see hub_up
+            --lan)           enable_lan || exit 1 ;;  # with --hub: see hub_up
             *) echo -e "${RED}unknown run arg: $1${NC}"; exit 1 ;;
         esac
         shift
@@ -289,7 +289,7 @@ cmd_run() {
 
     # `--hub`: bring up + wire the hub before we hand the terminal back.
     if $hub; then
-        orchestrate_hub "${hub_args[@]}" || true
+        orchestrate_hub || true
     fi
 
     # Show the nodes window first.

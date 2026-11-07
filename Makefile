@@ -74,8 +74,8 @@ ios-release: ## Tag origin/main as zim-ios-v$(VERSION) to release the iOS app (b
 	bin/ios-release $(VERSION)
 
 .PHONY: ios-ipa-dev
-ios-ipa-dev: ## Build ~/Downloads/Zim-dev.ipa against this worktree's hub over Wi-Fi (run `make hub LAN=1` for the phone to reach it)
-	IOS_VARIANT=dev HUB_URL="http://$$(scutil --get LocalHostName | tr '[:upper:]' '[:lower:]').local:$$(confit export --profile dev --format shell | sed -n "s/^export HUB_PORT='\(.*\)'/\1/p")" \
+ios-ipa-dev: ## Build ~/Downloads/Zim-dev.ipa against the LAN hub (http://<mac>.local:17189, whichever worktree runs `make dev LAN=1`)
+	IOS_VARIANT=dev HUB_URL="http://$$(scutil --get LocalHostName | tr '[:upper:]' '[:lower:]').local:$$(confit export --profile dev --format shell | sed -n "s/^export LAN_HUB_PORT='\(.*\)'/\1/p")" \
 	  bin/ios-ipa "" "$$HOME/Downloads/Zim-dev.ipa"
 
 .PHONY: check

@@ -175,17 +175,25 @@ make ios SIM="iPhone Air"                 # another simulator (xcrun simctl list
 app at it. iOS builds are large (~10GB); set `CARGO_TARGET_DIR` to a
 directory you can delete.
 
-**On a phone (sideloading).** `make dev IPA=1` (or `make hub IPA=1`) builds
-`~/Downloads/Zim-dev.ipa` pointed at this worktree's hub, then starts the stack
-in LAN mode; install the IPA with SideStore/iloader. LAN mode (`LAN=1`, or
-`./bin/dev hub up --lan`) listens on every interface and makes this Mac's
-Bonjour name (`http://<LocalHostName>.local:<hub port>`) the hub's public URL
-*and* its `did:web` — the app derives the hub's DID from the address it loads,
-so the two must agree. Users, keys and shares embed that DID, so a dev env is
-LAN or not for its lifetime: switch with `make dev-clean`. iOS asks once for
-Local Network access. Anyone on the same network can reach the dev-trust login
-while it's on. Dev IPAs ("Zim Dev", `org.krondor.zim.dev`, amber `AppIcon-Dev` icon) install beside the release app and are Web-Inspector-enabled: Safari → Develop → your iPhone → Zim Dev shows the webview's console and network. `make ios-ipa-dev` rebuilds just the IPA (no hub restart needed:
-the app loads the SPA from the hub, so web changes only need a reload).
+**On a phone (sideloading).** Install Zim Dev once, then point any worktree at
+it. `make dev IPA=1` (or `make hub IPA=1`) builds `~/Downloads/Zim-dev.ipa`
+and starts the stack in LAN mode; install the IPA with SideStore/iloader.
+LAN mode (`LAN=1`, or `./bin/dev hub up --lan`) serves the hub on one fixed
+port for every worktree (`LAN_HUB_PORT`, 17189, in `confit.toml`'s infra band)
+on every interface, as this Mac's Bonjour name: `http://<localhostname>.local:17189`
+is the hub's public URL *and* its `did:web` (the app derives the hub's DID from
+the address it loads, so the two must agree). That address is what the dev IPA
+has baked in, so the same install reaches whichever worktree is serving — one
+at a time; a second LAN hub refuses to start. Users, keys and shares embed the
+DID, so a dev env is LAN or not for its lifetime: `data/.lan` marks it (later
+`make hub` / `hub enroll` stay on the LAN port), and switching needs
+`make dev-clean`. iOS asks once for Local Network access. Anyone on the same
+network can reach the dev-trust login while it's on. Dev IPAs ("Zim Dev",
+`org.krondor.zim.dev`, amber `AppIcon-Dev` icon) install beside the release app
+and are Web-Inspector-enabled: Safari → Develop → your iPhone → Zim Dev shows
+the webview's console and network. Reinstall only when the app shell
+(`crates/zim-ios`) changes: the app loads the SPA from the hub, so web changes
+need only a reload; `make ios-ipa-dev` rebuilds just the IPA.
 
 `make ios-ipa` (`VERSION=…`) builds an unsigned `target/ios/Zim.ipa` for
 SideStore/AltStore against the production hub (what releases ship; `HUB_URL=…`

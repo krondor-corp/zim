@@ -43,6 +43,18 @@ hub_url() { echo "http://127.0.0.1:$HUB_PORT"; }
 # hub was started with `hub up --lan`.
 # Lowercased: browsers lowercase hosts, and the hub's did:web must match
 # the DID the app derives from its address bar.
+# Mark this dev env as LAN (data/.lan) and move the hub to LAN_HUB_PORT.
+# Refused once the env already has a hub: its identity is 127.0.0.1.
+enable_lan() {
+    [[ -e "$LAN_MARKER" ]] && return 0
+    if [[ -d "$HUB_HOME" ]]; then
+        echo -e "${RED}this dev env already has a hub that is not on the LAN port (its did:web would change); run \`make dev-clean\` first${NC}"
+        return 1
+    fi
+    mkdir -p "$DATA_DIR" && touch "$LAN_MARKER"
+    HUB_PORT="$LAN_HUB_PORT"
+}
+
 lan_host() { echo "$(scutil --get LocalHostName | tr '[:upper:]' '[:lower:]').local"; }
 lan_hub_url() { echo "http://$(lan_host):$HUB_PORT"; }
 
@@ -62,15 +74,20 @@ hub_up() {
     # public URL (page loads on other hosts redirect there,
     # http/canonical_host.rs) and the did:web (the app derives the hub's
     # DID from the address it loaded, so they must agree). Users, keys and
-    # shares embed that DID, so a dev env is LAN or not for its lifetime:
-    # switching needs `make dev-clean`. Anyone on the network can reach
-    # the dev-trust login while it's on.
-    local listen_host="127.0.0.1" did_host="127.0.0.1" lan=""
+    # shares embed that DID, so a dev env is LAN or not for its lifetime
+    # (see enable_lan): later `hub up`s stay LAN, and switching needs
+    # `make dev-clean`. It serves on the fixed LAN_HUB_PORT, so one dev
+    # IPA reaches whichever worktree is serving — one at a time. Anyone on
+    # the network can reach the dev-trust login while it's on.
     case "${1:-}" in
         "") ;;
-        --lan) listen_host="0.0.0.0"; did_host="$(lan_host)"; lan=1 ;;
+        --lan) enable_lan || exit 1 ;;
         *) echo -e "${RED}usage: ./bin/dev hub up [--lan]${NC}"; exit 1 ;;
     esac
+    local listen_host="127.0.0.1" did_host="127.0.0.1" lan=""
+    if [[ -e "$LAN_MARKER" ]]; then
+        listen_host="0.0.0.0"; did_host="$(lan_host)"; lan=1
+    fi
     command -v tmux >/dev/null 2>&1 || { echo -e "${RED}tmux not installed${NC}"; exit 1; }
 
     echo -e "${BLUE}Starting minio (blob store)…${NC}"
@@ -105,8 +122,12 @@ hub_up() {
         tmux new-session -d -s "$TMUX_SESSION" -n nodes
     fi
     if tmux list-windows -t "$TMUX_SESSION" -F '#W' 2>/dev/null | grep -qx "$HUB_WINDOW"; then
-        echo -e "${YELLOW}hub window already running${NC} (to switch --lan on/off: ./bin/dev hub down, then up again)"
+        echo -e "${YELLOW}hub window already running${NC}"
         return 0
+    fi
+    if [[ -n "$lan" ]] && lsof -ti tcp:"$HUB_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+        echo -e "${RED}LAN port $HUB_PORT is taken — another worktree's LAN hub? Stop it there (./bin/dev hub down) first.${NC}"
+        exit 1
     fi
 
     # Env the hub reads. `ZIM_HUB_HOST` is percent-encoded so did:web

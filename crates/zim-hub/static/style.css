@@ -79,6 +79,8 @@ html { font-size: 15px; -webkit-text-size-adjust: 100%; touch-action: manipulati
    otherwise win, so it's !important. */
 @media (pointer: coarse) {
   input, textarea, select, [contenteditable="true"] { font-size: 16px !important; }
+  /* The note title is an input but stays title-sized (2rem > 16px). */
+  input.editor-title { font-size: 2rem !important; }
 }
 body {
   font-family: var(--font-sans);

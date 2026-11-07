@@ -1023,6 +1023,7 @@ pub fn vault_tree(props: &Props) -> Html {
         <>
             <header class={classes!("app-header", (if *show_history { history_back.is_some() } else { detail }).then_some("app-header--detail"))}>
                 <HeaderMenu trigger={menu_icon()}>
+                    <Link<Route> to={Route::Vaults} classes="app-menu__item">{ "Open a vault" }</Link<Route>>
                     <Link<Route> to={Route::Settings} classes="app-menu__item">{ "Settings" }</Link<Route>>
                     <SignOutItem />
                 </HeaderMenu>

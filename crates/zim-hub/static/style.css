@@ -1788,6 +1788,24 @@ button.app-menu__item {
 html { background-color: hsl(var(--background)); }
 .workspace-empty { min-height: 60vh; flex-direction: column; gap: 1rem; }
 .workspace-empty__cta { padding: 0.5rem 1.2rem; }
+
+/* Vault picker ("Open a vault"): rows inside a settings-card. */
+.vaults-page h1 { font-size: 1.4rem; margin: 0; }
+.vault-list { display: flex; flex-direction: column; }
+.vault-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.9rem 1.5rem;
+  border-top: 1px solid hsl(var(--border));
+  color: hsl(var(--foreground));
+  text-decoration: none;
+}
+.vault-row:first-child { border-top: none; }
+.vault-row:hover { background: hsl(var(--muted)); text-decoration: none; }
+.vault-row__name { font-size: 0.9rem; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vault-row__id { margin-left: auto; font-family: var(--font-mono); font-size: 0.72rem; color: hsl(var(--muted-foreground)); background: none; padding: 0; }
+.vault-list__new { margin: 1rem 0 0; padding: 0.5rem 1.2rem; }
 /* Hidden until the narrow-screen block below shows it. */
 .app-header__back { display: none; }
 .app-header__btn .icon { font-size: 1.1em; }
@@ -1890,6 +1908,8 @@ html { background-color: hsl(var(--background)); }
   /* Workspace empty state: top-aligned, not floating in 60vh. */
   .workspace-empty { min-height: 0; height: auto; justify-content: flex-start; padding: 2rem 0.5rem; }
   .workspace-empty__cta { width: 100%; padding: 0.75rem 1rem; }
+  .vault-row { min-height: 44px; padding: 0.75rem 1rem; }
+  .vault-list__new { width: 100%; padding: 0.75rem 1rem; }
 
   /* Menus + dialogs fit the screen. */
   .ctx-menu { max-width: calc(100vw - 1rem); }

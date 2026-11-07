@@ -17,4 +17,5 @@ pub mod vault_history;
 pub mod vault_history_view;
 pub mod vault_palette;
 pub mod vault_tree;
+pub mod vaults;
 pub mod workspace;

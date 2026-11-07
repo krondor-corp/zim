@@ -18,7 +18,11 @@ ios="$root/crates/zim-ios"
 version="${1:-$(jq -r .version "$ios/tauri.conf.json")}"
 out="${2:-$root/target/ios}"
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+# `cargo tauri ios build` stamps the version into the committed Info.plist;
+# put it back so a local build leaves the tree clean.
+tracked_plist="$ios/gen/apple/zim-ios_iOS/Info.plist"
+cp "$tracked_plist" "$work/Info.plist.orig"
+trap 'cp "$work/Info.plist.orig" "$tracked_plist"; rm -rf "$work"' EXIT
 
 mkdir -p "$work/shim"
 cat >"$work/shim/xcodebuild" <<'EOF'

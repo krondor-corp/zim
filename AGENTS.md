@@ -14,6 +14,8 @@ cargo fmt                    # Format code
 cargo fmt -- --check         # Check formatting
 make hub                     # Start the hub in the dev tmux session (hot reload)
 make dev                     # Whole dev stack in tmux: daemons + hub + fixtures + enroll
+make ios                     # iOS app in the simulator against this worktree's hub
+make ios-ipa                 # Unsigned target/ios/Zim.ipa for SideStore/AltStore
 make dev-clean               # Kill the dev session, wipe ./data + minio state
 ./bin/dev ports              # This worktree's dev ports/tmux session (per-worktree via confit)
 make e2e                     # One-shot e2e: clean start, fixtures, sync checks

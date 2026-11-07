@@ -67,6 +67,13 @@ pub(crate) fn short_id(id: &str) -> String {
 /// visible, so another device's edits show up without re-opening.
 const FOLLOW_MS: i32 = 3_000;
 
+/// The context menu's largest footprint (px): five 44px touch rows in an
+/// 11rem column. Used to keep it on screen, not to size it.
+const CTX_MENU_W: i32 = 184;
+const CTX_MENU_H: i32 = 244;
+/// The least space (px) between the menu and the viewport edge.
+const CTX_MENU_GAP: i32 = 8;
+
 /// Whether the tab is in the background (no point polling then).
 fn tab_hidden() -> bool {
     web_sys::window()
@@ -727,7 +734,19 @@ pub fn vault_tree(props: &Props) -> Html {
     };
 
     let ctx_menu_html = (*ctx).as_ref().map(|m| {
-        let style = format!("left:{}px;top:{}px;", m.x, m.y);
+        // Open at the pointer, but kept on screen: a long-press near the
+        // bottom or right edge of a phone would otherwise clip the menu.
+        let (vw, vh) = web_sys::window()
+            .map(|w| {
+                let px = |v: Result<wasm_bindgen::JsValue, _>| {
+                    v.ok().and_then(|v| v.as_f64()).unwrap_or(f64::MAX) as i32
+                };
+                (px(w.inner_width()), px(w.inner_height()))
+            })
+            .unwrap_or((i32::MAX, i32::MAX));
+        let x = m.x.min(vw.saturating_sub(CTX_MENU_W)).max(CTX_MENU_GAP);
+        let y = m.y.min(vh.saturating_sub(CTX_MENU_H)).max(CTX_MENU_GAP);
+        let style = format!("left:{x}px;top:{y}px;");
         let dir = match &m.target {
             CtxTarget::Folder(p) => p.clone(),
             _ => "/".to_string(),

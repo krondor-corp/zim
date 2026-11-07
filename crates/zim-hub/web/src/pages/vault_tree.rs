@@ -1,15 +1,17 @@
 //! The pack tree-pane: flat rows with depth padding, folder rows with
 //! rotating chevrons, quiet file rows, a docked dashed "+ New" button,
-//! and a right-click context menu for the destructive/secondary
-//! actions. Markup and class names mirror
+//! and a right-click (or, on touch screens, long-press) context menu for
+//! the destructive/secondary actions. Markup and class names mirror
 //! `pack/crates/app/templates/partials/tree_pane.html`.
 
 use std::collections::BTreeSet;
 
-use web_sys::DragEvent;
+use wasm_bindgen::JsCast;
+use web_sys::{DragEvent, Element};
 use yew::prelude::*;
 
 use crate::components::icon::{icon, Icon};
+use crate::components::long_press::{use_long_press, Held};
 use zim_wasm::{DirEntry, EntryKind};
 
 /// One rendered row. The tree is a FLAT vec — depth is presentation.
@@ -92,7 +94,7 @@ pub struct TreePaneProps {
     pub on_open: Callback<String>,
     pub on_new_note: Callback<()>,
     pub on_upload: Callback<()>,
-    /// Right-click anywhere in the tree → context menu.
+    /// Right-click (long-press on touch) anywhere in the tree → context menu.
     pub on_ctx: Callback<CtxMenu>,
     /// Move `from` path into destination directory `into` (drag & drop).
     pub on_move: Callback<(String, String)>,
@@ -115,6 +117,20 @@ pub fn tree_pane(props: &TreePaneProps) -> Html {
             });
         })
     };
+    // A held finger opens the menu too. The row under it is found from
+    // the touch target's `data-path`, so one handler covers the list.
+    let press = use_long_press({
+        let on_ctx = props.on_ctx.clone();
+        Callback::from(move |h: Held| {
+            on_ctx.emit(CtxMenu {
+                x: h.x,
+                y: h.y,
+                target: ctx_target(h.target),
+            })
+        })
+    });
+    // Dragging rows is a mouse affair: on touch, a held row is the menu.
+    let draggable = !coarse_pointer();
     let new_note = {
         let cb = props.on_new_note.clone();
         Callback::from(move |_: MouseEvent| cb.emit(()))
@@ -126,6 +142,8 @@ pub fn tree_pane(props: &TreePaneProps) -> Html {
     html! {
         <aside id="tree-pane" class="tree-pane">
             <nav class="tree-pane__list" oncontextmenu={root_ctx}
+                ontouchstart={press.start} ontouchmove={press.moved}
+                ontouchend={press.end} ontouchcancel={press.cancel}
                 ondragover={Callback::from(|e: DragEvent| e.prevent_default())}
                 ondrop={
                     let on_move = props.on_move.clone();
@@ -140,7 +158,7 @@ pub fn tree_pane(props: &TreePaneProps) -> Html {
                         on_drag_end.emit(());
                     })
                 }>
-                { for props.rows.iter().map(|n| row(n, props)) }
+                { for props.rows.iter().map(|n| row(n, props, draggable)) }
             </nav>
             <div class="tree-pane__dock">
                 <button type="button" class="tree-pane__new" onclick={new_note}>
@@ -154,7 +172,27 @@ pub fn tree_pane(props: &TreePaneProps) -> Html {
     }
 }
 
-fn row(n: &TreeNode, props: &TreePaneProps) -> Html {
+/// What a touch landed on: the row (by its `data-path`), else the list.
+fn ctx_target(target: Option<web_sys::EventTarget>) -> CtxTarget {
+    let row = target
+        .and_then(|t| t.dyn_into::<Element>().ok())
+        .and_then(|el| el.closest("[data-path]").ok().flatten());
+    match row.and_then(|r| Some((r.get_attribute("data-path")?, r.has_attribute("data-dir")))) {
+        Some((path, true)) => CtxTarget::Folder(path),
+        Some((path, false)) => CtxTarget::File(path),
+        None => CtxTarget::Root,
+    }
+}
+
+/// A touch screen (finger, not mouse): no drag & drop, long-press menus.
+fn coarse_pointer() -> bool {
+    web_sys::window()
+        .and_then(|w| w.match_media("(pointer: coarse)").ok().flatten())
+        .is_some_and(|m| m.matches())
+}
+
+fn row(n: &TreeNode, props: &TreePaneProps, draggable: bool) -> Html {
+    let draggable = if draggable { "true" } else { "false" };
     let pad = format!("padding-left: {}px;", 8 + n.depth * 14);
     let active = props.active.as_deref() == Some(n.path.as_str());
     let oncontextmenu = {
@@ -238,7 +276,7 @@ fn row(n: &TreeNode, props: &TreePaneProps) -> Html {
             })
         };
         html! {
-            <div key={n.path.clone()} draggable="true"
+            <div key={n.path.clone()} {draggable} data-path={n.path.clone()} data-dir=""
                 class={classes!("tree-item", "tree-item--folder",
                     (!n.expanded).then_some("tree-item--collapsed"),
                     dragging_this.then_some("tree-item--dragging"))}
@@ -261,7 +299,7 @@ fn row(n: &TreeNode, props: &TreePaneProps) -> Html {
             })
         };
         html! {
-            <a href="#" key={n.path.clone()} draggable="true"
+            <a href="#" key={n.path.clone()} {draggable} data-path={n.path.clone()}
                class={classes!("tree-item", "tree-item--file", active.then_some("tree-item--active"),
                    dragging_this.then_some("tree-item--dragging"))}
                style={pad} {onclick} {oncontextmenu} {ondragstart} {ondragend}>

@@ -3,6 +3,7 @@
 
 pub mod dialog;
 pub mod icon;
+pub mod long_press;
 
 use yew::prelude::*;
 

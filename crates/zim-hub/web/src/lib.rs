@@ -2,6 +2,7 @@
 //! binary so `cargo test --lib` runs them natively.
 
 pub mod fuzzy;
+pub mod long_press;
 pub mod markdown;
 pub mod nav;
 pub mod rename;

@@ -81,6 +81,9 @@ html { font-size: 15px; -webkit-text-size-adjust: 100%; touch-action: manipulati
   input, textarea, select, [contenteditable="true"] { font-size: 16px !important; }
   /* The note title is an input but stays title-sized (2rem > 16px). */
   input.editor-title { font-size: 2rem !important; }
+  /* A held tree row opens the row menu: no link preview / callout, no
+     text-selection loupe fighting it. */
+  .tree-item { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 }
 body {
   font-family: var(--font-sans);

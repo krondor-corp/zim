@@ -4,12 +4,11 @@ use std::fmt;
 
 use async_trait::async_trait;
 use clap::Args;
-use service_manager::ServiceUninstallCtx;
 
 use crate::cli::op::Op;
 use crate::cli::ui;
 
-use super::{label, manager};
+use super::{backend, label};
 
 #[derive(Args, Debug, Clone)]
 pub struct Uninstall;
@@ -19,8 +18,6 @@ pub struct UninstallOutput {}
 
 #[derive(Debug, thiserror::Error)]
 pub enum UninstallError {
-    #[error("service manager: {0}")]
-    Manager(std::io::Error),
     #[error("uninstall: {0}")]
     Uninstall(std::io::Error),
 }
@@ -36,9 +33,7 @@ impl Op for Uninstall {
     }
 
     async fn run(&self, _ctx: ()) -> Result<Self::Output, Self::Error> {
-        let mgr = manager().map_err(UninstallError::Manager)?;
-        mgr.uninstall(ServiceUninstallCtx { label: label() })
-            .map_err(UninstallError::Uninstall)?;
+        backend::uninstall().map_err(UninstallError::Uninstall)?;
         Ok(UninstallOutput {})
     }
 }

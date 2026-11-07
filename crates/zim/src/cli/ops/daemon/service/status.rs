@@ -5,12 +5,12 @@ use std::fmt;
 use async_trait::async_trait;
 use clap::Args;
 use serde::Serialize;
-use service_manager::{ServiceStatus, ServiceStatusCtx};
+use service_manager::ServiceStatus;
 
 use crate::cli::op::Op;
 use crate::cli::ui;
 
-use super::{label, manager};
+use super::{backend, label};
 
 #[derive(Args, Debug, Clone)]
 pub struct Status;
@@ -43,8 +43,6 @@ impl Serialize for StatusOutput {
 
 #[derive(Debug, thiserror::Error)]
 pub enum StatusError {
-    #[error("service manager: {0}")]
-    Manager(std::io::Error),
     #[error("status: {0}")]
     Status(std::io::Error),
 }
@@ -60,11 +58,9 @@ impl Op for Status {
     }
 
     async fn run(&self, _ctx: ()) -> Result<Self::Output, Self::Error> {
-        let mgr = manager().map_err(StatusError::Manager)?;
-        let s = mgr
-            .status(ServiceStatusCtx { label: label() })
-            .map_err(StatusError::Status)?;
-        Ok(StatusOutput(s))
+        Ok(StatusOutput(
+            backend::status().map_err(StatusError::Status)?,
+        ))
     }
 }
 

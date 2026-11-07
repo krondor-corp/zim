@@ -1,20 +1,22 @@
-//! `zim daemon service <subcommand>` — service-manager wrappers
-//! for the long-running daemon process.
+//! `zim daemon service <subcommand>` — OS service registration for
+//! the long-running daemon process.
 //!
 //! Defaults to the **user** service level (launchd `~/Library/
 //! LaunchAgents`, systemd `--user`) — no root required. The daemon
 //! itself lives one level up at `zim daemon run`; this module is
-//! just the registration / start / stop plumbing. On macOS we write
-//! our own launchd plist (see [`launchd`]) so a stop actually sticks.
+//! just the registration / start / stop plumbing (see [`backend`]). On
+//! macOS we drive launchd directly with our own plist (see [`launchd`])
+//! so a stop actually sticks.
 
 use std::fmt;
 
 use async_trait::async_trait;
 use clap::Subcommand;
-use service_manager::{ServiceLabel, ServiceLevel, ServiceManager};
+use service_manager::ServiceLabel;
 
 use crate::cli::op::Op;
 
+pub mod backend;
 pub mod install;
 mod launchd;
 mod probe;
@@ -112,11 +114,4 @@ pub fn label() -> ServiceLabel {
         organization: Some("zim".into()),
         application: "daemon".into(),
     }
-}
-
-/// Native, user-level service manager for the current OS.
-pub fn manager() -> std::io::Result<Box<dyn ServiceManager>> {
-    let mut m = <dyn ServiceManager>::native()?;
-    m.set_level(ServiceLevel::User)?;
-    Ok(m)
 }

@@ -1,9 +1,10 @@
-//! launchd specifics the `service-manager` crate gets wrong for us.
+//! The daemon's LaunchAgent plist.
 //!
-//! service-manager renders `KeepAlive: true` into every plist it
-//! writes. Under that policy launchd respawns the job no matter how it
-//! exits, so `launchctl stop` is a no-op in practice: the daemon drains,
-//! exits, and comes straight back. We write our own plist instead with
+//! Older `zim` installs went through the `service-manager` crate, which
+//! renders `KeepAlive: true` into every plist it writes. Under that
+//! policy launchd respawns the job no matter how it exits, so a stop is
+//! a no-op in practice: the daemon drains, exits, and comes straight
+//! back. We write our own plist instead with
 //! `KeepAlive: { SuccessfulExit: false }` — launchd restarts us only
 //! when we crash (`zim daemon run` exits non-zero on a dead service)
 //! and leaves us down after a clean SIGTERM drain.
@@ -16,12 +17,7 @@ use plist::{Dictionary, Value};
 /// Seconds launchd waits between SIGTERM and SIGKILL. The daemon's
 /// graceful drain takes several seconds; a SIGKILL mid-drain would
 /// read as a crash and trigger a respawn.
-const EXIT_TIMEOUT_SECS: i64 = 30;
-
-/// Whether the OS service manager is launchd (macOS).
-pub fn active() -> bool {
-    cfg!(target_os = "macos")
-}
+pub(super) const EXIT_TIMEOUT_SECS: i64 = 30;
 
 /// Render the daemon's LaunchAgent plist.
 pub fn plist(label: &str, program: &Path, args: &[&str], autostart: bool) -> String {
@@ -54,7 +50,7 @@ pub fn plist(label: &str, program: &Path, args: &[&str], autostart: bool) -> Str
 /// stop — i.e. it was written by an older `zim` with a bare
 /// `KeepAlive: true`. `false` when not on launchd or not installed.
 pub fn respawns_on_stop(label: &str) -> io::Result<bool> {
-    if !active() {
+    if !super::active() {
         return Ok(false);
     }
     let path = plist_path(label)?;
@@ -72,7 +68,7 @@ fn keeps_alive_unconditionally(plist_bytes: &[u8]) -> bool {
     matches!(dict.get("KeepAlive"), Some(Value::Boolean(true)))
 }
 
-fn plist_path(label: &str) -> io::Result<PathBuf> {
+pub fn plist_path(label: &str) -> io::Result<PathBuf> {
     let home = dirs::home_dir()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no home directory"))?;
     Ok(home

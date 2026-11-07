@@ -121,17 +121,7 @@ async fn latest_release(http: &reqwest::Client) -> Result<Option<Release>, Updat
 /// when no service is installed/running — not an error.
 async fn restart_service_if_running() -> Result<bool, UpdateError> {
     use crate::cli::ops::daemon::service as svc;
-    // The manager isn't `Send`; keep it out of scope across the await.
-    let status = {
-        let Ok(manager) = svc::manager() else {
-            return Ok(false);
-        };
-        manager
-            .status(service_manager::ServiceStatusCtx {
-                label: svc::label(),
-            })
-            .map_err(|e| UpdateError::ServiceRestart(e.to_string()))?
-    };
+    let status = svc::backend::status().map_err(|e| UpdateError::ServiceRestart(e.to_string()))?;
     if !matches!(status, service_manager::ServiceStatus::Running) {
         return Ok(false);
     }

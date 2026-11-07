@@ -12,9 +12,9 @@ use crate::cli::ui;
 use crate::context::{ApiContext, ContextError};
 use crate::daemon::api::client::ApiClient;
 
-use super::label;
 use super::start::{start_service, StartError};
 use super::stop::{stop_service, StopError};
+use super::{label, launchd};
 
 #[derive(Args, Debug, Clone)]
 pub struct Restart;
@@ -30,6 +30,8 @@ pub enum RestartError {
     Stop(#[from] StopError),
     #[error(transparent)]
     Start(#[from] StartError),
+    #[error("restart: {0}")]
+    Restart(std::io::Error),
 }
 
 #[async_trait]
@@ -49,9 +51,12 @@ impl Op for Restart {
 }
 
 /// Stop the service, wait until the daemon is gone, start it again.
-/// Waiting matters: launchd ignores a start for a job that is still
-/// draining, which would leave the daemon down.
+/// launchd does all three in one `kickstart -k`; elsewhere we wait
+/// ourselves so the new daemon doesn't race the old one for the port.
 pub async fn restart_service(client: &ApiClient) -> Result<(), RestartError> {
+    if launchd::active() {
+        return launchd::restart(&label().to_qualified_name()).map_err(RestartError::Restart);
+    }
     stop_service(client).await?;
     start_service()?;
     Ok(())

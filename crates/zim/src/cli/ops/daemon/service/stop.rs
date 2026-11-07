@@ -1,7 +1,7 @@
 //! `zim daemon service stop` — stop the running daemon service.
 //!
-//! The service manager's stop is fire-and-forget (launchd's
-//! `launchctl stop` returns before the daemon has drained), so after
+//! The service manager's stop is fire-and-forget (on launchd it's a
+//! SIGTERM, which returns before the daemon has drained), so after
 //! asking we poll `/_status/livez` until the daemon is actually gone.
 //! Installs from older `zim` versions registered with launchd's bare
 //! `KeepAlive`, which respawns the daemon after any exit — we refuse
@@ -12,14 +12,13 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use clap::Args;
-use service_manager::ServiceStopCtx;
 
 use crate::cli::op::Op;
 use crate::cli::ui;
 use crate::context::{ApiContext, ContextError};
 use crate::daemon::api::client::ApiClient;
 
-use super::{label, launchd, manager, probe};
+use super::{backend, label, launchd, probe};
 
 /// How long to wait for the daemon to drain and exit. Comfortably
 /// above its graceful-shutdown window.
@@ -42,8 +41,6 @@ pub enum StopError {
          run `zim daemon service install` to re-register, or `zim daemon service uninstall`"
     )]
     RespawnsOnStop,
-    #[error("service manager: {0}")]
-    Manager(std::io::Error),
     #[error("stop: {0}")]
     Stop(std::io::Error),
     #[error("still answering at {0} — a foreground `zim daemon run`?")]
@@ -73,11 +70,7 @@ pub async fn stop_service(client: &ApiClient) -> Result<(), StopError> {
         return Err(StopError::RespawnsOnStop);
     }
 
-    // The manager isn't `Send`; drop it before awaiting.
-    manager()
-        .map_err(StopError::Manager)?
-        .stop(ServiceStopCtx { label: label() })
-        .map_err(StopError::Stop)?;
+    backend::stop().map_err(StopError::Stop)?;
 
     if !probe::wait_until_down(client, STOP_TIMEOUT).await {
         return Err(StopError::StillRunning(client.remote().to_string()));

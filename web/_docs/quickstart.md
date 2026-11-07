@@ -30,6 +30,10 @@ In the browser, create a vault and give it a name. A vault is the
 unit of everything in Zim: it has its own encryption secret, its own
 version history, and its own list of devices that can open it.
 
+Signing in drops you back into the vault you last worked in. To pick a
+different one (or create another), open the menu and choose
+**Open a vault**.
+
 You start as the only member. Every file you add is encrypted under the
 vault's secret; the vault's history advances as a signed chain of
 versions, so any device can verify it's seeing the real thing.

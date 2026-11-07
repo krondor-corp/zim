@@ -13,6 +13,9 @@ use crate::pages;
 pub enum Route {
     #[at("/")]
     Workspace,
+    /// The vault picker ("Open a vault").
+    #[at("/vaults")]
+    Vaults,
     #[at("/v/:id")]
     Vault { id: VaultId },
     #[at("/settings")]
@@ -30,7 +33,12 @@ pub fn switch(route: Route, me: &Me) -> Html {
     match route {
         Route::Workspace => html! {
             <PackChrome crumb="vaults">
-                <pages::workspace::Workspace user_id={me.user_id.clone()} />
+                <pages::workspace::Workspace />
+            </PackChrome>
+        },
+        Route::Vaults => html! {
+            <PackChrome crumb="vaults">
+                <pages::vaults::Vaults user_id={me.user_id.clone()} />
             </PackChrome>
         },
         // The vault workspace is pack's editor-layout: its own fixed

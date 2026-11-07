@@ -184,7 +184,7 @@ Bonjour name (`http://<LocalHostName>.local:<hub port>`) the hub's public URL
 so the two must agree. Users, keys and shares embed that DID, so a dev env is
 LAN or not for its lifetime: switch with `make dev-clean`. iOS asks once for
 Local Network access. Anyone on the same network can reach the dev-trust login
-while it's on. Dev IPAs ("Zim Dev", `org.krondor.zim.dev`) install beside the release app and are Web-Inspector-enabled: Safari → Develop → your iPhone → Zim Dev shows the webview's console and network. `make ios-ipa-dev` rebuilds just the IPA (no hub restart needed:
+while it's on. Dev IPAs ("Zim Dev", `org.krondor.zim.dev`, amber `AppIcon-Dev` icon) install beside the release app and are Web-Inspector-enabled: Safari → Develop → your iPhone → Zim Dev shows the webview's console and network. `make ios-ipa-dev` rebuilds just the IPA (no hub restart needed:
 the app loads the SPA from the hub, so web changes only need a reload).
 
 `make ios-ipa` (`VERSION=…`) builds an unsigned `target/ios/Zim.ipa` for

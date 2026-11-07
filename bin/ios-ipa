@@ -4,7 +4,7 @@
 #   bin/ios-ipa [version] [out-file]    # default: tauri.conf.json version, target/ios/Zim.ipa
 #   HUB_URL=http://… bin/ios-ipa …       # build against another hub (default: production)
 #   IOS_VARIANT=dev bin/ios-ipa …        # "Zim Dev" (org.krondor.zim.dev): installs beside Zim,
-#                                        # Web Inspector on (Safari → Develop → device)
+#                                        # amber icon (AppIcon-Dev), Web Inspector on
 #
 # SideStore/AltStore re-sign the IPA with the installing user's Apple ID,
 # so no team or certificate is needed here. The App Store path is
@@ -27,9 +27,10 @@ out="${2:-$root/target/ios/Zim.ipa}"
 identifier="$(jq -r .identifier "$ios/tauri.conf.json")"
 display_name="Zim"
 features=()
+appicon=AppIcon
 case "${IOS_VARIANT:-}" in
   "") ;;
-  dev) identifier="$identifier.dev"; display_name="Zim Dev"; features=(--features devtools) ;;
+  dev) identifier="$identifier.dev"; display_name="Zim Dev"; features=(--features devtools); appicon=AppIcon-Dev ;;
   *) echo "ios-ipa: unknown IOS_VARIANT=$IOS_VARIANT (dev)" >&2; exit 1 ;;
 esac
 # The hub the app loads (`plugins.zim-hub.url`; unset = the release default).
@@ -53,8 +54,12 @@ cat >"$work/shim/xcodebuild" <<'EOF'
 #!/usr/bin/env bash
 real="$(PATH="${PATH#*/shim:}" command -v xcodebuild)"
 for a in "$@"; do [[ "$a" == "-exportArchive" ]] && exec "$real" "$@"; done
-exec "$real" "$@" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM=
+exec "$real" "$@" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM= \
+  ASSETCATALOG_COMPILER_APPICON_NAME="$(cat "$(dirname "$0")/appicon")"
 EOF
+# `cargo tauri` doesn't pass our environment on to xcodebuild, so the
+# shim reads its settings from a file beside it.
+echo "$appicon" >"$work/shim/appicon"
 chmod +x "$work/shim/xcodebuild"
 
 archive="$ios/gen/apple/build/zim-ios_iOS.xcarchive"

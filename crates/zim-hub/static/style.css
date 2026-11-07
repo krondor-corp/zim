@@ -73,9 +73,12 @@
 html { font-size: 15px; -webkit-text-size-adjust: 100%; touch-action: manipulation; }
 
 /* iOS zooms the page when a focused field's text is under 16px. Touch
-   screens get 16px fields so typing never jumps the viewport. */
+   screens get 16px fields so typing never jumps the viewport. It's a
+   floor, not a default: component rules (`.field input`,
+   `.dialog__input`, … at 0.8–0.9rem) are more specific and would
+   otherwise win, so it's !important. */
 @media (pointer: coarse) {
-  input, textarea, select, [contenteditable="true"] { font-size: 16px; }
+  input, textarea, select, [contenteditable="true"] { font-size: 16px !important; }
 }
 body {
   font-family: var(--font-sans);

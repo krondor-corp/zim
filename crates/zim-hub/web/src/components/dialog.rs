@@ -25,11 +25,16 @@ pub struct PromptDialogProps {
 pub fn prompt_dialog(props: &PromptDialogProps) -> Html {
     let input_ref = use_node_ref();
 
-    // Autofocus + select the seed value once mounted.
+    // Seed, autofocus and select the value once mounted. The input is
+    // deliberately uncontrolled: a `value=` attribute would be re-applied
+    // on every parent re-render (a sync tick, a tree refresh), wiping out
+    // whatever is being typed.
     {
         let input_ref = input_ref.clone();
+        let seed = props.value.clone();
         use_effect_with((), move |_| {
             if let Some(input) = input_ref.cast::<HtmlInputElement>() {
+                input.set_value(&seed);
                 let _ = input.focus();
                 input.select();
             }
@@ -80,8 +85,7 @@ pub fn prompt_dialog(props: &PromptDialogProps) -> Html {
                 <div class="dialog__form">
                     <h2 class="dialog__title">{ props.title.clone() }</h2>
                     <label class="dialog__label">{ props.label.clone() }</label>
-                    <input ref={input_ref} class="dialog__input" type="text"
-                        value={props.value.clone()} spellcheck="false" />
+                    <input ref={input_ref} class="dialog__input" type="text" spellcheck="false" />
                     <div class="dialog__actions">
                         <button type="button" class="dialog__btn" onclick={cancel_click}>{ "Cancel" }</button>
                         <button type="button" class="dialog__btn dialog__btn--primary" onclick={submit_click}>
